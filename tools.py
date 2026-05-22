@@ -25,3 +25,10 @@ def check_alarm_rules():
         "threshold": "80%",
         "current_value": "82%"
     }
+
+
+TOOLS = {
+    "check_device_status": check_device_status,
+    "get_recent_logs": get_recent_logs,
+    "check_alarm_rules": check_alarm_rules
+}

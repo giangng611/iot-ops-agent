@@ -94,7 +94,9 @@ FINAL ANSWER: your final diagnosis
             tool_output = TOOLS[action](device_id)
 
             observation = {
-                "tool": action,
+                "iteration": step + 1,
+                "thought": thought,
+                "action": action,
                 "output": tool_output
             }
 
@@ -114,7 +116,10 @@ FINAL ANSWER: your final diagnosis
             "content": final_answer
         })
 
-        return final_answer
+        return {
+            "final_answer": final_answer,
+            "steps": observations
+        }
 
     def generate_final_answer(self, user_input, observations):
         prompt = f"""
@@ -170,4 +175,58 @@ Based only on the observations, provide:
 
         return response.choices[0].message.content.strip()
 
+    def run_stream(self, user_input):
+        observations = []
 
+        for step in range(self.max_iterations):
+            model_output = self.choose_next_step(user_input, observations)
+
+            if model_output.startswith("FINAL ANSWER:"):
+                final_answer = model_output.replace("FINAL ANSWER:", "").strip()
+                yield {
+                    "type": "final",
+                    "final_answer": final_answer
+                }
+                return
+
+            thought, action = self.parse_action(model_output)
+
+            yield {
+                "type": "thought",
+                "iteration": step + 1,
+                "thought": thought,
+                "action": action
+            }
+
+            if action not in TOOLS:
+                yield {
+                    "type": "error",
+                    "error": f"Invalid tool selected: {action}"
+                }
+                return
+
+            device_id = self.extract_device(user_input)
+
+            tool_output = TOOLS[action](device_id)
+
+            observation = {
+                "iteration": step + 1,
+                "thought": thought,
+                "action": action,
+                "output": tool_output
+            }
+
+            observations.append(observation)
+
+            yield {
+                "type": "observation",
+                "iteration": step + 1,
+                "observation": observation
+            }
+
+        final_answer = self.generate_final_answer(user_input, observations)
+
+        yield {
+            "type": "final",
+            "final_answer": final_answer
+        }

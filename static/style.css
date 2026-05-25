@@ -5,8 +5,8 @@
 body {
     margin: 0;
     font-family: Arial, Helvetica, sans-serif;
-    background: #0f172a;
-    color: #e5e7eb;
+    background: #ffffff;
+    color: #111111;
 }
 
 .app-container {
@@ -19,7 +19,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 28px;
+    margin-bottom: 24px;
 }
 
 .header h1 {
@@ -29,29 +29,34 @@ body {
 
 .header p {
     margin-top: 8px;
-    color: #94a3b8;
+    color: #555555;
 }
 
 .badge {
-    background: #2563eb;
+    background: #111111;
     color: white;
     padding: 8px 14px;
     border-radius: 999px;
     font-size: 14px;
 }
 
+.mode-selector {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
 .layout {
     display: grid;
-    grid-template-columns: 1fr 1.3fr;
+    grid-template-columns: 1fr 1.4fr;
     gap: 24px;
 }
 
 .panel {
-    background: #111827;
-    border: 1px solid #1f2937;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
     border-radius: 18px;
     padding: 24px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
 }
 
 .panel h2 {
@@ -65,22 +70,23 @@ body {
 }
 
 .device-card {
-    background: #1e293b;
+    background: #f7f7f8;
     border-radius: 14px;
     padding: 18px;
-    border-left: 6px solid #64748b;
+    border: 1px solid #d1d5db;
+    border-left: 6px solid #999999;
 }
 
 .device-card.healthy {
-    border-left-color: #22c55e;
+    border-left-color: #111111;
 }
 
 .device-card.warning {
-    border-left-color: #f59e0b;
+    border-left-color: #666666;
 }
 
 .device-card.critical {
-    border-left-color: #ef4444;
+    border-left-color: #000000;
 }
 
 .device-top {
@@ -97,17 +103,17 @@ body {
     text-transform: uppercase;
     font-size: 12px;
     font-weight: bold;
-    color: #cbd5e1;
+    color: #555555;
 }
 
 .device-card p {
     margin: 8px 0;
-    color: #cbd5e1;
+    color: #555555;
 }
 
 button {
     border: none;
-    background: #2563eb;
+    background: #111111;
     color: white;
     padding: 10px 14px;
     border-radius: 10px;
@@ -116,7 +122,7 @@ button {
 }
 
 button:hover {
-    background: #1d4ed8;
+    background: #333333;
 }
 
 .input-row {
@@ -129,33 +135,54 @@ input {
     flex: 1;
     padding: 12px 14px;
     border-radius: 10px;
-    border: 1px solid #334155;
-    background: #020617;
-    color: #e5e7eb;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    color: #111111;
     font-size: 15px;
 }
 
+.reasoning-box,
 .response-box {
-    background: #020617;
-    border: 1px solid #1e293b;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
     border-radius: 14px;
     padding: 18px;
-    min-height: 360px;
+    margin-bottom: 20px;
 }
 
+.reasoning-box h3,
 .response-box h3 {
     margin-top: 0;
 }
 
+.reasoning-step {
+    background: #f7f7f8;
+    border: 1px solid #d1d5db;
+    border-left: 4px solid #111111;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.reasoning-step h4 {
+    margin-top: 0;
+    margin-bottom: 14px;
+}
+
 pre {
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    color: #111111;
+    padding: 12px;
+    border-radius: 8px;
     white-space: pre-wrap;
-    line-height: 1.6;
-    color: #d1d5db;
+    line-height: 1.5;
+    overflow-x: auto;
 }
 
 .loading {
     margin-bottom: 16px;
-    color: #38bdf8;
+    color: #555555;
 }
 
 .hidden {

@@ -10,11 +10,20 @@
     <div class="app-container">
 
         <header class="header">
+            <div class="mode-selector">
+                <button onclick="setMode('week1')">
+                    Week 1 Demo
+                </button>
+
+                <button onclick="setMode('week2')">
+                    Week 2 Demo
+                </button>
+
+            </div>
             <div>
                 <h1>IoT Ops AI Agent</h1>
                 <p>Multi-step reasoning assistant for IoT operations monitoring</p>
             </div>
-            <span class="badge">Week 2 Demo</span>
         </header>
 
         <main class="layout">
@@ -59,6 +68,14 @@
                 </div>
 
                 <div class="response-box">
+                    <h3>Reasoning Trace</h3>
+
+                    <div id="reasoningOutput">
+
+                        No reasoning yet.
+
+                    </div>
+
                     <h3>Final Diagnosis</h3>
                     <pre id="responseOutput">No diagnosis yet.</pre>
                 </div>

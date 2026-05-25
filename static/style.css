@@ -32,8 +32,8 @@ body {
 .sidebar-header h2 {
     margin: 0 0 18px 0;
 
-    font-size: 42px;
-    font-weight: 800;
+    font-size: 38px;
+    font-weight: 600;
     letter-spacing: -1px;
 
     color: #ffffff;
@@ -156,8 +156,8 @@ body {
 .hero h1 {
     margin: 0;
 
-    font-size: 68px;
-    font-weight: 800;
+    font-size: 60px;
+    font-weight: 600;
 
     letter-spacing: -2px;
 }
@@ -166,7 +166,7 @@ body {
 .page-header p {
     color: #a1a1aa;
 
-    font-size: 22px;
+    font-size: 20px;
 
     margin-top: 14px;
 }
@@ -200,7 +200,8 @@ select {
 }
 
 .input-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 300px 1fr auto;
     gap: 12px;
     margin-bottom: 12px;
 }
@@ -386,6 +387,36 @@ th {
 }
 
 .mode-inline {
-    width: 140px;
+    width: 300px;
+    min-width: 300px;
+
     flex-shrink: 0;
+
+    padding: 0 48px 0 16px;
+
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='white' viewBox='0 0 20 20'%3E%3Cpath d='M5.5 7.5L10 12l4.5-4.5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+
+    background-repeat: no-repeat;
+
+    background-position: right 14px center;
+
+    background-size: 18px;
+}
+
+.run-button {
+    min-width: 110px;
+    height: 64px;
+    line-height: 1.1;
+}
+
+.run-button span {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.75;
+    margin-top: 4px;
 }

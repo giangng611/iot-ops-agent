@@ -27,10 +27,16 @@ Available tools:
 - check_device_status
 - get_recent_logs
 - check_alarm_rules
+
+ACTION must be exactly one tool name only.
+Do not include arguments, JSON, parentheses, or explanations.
     
 If more information is needed, respond in this exact format:
 THOUGHT: your reasoning
 ACTION: tool_name
+
+Put THOUGHT and ACTION on separate lines.
+Do not include ACTION inside THOUGHT.
     
 If enough information is available, respond in this exact format:
 FINAL ANSWER: your final diagnosis
@@ -45,16 +51,17 @@ FINAL ANSWER: your final diagnosis
         return response.choices[0].message.content.strip()
 
     def parse_action(self, model_output):
-        lines = model_output.splitlines()
-
         thought = ""
         action = ""
 
-        for line in lines:
-            if line.startswith("THOUGHT:"):
-                thought = line.replace("THOUGHT:", "").strip()
-            elif line.startswith("ACTION:"):
-                action = line.replace("ACTION:", "").strip()
+        if "ACTION:" in model_output:
+            before_action, after_action = model_output.split("ACTION:", 1)
+
+            thought = before_action.replace("THOUGHT:", "").strip()
+
+            action = after_action.strip()
+            action = action.split()[0]
+            action = action.replace("`", "").strip()
 
         return thought, action
 

@@ -10,6 +10,7 @@ def check_device_status():
 
 def get_recent_logs():
     return {
+        "device_id": "sensor-001",
         "logs": [
             "sensor-001 heartbeat delayed",
             "temperature reading timeout",
@@ -20,6 +21,7 @@ def get_recent_logs():
 
 def check_alarm_rules():
     return {
+        "device_id": "sensor-001",
         "alarm": "High CPU usage",
         "severity": "medium",
         "threshold": "80%",

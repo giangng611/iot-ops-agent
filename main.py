@@ -1,62 +1,38 @@
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
-import json
-from tools import check_device_status, get_recent_logs, check_alarm_rules, TOOLS
-from prompts import SYSTEM_PROMPT, TOOL_SELECTION_PROMPT
+
+from agents.week1_agent import Week1Agent
+from agents.week2_agent import Week2Agent
 
 load_dotenv()
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY")
 )
 
-conversation_history = []
+def choose_agent():
+    print("Choose an agent:")
+    print("1. Week 1 - Single-step tool calling")
+    print("2. Week 2 - Multi-step reasoning agent")
 
-def select_tool_with_llm(user_input):
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {"role": "system", "content": TOOL_SELECTION_PROMPT},
-            {"role": "user", "content": user_input}
-        ]
-    )
+    choice = input("Enter 1 or 2: ").strip()
 
-    tool_name = response.choices[0].message.content.strip()
+    if choice == "1":
+        print("\nRunning Week 1 Agent...\n")
+        return Week1Agent(client)
 
-    if tool_name not in TOOLS:
-        return None
+    if choice == "2":
+        print("\nRunning Week 2 Agent...\n")
+        return Week2Agent(client)
 
-    return tool_name
+    print("\nInvalid choice. Defaulting to Week 1 Agent.\n")
+    return Week1Agent(client)
 
-def ask_llm(user_input, tool_name, tool_output):
-    messages=[
-        {"role": "system", "content": SYSTEM_PROMPT},
-    ]
-
-    messages.extend(conversation_history)
-
-    messages.append({
-        "role": "user",
-        "content": user_input
-    })
-
-    messages.append({
-        "role": "system",
-        "content": (
-            f"Tool used: {tool_name}\n"
-            f"Tool output JSON:\n{json.dumps(tool_output, indent=2)}"
-        )
-    })
-
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=messages
-    )
-
-    return response.choices[0].message.content
 
 def main():
-    print("IoT Ops AI Agent - Week 1")
+    agent = choose_agent()
+
+    print("IoT Ops AIAgent")
     print("Type 'exit' or 'quit' to quit.\n")
 
     while True:
@@ -66,28 +42,11 @@ def main():
             break
 
         try:
-            tool_name = select_tool_with_llm(user_input)
-
-            if tool_name is None:
-                print("Agent: I do not have a suitable tool for that request yet.\n")
-                continue
-
-            tool_output = TOOLS[tool_name]()
-
-            print(f"\n[Tool selected]: {tool_name}")
-            print("[Tool output]:")
-            print(json.dumps(tool_output, indent=2))
-
-            answer = ask_llm(user_input, tool_name, tool_output)
-
+            answer = agent.run(user_input)
             print(f"\nAgent:\n{answer}\n")
-
-            conversation_history.append({"role": "user", "content": user_input})
-            conversation_history.append({"role": "assistant", "content": answer})
 
         except Exception as e:
             print(f"Error: {e}\n")
-
 
 if __name__ == "__main__":
     main()

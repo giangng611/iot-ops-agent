@@ -182,13 +182,21 @@ http://127.0.0.1:5000
 
 ## Screenshots
 
-Add screenshots here:
+### Dashboard
 
-- Home dashboard
-- Fleet diagnostics
-- Real-time reasoning trace
-- Devices tab
-- Prompts tab
+![Dashboard](screenshots/dashboard.png)
+
+---
+
+### Devices Tab
+
+![Devices](screenshots/devices.png)
+
+---
+
+### Prompts Tab
+
+![Reasoning](screenshots/prompts.png)
 
 ---
 
@@ -206,5 +214,5 @@ Add screenshots here:
 
 ## Author
 
-Giang Nguyen  
+Giang Nguyen Do 
 Computer Science @ University of Georgia

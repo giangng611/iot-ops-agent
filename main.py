@@ -32,7 +32,7 @@ def choose_agent():
 def main():
     agent = choose_agent()
 
-    print("IoT Ops AIAgent")
+    print("IoT Ops AI Agent")
     print("Type 'exit' or 'quit' to quit.\n")
 
     while True:

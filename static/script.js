@@ -1,24 +1,106 @@
 let currentMode = "week2";
 
+const prompts = [
+    "/diagnose gateway-003",
+    "/diagnose sensor-001",
+    "/diagnose sensor-002",
+    "/status sensor-001",
+    "/status sensor-002",
+    "/logs gateway-003",
+    "/alarms sensor-001"
+];
+
+function setMode(mode) {
+    currentMode = mode;
+}
+
+function showTab(tabName) {
+    const devicesTab = document.getElementById("devicesTab");
+    const promptsTab = document.getElementById("promptsTab");
+    const chatTab = document.getElementById("chatTab");
+
+    devicesTab.classList.add("hidden");
+    promptsTab.classList.add("hidden");
+    chatTab.classList.add("hidden");
+
+    document.querySelectorAll(".tab-button").forEach(button => {
+        button.classList.remove("active");
+    });
+
+    if (tabName === "chat") {
+        chatTab.classList.remove("hidden");
+    }
+
+    if (tabName === "devices") {
+        devicesTab.classList.remove("hidden");
+    }
+
+    if (tabName === "prompts") {
+        promptsTab.classList.remove("hidden");
+    }
+
+    event.target.classList.add("active");
+}
+
+function usePrompt(promptText) {
+    const input = document.getElementById("messageInput");
+    input.value = promptText;
+    showTab("chat");
+}
+
+function handlePromptSuggestions() {
+    const input = document.getElementById("messageInput");
+    const suggestions = document.getElementById("promptSuggestions");
+
+    const value = input.value.trim();
+
+    if (!value.startsWith("/")) {
+        suggestions.classList.add("hidden");
+        suggestions.innerHTML = "";
+        return;
+    }
+
+    const filtered = prompts.filter(prompt =>
+        prompt.startsWith(value)
+    );
+
+    if (filtered.length === 0) {
+        suggestions.classList.add("hidden");
+        suggestions.innerHTML = "";
+        return;
+    }
+
+    suggestions.innerHTML = filtered.map(prompt => {
+        return `<div class="suggestion-item" onclick="usePrompt('${prompt}')">${prompt}</div>`;
+    }).join("");
+
+    suggestions.classList.remove("hidden");
+}
+
 async function sendMessage() {
     const input = document.getElementById("messageInput");
     const output = document.getElementById("responseOutput");
+    const reasoningOutput = document.getElementById("reasoningOutput");
     const loading = document.getElementById("loading");
+    const suggestions = document.getElementById("promptSuggestions");
 
     const message = input.value.trim();
-
-    if (currentMode === "week2") {
-        await sendStreamMessage(message);
-        return;
-    }
 
     if (!message) {
         output.textContent = "Please enter a request.";
         return;
     }
 
-    loading.classList.remove("hidden");
+    suggestions.classList.add("hidden");
+    reasoningOutput.innerHTML = "No reasoning yet.";
     output.textContent = "";
+    loading.classList.remove("hidden");
+
+    if (currentMode === "week2") {
+        await sendStreamMessage(message);
+        loading.classList.add("hidden");
+        return;
+    }
 
     try {
         const response = await fetch("/api/diagnose", {
@@ -38,7 +120,6 @@ async function sendMessage() {
             output.textContent = "Error: " + data.error;
         } else {
             output.textContent = data.response;
-            renderReasoning(data.steps);
         }
 
     } catch (error) {
@@ -48,63 +129,11 @@ async function sendMessage() {
     loading.classList.add("hidden");
 }
 
-
-function diagnoseDevice(deviceId) {
-    const input = document.getElementById("messageInput");
-    input.value = `diagnose ${deviceId}`;
-    sendMessage();
-}
-
-function setMode(mode) {
-
-    currentMode = mode;
-
-    console.log("Current mode:", currentMode);
-
-}
-
-function renderReasoning(steps) {
-    const reasoningOutput = document.getElementById("reasoningOutput");
-
-    if (!steps || steps.length === 0) {
-        reasoningOutput.innerHTML = "No reasoning trace available.";
-        return;
-    }
-
-    let html = "";
-
-    steps.forEach(step => {
-        html += `
-            <div class="reasoning-step">
-                <h4>Iteration ${step.iteration}</h4>
-
-                <p>
-                    <strong>Thought:</strong><br>
-                    ${step.thought}
-                </p>
-
-                <p>
-                    <strong>Action:</strong><br>
-                    ${step.action}
-                </p>
-
-                <p><strong>Observation:</strong></p>
-                <pre>${JSON.stringify(step.output, null, 2)}</pre>
-            </div>
-        `;
-    });
-
-    reasoningOutput.innerHTML = html;
-}
-
 async function sendStreamMessage(message) {
     const output = document.getElementById("responseOutput");
     const reasoningOutput = document.getElementById("reasoningOutput");
-    const loading = document.getElementById("loading");
 
-    output.textContent = "";
     reasoningOutput.innerHTML = "";
-    loading.classList.remove("hidden");
 
     const response = await fetch("/api/diagnose-stream", {
         method: "POST",
@@ -133,6 +162,7 @@ async function sendStreamMessage(message) {
                 reasoningOutput.innerHTML += `
                     <div class="reasoning-step">
                         <h4>Iteration ${event.iteration}</h4>
+
                         <p><strong>Thought:</strong><br>${event.thought}</p>
                         <p><strong>Action:</strong><br>${event.action}</p>
                     </div>
@@ -140,7 +170,11 @@ async function sendStreamMessage(message) {
             }
 
             if (event.type === "observation") {
-                reasoningOutput.innerHTML += `
+                const steps = document.querySelectorAll(".reasoning-step");
+                const latestStep = steps[steps.length - 1];
+
+                latestStep.innerHTML += `
+                    <p><strong>Observation:</strong></p>
                     <pre>${JSON.stringify(event.observation.output, null, 2)}</pre>
                 `;
             }
@@ -154,6 +188,11 @@ async function sendStreamMessage(message) {
             }
         });
     }
+}
 
-    loading.classList.add("hidden");
+function diagnoseDevice(deviceId) {
+    const input = document.getElementById("messageInput");
+    input.value = `/diagnose ${deviceId}`;
+    showTab("chat");
+    sendMessage();
 }

@@ -7,28 +7,23 @@
 </head>
 
 <body>
-    <div class="app-container">
+<div class="app-container">
 
-        <header class="header">
-            <div class="mode-selector">
-                <button onclick="setMode('week1')">
-                    Week 1 Demo
-                </button>
+    <header class="header">
+        <h1>IoT Ops AI Agent</h1>
+        <p>Multi-step reasoning assistant for IoT operations monitoring</p>
+    </header>
 
-                <button onclick="setMode('week2')">
-                    Week 2 Demo
-                </button>
+    <main class="app-shell">
 
+        <aside class="sidebar">
+            <div class="tab-buttons">
+                <button class="tab-button active" onclick="showTab('chat')">Chat</button>
+                <button class="tab-button" onclick="showTab('devices')">Devices</button>
+                <button class="tab-button" onclick="showTab('prompts')">Prompts</button>
             </div>
-            <div>
-                <h1>IoT Ops AI Agent</h1>
-                <p>Multi-step reasoning assistant for IoT operations monitoring</p>
-            </div>
-        </header>
 
-        <main class="layout">
-
-            <section class="panel devices-panel">
+            <section id="devicesTab" class="tab-content hidden">
                 <h2>Device Overview</h2>
 
                 <div class="device-list">
@@ -51,39 +46,72 @@
                 </div>
             </section>
 
-            <section class="panel agent-panel">
-                <h2>Agent Console</h2>
+            <section id="promptsTab" class="tab-content hidden">
+                <h2>Prompt Library</h2>
 
-                <div class="input-row">
-                    <input
-                        id="messageInput"
-                        type="text"
-                        placeholder="Example: diagnose gateway-003"
-                    >
-                    <button onclick="sendMessage()">Run</button>
+                <div class="prompt-card" onclick="usePrompt('/diagnose gateway-003')">
+                    /diagnose gateway-003
                 </div>
 
-                <div id="loading" class="loading hidden">
-                    Agent is investigating...
+                <div class="prompt-card" onclick="usePrompt('/diagnose sensor-001')">
+                    /diagnose sensor-001
                 </div>
 
-                <div class="response-box">
-                    <h3>Reasoning Trace</h3>
+                <div class="prompt-card" onclick="usePrompt('/status sensor-002')">
+                    /status sensor-002
+                </div>
 
-                    <div id="reasoningOutput">
+                <div class="prompt-card" onclick="usePrompt('/logs gateway-003')">
+                    /logs gateway-003
+                </div>
 
-                        No reasoning yet.
-
-                    </div>
-
-                    <h3>Final Diagnosis</h3>
-                    <pre id="responseOutput">No diagnosis yet.</pre>
+                <div class="prompt-card" onclick="usePrompt('/alarms sensor-001')">
+                    /alarms sensor-001
                 </div>
             </section>
+        </aside>
 
-        </main>
-    </div>
+        <section id="chatTab" class="chat-panel">
 
-    <script src="/static/script.js"></script>
+            <div class="model-row">
+                <label for="modeSelect">Agent Mode</label>
+                <select id="modeSelect" onchange="setMode(this.value)">
+                    <option value="week1">Week 1 — Single-step tool calling</option>
+                    <option value="week2" selected>Week 2 — Multi-step reasoning agent</option>
+                </select>
+            </div>
+
+            <div class="input-row">
+                <input
+                    id="messageInput"
+                    type="text"
+                    placeholder="Type / to see prompts, or ask: diagnose gateway-003"
+                    oninput="handlePromptSuggestions()"
+                >
+                <button onclick="sendMessage()">Run</button>
+            </div>
+
+            <div id="promptSuggestions" class="suggestions hidden"></div>
+
+            <div id="loading" class="loading hidden">
+                Agent is investigating...
+            </div>
+
+            <div class="reasoning-box">
+                <h3>Reasoning Trace</h3>
+                <div id="reasoningOutput">No reasoning yet.</div>
+            </div>
+
+            <div class="response-box">
+                <h3>Final Diagnosis</h3>
+                <pre id="responseOutput">No diagnosis yet.</pre>
+            </div>
+
+        </section>
+
+    </main>
+</div>
+
+<script src="/static/script.js"></script>
 </body>
 </html>

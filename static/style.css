@@ -5,88 +5,92 @@
 body {
     margin: 0;
     font-family: Arial, Helvetica, sans-serif;
-    background: #ffffff;
-    color: #111111;
+    background: #0f0f0f;
+    color: #ececec;
 }
 
 .app-container {
-    max-width: 1200px;
+    max-width: 1280px;
     margin: 0 auto;
     padding: 32px;
 }
 
 .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 24px;
+    text-align: center;
+    margin-bottom: 32px;
 }
 
 .header h1 {
     margin: 0;
-    font-size: 34px;
+    font-size: 38px;
 }
 
 .header p {
     margin-top: 8px;
-    color: #555555;
+    color: #a1a1aa;
 }
 
-.badge {
-    background: #111111;
-    color: white;
-    padding: 8px 14px;
-    border-radius: 999px;
-    font-size: 14px;
-}
-
-.mode-selector {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 24px;
-}
-
-.layout {
+.app-shell {
     display: grid;
-    grid-template-columns: 1fr 1.4fr;
+    grid-template-columns: 320px 1fr;
     gap: 24px;
 }
 
-.panel {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
+.sidebar,
+.chat-panel {
+    background: #171717;
+    border: 1px solid #2f2f2f;
     border-radius: 18px;
-    padding: 24px;
+    padding: 22px;
 }
 
-.panel h2 {
+.tab-buttons {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.tab-button {
+    flex: 1;
+    background: #262626;
+    color: #d4d4d8;
+    border: 1px solid #3f3f46;
+}
+
+.tab-button.active {
+    background: #ffffff;
+    color: #111111;
+}
+
+.tab-content h2,
+.chat-panel h2 {
     margin-top: 0;
 }
 
 .device-list {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 14px;
 }
 
 .device-card {
-    background: #f7f7f8;
+    background: #212121;
+    border: 1px solid #333333;
+    border-left: 5px solid #737373;
     border-radius: 14px;
-    padding: 18px;
-    border: 1px solid #d1d5db;
-    border-left: 6px solid #999999;
+    padding: 16px;
 }
 
 .device-card.healthy {
-    border-left-color: #111111;
+    border-left-color: #22c55e;
 }
 
 .device-card.warning {
-    border-left-color: #666666;
+    border-left-color: #eab308;
 }
 
 .device-card.critical {
-    border-left-color: #000000;
+    border-left-color: #ef4444;
 }
 
 .device-top {
@@ -100,21 +104,21 @@ body {
 }
 
 .device-top span {
-    text-transform: uppercase;
     font-size: 12px;
     font-weight: bold;
-    color: #555555;
+    text-transform: uppercase;
+    color: #a1a1aa;
 }
 
 .device-card p {
     margin: 8px 0;
-    color: #555555;
+    color: #d4d4d8;
 }
 
 button {
     border: none;
-    background: #111111;
-    color: white;
+    background: #ffffff;
+    color: #111111;
     padding: 10px 14px;
     border-radius: 10px;
     cursor: pointer;
@@ -122,32 +126,74 @@ button {
 }
 
 button:hover {
-    background: #333333;
+    background: #e5e5e5;
+}
+
+.model-row {
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.model-row label {
+    color: #a1a1aa;
+    font-size: 14px;
+}
+
+select {
+    background: #212121;
+    color: #ececec;
+    border: 1px solid #3f3f46;
+    border-radius: 10px;
+    padding: 10px 12px;
 }
 
 .input-row {
     display: flex;
     gap: 12px;
-    margin-bottom: 18px;
+    margin-bottom: 12px;
 }
 
 input {
     flex: 1;
-    padding: 12px 14px;
-    border-radius: 10px;
-    border: 1px solid #d1d5db;
-    background: #ffffff;
-    color: #111111;
+    padding: 13px 14px;
+    border-radius: 12px;
+    border: 1px solid #3f3f46;
+    background: #212121;
+    color: #ececec;
     font-size: 15px;
+}
+
+input::placeholder {
+    color: #8a8a8a;
+}
+
+.suggestions {
+    background: #212121;
+    border: 1px solid #3f3f46;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.suggestion-item {
+    padding: 12px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid #333333;
+}
+
+.suggestion-item:hover {
+    background: #2f2f2f;
 }
 
 .reasoning-box,
 .response-box {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
+    background: #212121;
+    border: 1px solid #333333;
     border-radius: 14px;
     padding: 18px;
-    margin-bottom: 20px;
+    margin-top: 18px;
 }
 
 .reasoning-box h3,
@@ -156,9 +202,9 @@ input {
 }
 
 .reasoning-step {
-    background: #f7f7f8;
-    border: 1px solid #d1d5db;
-    border-left: 4px solid #111111;
+    background: #171717;
+    border: 1px solid #333333;
+    border-left: 4px solid #ffffff;
     border-radius: 12px;
     padding: 16px;
     margin-bottom: 16px;
@@ -166,23 +212,36 @@ input {
 
 .reasoning-step h4 {
     margin-top: 0;
-    margin-bottom: 14px;
 }
 
 pre {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
-    color: #111111;
+    background: #0f0f0f;
+    border: 1px solid #333333;
+    color: #ececec;
     padding: 12px;
-    border-radius: 8px;
+    border-radius: 10px;
     white-space: pre-wrap;
     line-height: 1.5;
     overflow-x: auto;
 }
 
+.prompt-card {
+    background: #212121;
+    border: 1px solid #333333;
+    padding: 14px;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    color: #ececec;
+}
+
+.prompt-card:hover {
+    background: #2f2f2f;
+}
+
 .loading {
-    margin-bottom: 16px;
-    color: #555555;
+    color: #a1a1aa;
+    margin-top: 12px;
 }
 
 .hidden {

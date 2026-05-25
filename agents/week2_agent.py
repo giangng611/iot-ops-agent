@@ -61,6 +61,10 @@ FINAL ANSWER: your final diagnosis
     def run(self, user_input):
         observations = []
 
+        device_id = self.extract_device(user_input)
+
+        print(f"\n[Target Device]: {device_id}")
+
         for step in range(self.max_iterations):
             print(f"\n--- Iteration {step + 1} ---")
 
@@ -87,7 +91,7 @@ FINAL ANSWER: your final diagnosis
             if action not in TOOLS:
                 return f"Invalid tool selected: {action}"
 
-            tool_output = TOOLS[action]()
+            tool_output = TOOLS[action](device_id)
 
             observation = {
                 "tool": action,
@@ -133,6 +137,34 @@ Based only on the observations, provide:
             model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": prompt}
+            ]
+        )
+
+        return response.choices[0].message.content.strip()
+
+    def extract_device(self, user_input):
+
+        prompt = f"""
+    Extract the device ID from this request.
+
+    Available devices:
+    - sensor-001
+    - sensor-002
+    - gateway-003
+
+    User request:
+    {user_input}
+
+    Return ONLY the device ID.
+    """
+
+        response = self.client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": prompt
+                }
             ]
         )
 

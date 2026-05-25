@@ -33,6 +33,7 @@ def main():
     agent = choose_agent()
 
     print("IoT Ops AI Agent")
+    print("Type '/home' to switch agent mode.")
     print("Type 'exit' or 'quit' to quit.\n")
 
     while True:
@@ -40,6 +41,17 @@ def main():
 
         if user_input.lower() in ["exit", "quit"]:
             break
+
+        if user_input in ["1", "2"]:
+            print("You already selected an agent mode. Type a request, or type 'exit' to quit.\n")
+            continue
+
+        if user_input.lower() == "/home":
+            print("\nReturning to home menu...\n")
+
+            agent = choose_agent()
+
+            continue
 
         try:
             answer = agent.run(user_input)

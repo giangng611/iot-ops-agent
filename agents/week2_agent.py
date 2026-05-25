@@ -96,8 +96,8 @@ FINAL ANSWER: your final diagnosis
 
             observations.append(observation)
 
-            print("[Observation]:")
-            print(json.dumps(observations, indent=2))
+            print("[Latest Observation]:")
+            print(json.dumps(observation, indent=2))
 
         final_answer = self.generate_final_answer(user_input, observations)
 

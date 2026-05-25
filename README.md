@@ -1,209 +1,210 @@
 # IoT Ops AI Agent
 
-## Description
+AI-powered IoT operations monitoring platform with multi-step reasoning agents, real-time telemetry simulation, and fleet-level diagnostics.
 
-IoT Ops AI Agent is a Python-based AI operations assistant powered by the OpenAI API.
+---
+
+## Overview
+
+IoT Ops AI Agent is a simulated observability platform designed to monitor and diagnose IoT infrastructure using LLM-powered agents.
 
 The project demonstrates the evolution from:
-- a single-step LLM tool-calling assistant,
-to
-- a multi-step reasoning AI agent capable of iterative investigation workflows.
 
-The system simulates IoT operational diagnostics using:
-- tool orchestration,
-- structured observations,
-- conversation memory,
-- and reasoning loops.
+- **IOAA v1** → single-step tool calling assistant
+- **IOAA v2** → multi-step reasoning agent with iterative diagnostics
+
+The platform includes:
+
+- Real-time telemetry simulation
+- SQLite-backed device monitoring
+- Fleet-wide health analysis
+- Streaming reasoning traces
+- AI-assisted diagnostics
+- Web dashboard interface
 
 ---
 
-# Features
+## Features
 
-## Week 1 — Single-Step Tool Calling
+### IOAA v1 — Single-Step Tool Calling
+- Basic LLM tool invocation
+- One-shot device diagnostics
+- Simple operational assistant
 
-- OpenAI API integration
-- LLM-based tool selection
-- Structured operational responses
-- Conversation memory
-- JSON-based tool outputs
+### IOAA v2 — Multi-Step Reasoning Agent
+- ReAct-style reasoning loop
+- Multi-step investigations
+- System-wide diagnostics
+- Fleet-level alarm analysis
+- Real-time reasoning trace streaming
 
-Workflow:
+### Real-Time Telemetry Simulation
+- 10 simulated IoT devices
+- Periodic telemetry updates
+- Dynamic device health states
+- CPU / memory / heartbeat monitoring
+
+### Dashboard UI
+- ChatGPT-inspired interface
+- Devices tab
+- Prompt library
+- Chat history sidebar
+- Real-time device refresh
+- Streaming reasoning visualization
+
+---
+
+## Architecture
 
 ```text
-User Request
-    ↓
-Tool Selection
-    ↓
-Tool Execution
-    ↓
-LLM Response
+Virtual Devices
+        ↓
+Telemetry Simulator
+        ↓
+SQLite Database
+        ↓
+Flask Backend
+        ↓
+AI Agent Layer
+        ↓
+Dashboard UI
 ```
 
 ---
 
-## Week 2 — Multi-Step Reasoning Agent
-
-- Iterative reasoning loop
-- Multi-tool orchestration
-- Observation-driven analysis
-- Step-by-step investigation
-- AI agent workflow architecture
-
-Workflow:
-
-```text
-User Request
-    ↓
-Thought
-    ↓
-Action (Tool)
-    ↓
-Observation
-    ↓
-Reason Again
-    ↓
-More Tools if Needed
-    ↓
-Final Diagnosis
-```
-
----
-
-# Available Tools
-
-- `check_device_status`
-- `get_recent_logs`
-- `check_alarm_rules`
-
----
-
-# Example Week 2 Execution
-
-```text
-User: diagnose the system issue
-
---- Iteration 1 ---
-Thought → check device health
-Action → check_device_status
-
---- Iteration 2 ---
-Thought → inspect logs
-Action → get_recent_logs
-
---- Iteration 3 ---
-Thought → verify alarms
-Action → check_alarm_rules
-
-Final Diagnosis Generated
-```
-
----
-
-# Tech Stack
+## Tech Stack
 
 - Python
+- Flask
+- SQLite
 - OpenAI API
-- GPT-4.1-mini
-- dotenv
+- HTML / CSS / Vanilla JavaScript
 
 ---
 
-# Project Structure
+## Example Workflow
+
+### Fleet-Level Diagnosis
+
+```text
+User:
+"overview system health"
+
+Agent:
+1. check_system_overview
+2. check_system_alarms
+3. Generate final diagnosis
+```
+
+### Device-Level Investigation
+
+```text
+User:
+"diagnose gateway-003"
+
+Agent:
+1. check_device_status
+2. get_recent_logs
+3. check_alarm_rules
+4. Generate final diagnosis
+```
+
+---
+
+## Project Structure
 
 ```text
 iot-ops-agent/
-├── main.py
-├── tools.py
-├── prompts.py
+│
+├── app.py
+├── simulator.py
+├── database.py
+├── telemetry.db
+│
 ├── agents/
-│   ├── __init__.py
 │   ├── week1_agent.py
 │   └── week2_agent.py
-├── requirements.txt
-├── README.md
-├── .env
-└── .gitignore
+│
+├── templates/
+│   └── index.html
+│
+├── static/
+│   ├── style.css
+│   └── script.js
+│
+├── tools.py
+├── prompts.py
+└── README.md
 ```
 
 ---
 
-# Installation
+## Installation
 
-Clone the repository:
+### Clone repository
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/giangng611/iot-ops-agent.git
 cd iot-ops-agent
 ```
 
-Install dependencies:
+### Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Create a `.env` file:
-
-```text
-OPENAI_API_KEY=your_api_key_here
-```
-
-Run the project:
+### Initialize database
 
 ```bash
-python3 main.py
+python3 init_db.py
+```
+
+### Start telemetry simulator
+
+```bash
+python3 simulator.py
+```
+
+### Start Flask application
+
+```bash
+python3 app.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:5000
 ```
 
 ---
 
-# Agent Modes
+## Screenshots
 
-When the application starts, choose an agent mode:
+Add screenshots here:
 
-```text
-1. Week 1 - Single-step tool calling
-2. Week 2 - Multi-step reasoning agent
-```
-
-Use:
-
-```text
-/home
-```
-
-to return to the mode selection menu.
-
-Use:
-
-```text
-exit
-```
-
-to quit the application.
+- Home dashboard
+- Fleet diagnostics
+- Real-time reasoning trace
+- Devices tab
+- Prompts tab
 
 ---
 
-# Learning Focus
+## Future Improvements
 
-This project focuses on:
-- AI agent fundamentals
-- LLM orchestration
-- Tool calling
-- ReAct-style reasoning loops
-- Operational AI workflows
-- Observability-oriented systems
-- Prompt engineering
-- Backend AI architecture
+- Supabase / PostgreSQL integration
+- Real IoT telemetry ingestion
+- WebSocket live updates
+- Authentication
+- Historical analytics
+- AI anomaly prediction
+- Production deployment
 
 ---
 
-# Future Improvements
+## Author
 
-- Autonomous planning
-- Real API integrations
-- Telegram bot support
-- LangChain / LangGraph integration
-- MongoDB integration
-- Grafana integration
-- Advanced memory systems
-- Real observability workflows
+Giang Nguyen  
+Computer Science @ University of Georgia

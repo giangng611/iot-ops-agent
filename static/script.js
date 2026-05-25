@@ -14,38 +14,42 @@ function setMode(mode) {
     currentMode = mode;
 }
 
-function showTab(tabName) {
-    const devicesTab = document.getElementById("devicesTab");
-    const promptsTab = document.getElementById("promptsTab");
-    const chatTab = document.getElementById("chatTab");
+function showTab(tabName, buttonElement) {
+    const pages = document.querySelectorAll(".tab-page");
 
-    devicesTab.classList.add("hidden");
-    promptsTab.classList.add("hidden");
-    chatTab.classList.add("hidden");
+    pages.forEach(page => {
+        page.classList.remove("active-page");
+    });
 
-    document.querySelectorAll(".tab-button").forEach(button => {
+    document.querySelectorAll(".top-tab").forEach(button => {
         button.classList.remove("active");
     });
 
-    if (tabName === "chat") {
-        chatTab.classList.remove("hidden");
-    }
+    document.getElementById(tabName + "Tab").classList.add("active-page");
 
-    if (tabName === "devices") {
-        devicesTab.classList.remove("hidden");
+    if (buttonElement) {
+        buttonElement.classList.add("active");
     }
+}
 
-    if (tabName === "prompts") {
-        promptsTab.classList.remove("hidden");
-    }
-
-    event.target.classList.add("active");
+function newChat() {
+    document.getElementById("messageInput").value = "";
+    document.getElementById("reasoningOutput").innerHTML = "No reasoning yet.";
+    document.getElementById("responseOutput").textContent = "No diagnosis yet.";
 }
 
 function usePrompt(promptText) {
     const input = document.getElementById("messageInput");
     input.value = promptText;
-    showTab("chat");
+
+    const homeButton = document.querySelector(".top-tab");
+    showTab("home", homeButton);
+}
+
+function handleEnter(event) {
+    if (event.key === "Enter") {
+        sendMessage();
+    }
 }
 
 function handlePromptSuggestions() {
@@ -90,6 +94,8 @@ async function sendMessage() {
         output.textContent = "Please enter a request.";
         return;
     }
+
+    addHistoryItem(message);
 
     suggestions.classList.add("hidden");
     reasoningOutput.innerHTML = "No reasoning yet.";
@@ -193,6 +199,36 @@ async function sendStreamMessage(message) {
 function diagnoseDevice(deviceId) {
     const input = document.getElementById("messageInput");
     input.value = `/diagnose ${deviceId}`;
-    showTab("chat");
+
+    const homeButton = document.querySelector(".top-tab");
+    showTab("home", homeButton);
+
     sendMessage();
+}
+
+function addHistoryItem(message) {
+    const history = document.getElementById("chatHistory");
+
+    const item = document.createElement("div");
+    item.className = "history-item";
+    item.textContent = summarizeHistory(message);
+
+    history.prepend(item);
+}
+
+function summarizeHistory(message) {
+
+    if (message.includes("gateway-003")) {
+        return "Investigated gateway instability";
+    }
+
+    if (message.includes("sensor-001")) {
+        return "Checked sensor-001";
+    }
+
+    if (message.includes("sensor-002")) {
+        return "Reviewed sensor-002";
+    }
+
+    return message.slice(0, 40);
 }

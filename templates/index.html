@@ -7,109 +7,169 @@
 </head>
 
 <body>
-<div class="app-container">
+<div class="app-shell">
 
-    <header class="header">
-        <h1>IoT Ops AI Agent</h1>
-        <p>Multi-step reasoning assistant for IoT operations monitoring</p>
-    </header>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h2>IoT Ops</h2>
+            <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
+        </div>
 
-    <main class="app-shell">
-
-        <aside class="sidebar">
-            <div class="tab-buttons">
-                <button class="tab-button active" onclick="showTab('chat')">Chat</button>
-                <button class="tab-button" onclick="showTab('devices')">Devices</button>
-                <button class="tab-button" onclick="showTab('prompts')">Prompts</button>
+        <div class="history-section">
+            <p class="sidebar-label">Chat History</p>
+            <div id="chatHistory" class="chat-history">
+                <div class="history-item active">Current session</div>
             </div>
+        </div>
+    </aside>
 
-            <section id="devicesTab" class="tab-content hidden">
-                <h2>Device Overview</h2>
+    <section class="main-area">
 
-                <div class="device-list">
-                    {% for device_id, device in devices.items() %}
-                    <div class="device-card {{ device.status }}">
-                        <div class="device-top">
-                            <h3>{{ device_id }}</h3>
-                            <span>{{ device.status }}</span>
+        <nav class="topbar">
+            <button class="top-tab active" onclick="showTab('home', this)">Home</button>
+            <button class="top-tab" onclick="showTab('devices', this)">Devices</button>
+            <button class="top-tab" onclick="showTab('prompts', this)">Prompts</button>
+        </nav>
+
+        <main class="content-scroll">
+
+            <section id="homeTab" class="tab-page active-page">
+                <div class="hero">
+                    <h1>IoT Ops AI Agent</h1>
+                    <p>Multi-step reasoning assistant for IoT operations monitoring</p>
+                </div>
+
+                <div class="chat-card">
+                    <div class="input-row">
+                        <select
+                            id="modeSelect"
+                            class="mode-inline"
+                            onchange="setMode(this.value)"
+                        >
+                            <option value="week1">
+                                Week 1
+                            </option>
+
+                            <option value="week2" selected>
+                                Week 2
+                            </option>
+                        </select>
+
+                        <input
+                            id="messageInput"
+                            type="text"
+                            placeholder="Type / to see prompts..."
+                            oninput="handlePromptSuggestions()"
+                            onkeydown="handleEnter(event)"
+                        >
+
+                        <button onclick="sendMessage()">
+                            Run
+                        </button>
+
+                    </div>
+
+                    <div id="promptSuggestions" class="suggestions hidden"></div>
+
+                    <div id="loading" class="loading hidden">
+                        Agent is investigating...
+                    </div>
+
+                    <div class="output-grid">
+                        <div class="reasoning-box">
+                            <h3>Reasoning Trace</h3>
+                            <div id="reasoningOutput">No reasoning yet.</div>
                         </div>
 
-                        <p>CPU: {{ device.cpu_usage }}</p>
-                        <p>Memory: {{ device.memory_usage }}</p>
-                        <p>Heartbeat: {{ device.last_heartbeat }}</p>
-
-                        <button onclick="diagnoseDevice('{{ device_id }}')">
-                            Diagnose
-                        </button>
+                        <div class="response-box">
+                            <h3>Final Diagnosis</h3>
+                            <pre id="responseOutput">No diagnosis yet.</pre>
+                        </div>
                     </div>
-                    {% endfor %}
                 </div>
             </section>
 
-            <section id="promptsTab" class="tab-content hidden">
-                <h2>Prompt Library</h2>
-
-                <div class="prompt-card" onclick="usePrompt('/diagnose gateway-003')">
-                    /diagnose gateway-003
+            <section id="devicesTab" class="tab-page">
+                <div class="page-header">
+                    <h1>Devices</h1>
+                    <p>Current simulated IoT device inventory</p>
                 </div>
 
-                <div class="prompt-card" onclick="usePrompt('/diagnose sensor-001')">
-                    /diagnose sensor-001
-                </div>
+                <div class="table-card">
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>Device ID</th>
+                            <th>Status</th>
+                            <th>CPU</th>
+                            <th>Memory</th>
+                            <th>Heartbeat</th>
+                            <th>Action</th>
+                        </tr>
+                        </thead>
 
-                <div class="prompt-card" onclick="usePrompt('/status sensor-002')">
-                    /status sensor-002
-                </div>
-
-                <div class="prompt-card" onclick="usePrompt('/logs gateway-003')">
-                    /logs gateway-003
-                </div>
-
-                <div class="prompt-card" onclick="usePrompt('/alarms sensor-001')">
-                    /alarms sensor-001
+                        <tbody>
+                        {% for device_id, device in devices.items() %}
+                        <tr>
+                            <td>{{ device_id }}</td>
+                            <td><span class="status-pill {{ device.status }}">{{ device.status }}</span></td>
+                            <td>{{ device.cpu_usage }}</td>
+                            <td>{{ device.memory_usage }}</td>
+                            <td>{{ device.last_heartbeat }}</td>
+                            <td>
+                                <button onclick="diagnoseDevice('{{ device_id }}')">
+                                    Diagnose
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
             </section>
-        </aside>
 
-        <section id="chatTab" class="chat-panel">
+            <section id="promptsTab" class="tab-page">
+                <div class="page-header">
+                    <h1>Prompts</h1>
+                    <p>Preset commands for common IoT operations workflows</p>
+                </div>
 
-            <div class="model-row">
-                <label for="modeSelect">Agent Mode</label>
-                <select id="modeSelect" onchange="setMode(this.value)">
-                    <option value="week1">Week 1 — Single-step tool calling</option>
-                    <option value="week2" selected>Week 2 — Multi-step reasoning agent</option>
-                </select>
-            </div>
+                <div class="prompt-grid">
+                    <div class="prompt-card" onclick="usePrompt('/diagnose gateway-003')">
+                        <h3>/diagnose gateway-003</h3>
+                        <p>Run multi-step diagnosis for the critical gateway.</p>
+                    </div>
 
-            <div class="input-row">
-                <input
-                    id="messageInput"
-                    type="text"
-                    placeholder="Type / to see prompts, or ask: diagnose gateway-003"
-                    oninput="handlePromptSuggestions()"
-                >
-                <button onclick="sendMessage()">Run</button>
-            </div>
+                    <div class="prompt-card" onclick="usePrompt('/diagnose sensor-001')">
+                        <h3>/diagnose sensor-001</h3>
+                        <p>Investigate the warning sensor.</p>
+                    </div>
 
-            <div id="promptSuggestions" class="suggestions hidden"></div>
+                    <div class="prompt-card" onclick="usePrompt('/diagnose sensor-002')">
+                        <h3>/diagnose sensor-002</h3>
+                        <p>Verify the healthy device state.</p>
+                    </div>
 
-            <div id="loading" class="loading hidden">
-                Agent is investigating...
-            </div>
+                    <div class="prompt-card" onclick="usePrompt('/status sensor-001')">
+                        <h3>/status sensor-001</h3>
+                        <p>Check current device status.</p>
+                    </div>
 
-            <div class="reasoning-box">
-                <h3>Reasoning Trace</h3>
-                <div id="reasoningOutput">No reasoning yet.</div>
-            </div>
+                    <div class="prompt-card" onclick="usePrompt('/logs gateway-003')">
+                        <h3>/logs gateway-003</h3>
+                        <p>Inspect recent logs for gateway issues.</p>
+                    </div>
 
-            <div class="response-box">
-                <h3>Final Diagnosis</h3>
-                <pre id="responseOutput">No diagnosis yet.</pre>
-            </div>
+                    <div class="prompt-card" onclick="usePrompt('/alarms sensor-001')">
+                        <h3>/alarms sensor-001</h3>
+                        <p>Check active alarms and thresholds.</p>
+                    </div>
+                </div>
+            </section>
 
-        </section>
+        </main>
 
-    </main>
+    </section>
 </div>
 
 <script src="/static/script.js"></script>

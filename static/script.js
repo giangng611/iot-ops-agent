@@ -88,6 +88,7 @@ async function sendMessage() {
     const output = document.getElementById("responseOutput");
     const reasoningOutput = document.getElementById("reasoningOutput");
     const loading = document.getElementById("loading");
+    const runButton = document.querySelector(".run-button");
     const suggestions = document.getElementById("promptSuggestions");
 
     const message = input.value.trim();
@@ -104,37 +105,48 @@ async function sendMessage() {
     output.textContent = "";
     loading.classList.remove("hidden");
 
-    if (currentMode === "week2") {
-        await sendStreamMessage(message);
-        loading.classList.add("hidden");
-        return;
-    }
+    runButton.disabled = true;
+    runButton.innerHTML = `
+        Running...
+        <span>Please wait</span>
+    `;
 
     try {
-        const response = await fetch("/api/diagnose", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                message: message,
-                mode: currentMode
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.error) {
-            output.textContent = "Error: " + data.error;
+        if (currentMode === "week2") {
+            await sendStreamMessage(message);
         } else {
-            output.textContent = data.response;
+            const response = await fetch("/api/diagnose", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    message: message,
+                    mode: currentMode
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.error) {
+                output.textContent = "Error: " + data.error;
+            } else {
+                output.textContent = data.response;
+            }
         }
 
     } catch (error) {
         output.textContent = "Request failed: " + error;
-    }
 
-    loading.classList.add("hidden");
+    } finally {
+        loading.classList.add("hidden");
+
+        runButton.disabled = false;
+        runButton.innerHTML = `
+            Run
+            <span>Enter ↵</span>
+        `;
+    }
 }
 
 async function sendStreamMessage(message) {

@@ -6,7 +6,7 @@ import json
 
 from agents.week1_agent import Week1Agent
 from agents.week2_agent import Week2Agent
-from devices import DEVICES
+from database import get_all_latest_devices
 
 load_dotenv()
 
@@ -19,7 +19,8 @@ week2_agent = Week2Agent(client)
 
 @app.route("/")
 def home():
-    return render_template("index.html", devices=DEVICES)
+    devices = get_all_latest_devices()
+    return render_template("index.html", devices=devices)
 
 
 @app.route("/api/diagnose", methods=["POST"])
@@ -70,5 +71,12 @@ def diagnose_stream():
 
     return Response(generate(), mimetype="text/event-stream")
 
+@app.route("/api/devices", methods=["GET"])
+def get_devices():
+    devices = get_all_latest_devices()
+    return jsonify({
+        "devices": devices
+    })
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5001)

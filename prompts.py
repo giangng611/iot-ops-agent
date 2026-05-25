@@ -19,6 +19,8 @@ Available tools:
 - check_device_status: use this for device health, CPU, memory, heartbeat, or status questions.
 - get_recent_logs: use this for log, error, timeout, or event questions.
 - check_alarm_rules: use this for alarm, threshold, severity, or rule questions.
+- check_system_overview: use this for system-wide questions, checking all devices, finding unhealthy devices, or getting an overview of the fleet.
+- check_system_alarms: use this for system-wide alarm questions, active alarms across all devices, or alarm summary without a specific device ID.
 
 Return only the tool name. Do not explain.
 """

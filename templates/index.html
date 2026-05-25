@@ -109,16 +109,16 @@
                         </tr>
                         </thead>
 
-                        <tbody>
-                        {% for device_id, device in devices.items() %}
+                        <tbody id="deviceTableBody">
+                        {% for device in devices %}
                         <tr>
-                            <td>{{ device_id }}</td>
+                            <td>{{ device.device_id }}</td>
                             <td><span class="status-pill {{ device.status }}">{{ device.status }}</span></td>
-                            <td>{{ device.cpu_usage }}</td>
-                            <td>{{ device.memory_usage }}</td>
-                            <td>{{ device.last_heartbeat }}</td>
+                            <td>{{ device.cpu_usage }}%</td>
+                            <td>{{ device.memory_usage }}%</td>
+                            <td>{{ device.heartbeat_delay }}s ago</td>
                             <td>
-                                <button onclick="diagnoseDevice('{{ device_id }}')">
+                                <button onclick="diagnoseDevice('{{ device.device_id }}')">
                                     Diagnose
                                 </button>
                             </td>
@@ -136,34 +136,34 @@
                 </div>
 
                 <div class="prompt-grid">
-                    <div class="prompt-card" onclick="usePrompt('/diagnose gateway-003')">
-                        <h3>/diagnose gateway-003</h3>
-                        <p>Run multi-step diagnosis for the critical gateway.</p>
+                    <div class="prompt-card" onclick="usePrompt('/overview system health')">
+                        <h3>/overview system health</h3>
+                        <p>Check the overall health of all IoT devices.</p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/diagnose sensor-001')">
-                        <h3>/diagnose sensor-001</h3>
-                        <p>Investigate the warning sensor.</p>
+                    <div class="prompt-card" onclick="usePrompt('/check all unhealthy devices')">
+                        <h3>/check all unhealthy devices</h3>
+                        <p>Find devices currently in warning or critical state.</p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/diagnose sensor-002')">
-                        <h3>/diagnose sensor-002</h3>
-                        <p>Verify the healthy device state.</p>
+                    <div class="prompt-card" onclick="usePrompt('/find critical devices')">
+                        <h3>/find critical devices</h3>
+                        <p>Identify devices that require urgent attention.</p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/status sensor-001')">
-                        <h3>/status sensor-001</h3>
-                        <p>Check current device status.</p>
+                    <div class="prompt-card" onclick="usePrompt('/diagnose system issue')">
+                        <h3>/diagnose system issue</h3>
+                        <p>Run a general system-level investigation.</p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/logs gateway-003')">
-                        <h3>/logs gateway-003</h3>
-                        <p>Inspect recent logs for gateway issues.</p>
+                    <div class="prompt-card" onclick="usePrompt('/check devices with delayed heartbeat')">
+                        <h3>/check devices with delayed heartbeat</h3>
+                        <p>Look for devices that may be offline or unstable.</p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/alarms sensor-001')">
-                        <h3>/alarms sensor-001</h3>
-                        <p>Check active alarms and thresholds.</p>
+                    <div class="prompt-card" onclick="usePrompt('/show devices with alarms')">
+                        <h3>/show devices with alarms</h3>
+                        <p>Review devices with active alarm conditions.</p>
                     </div>
                 </div>
             </section>

@@ -2,6 +2,13 @@ import json
 
 from tools import TOOLS
 from prompts import WEEK2_AGENT_PROMPT
+from database import get_all_latest_devices
+
+
+SYSTEM_LEVEL_TOOLS = [
+    "check_system_overview",
+    "check_system_alarms"
+]
 
 
 class Week2Agent:
@@ -10,41 +17,269 @@ class Week2Agent:
         self.max_iterations = 3
         self.conversation_history = []
 
-    def choose_next_step(self, user_input, observations):
+    def run(self, user_input):
+        observations = []
+        target = self.extract_target(user_input)
+
+        for step in range(self.max_iterations):
+            model_output = self.choose_next_step(
+                user_input=user_input,
+                observations=observations,
+                target=target
+            )
+
+            if model_output.startswith("FINAL ANSWER:"):
+                final_answer = self.clean_final_answer(model_output)
+                self.save_to_history(user_input, final_answer)
+
+                return {
+                    "final_answer": final_answer,
+                    "steps": observations
+                }
+
+            thought, action = self.parse_action(model_output)
+
+            if not action:
+                final_answer = self.generate_final_answer(
+                    user_input=user_input,
+                    observations=observations
+                )
+
+                self.save_to_history(user_input, final_answer)
+
+                return {
+                    "final_answer": final_answer,
+                    "steps": observations
+                }
+
+            if action not in TOOLS:
+                final_answer = f"Invalid tool selected: {action}"
+
+                return {
+                    "final_answer": final_answer,
+                    "steps": observations
+                }
+
+            tool_output = self.execute_tool(
+                action=action,
+                target=target
+            )
+
+            observation = self.build_observation(
+                iteration=step + 1,
+                thought=thought,
+                action=action,
+                output=tool_output
+            )
+
+            observations.append(observation)
+
+        final_answer = self.generate_final_answer(
+            user_input=user_input,
+            observations=observations
+        )
+
+        self.save_to_history(user_input, final_answer)
+
+        return {
+            "final_answer": final_answer,
+            "steps": observations
+        }
+
+    def run_stream(self, user_input):
+        observations = []
+        target = self.extract_target(user_input)
+
+        for step in range(self.max_iterations):
+            model_output = self.choose_next_step(
+                user_input=user_input,
+                observations=observations,
+                target=target
+            )
+
+            if model_output.startswith("FINAL ANSWER:"):
+                final_answer = self.clean_final_answer(model_output)
+
+                self.save_to_history(user_input, final_answer)
+
+                yield {
+                    "type": "final",
+                    "final_answer": final_answer
+                }
+
+                return
+
+            thought, action = self.parse_action(model_output)
+
+            if not action:
+                final_answer = self.generate_final_answer(
+                    user_input=user_input,
+                    observations=observations
+                )
+
+                self.save_to_history(user_input, final_answer)
+
+                yield {
+                    "type": "final",
+                    "final_answer": final_answer
+                }
+
+                return
+
+            yield {
+                "type": "thought",
+                "iteration": step + 1,
+                "thought": thought,
+                "action": action
+            }
+
+            if action not in TOOLS:
+                yield {
+                    "type": "error",
+                    "error": f"Invalid tool selected: {action}"
+                }
+                return
+
+            tool_output = self.execute_tool(
+                action=action,
+                target=target
+            )
+
+            observation = self.build_observation(
+                iteration=step + 1,
+                thought=thought,
+                action=action,
+                output=tool_output
+            )
+
+            observations.append(observation)
+
+            yield {
+                "type": "observation",
+                "iteration": step + 1,
+                "observation": observation
+            }
+
+        final_answer = self.generate_final_answer(
+            user_input=user_input,
+            observations=observations
+        )
+
+        self.save_to_history(user_input, final_answer)
+
+        yield {
+            "type": "final",
+            "final_answer": final_answer
+        }
+
+    def extract_target(self, user_input):
+        devices = get_all_latest_devices()
+        device_ids = [
+            device["device_id"]
+            for device in devices
+        ]
+
+        prompt = f"""
+Extract the target from the user request.
+
+Available devices:
+{json.dumps(device_ids, indent=2)}
+
+User request:
+{user_input}
+
+If the request is about the whole system, all devices, fleet health,
+overall health, unhealthy devices, critical devices, or alarms across devices,
+return SYSTEM.
+
+Otherwise, return exactly one device ID from the list.
+
+Return ONLY one value:
+- SYSTEM
+- or a device ID
+"""
+
+        response = self.client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": prompt
+                }
+            ]
+        )
+
+        target = response.choices[0].message.content.strip()
+
+        if target not in device_ids and target != "SYSTEM":
+            return "SYSTEM"
+
+        return target
+
+    def choose_next_step(self, user_input, observations, target):
         prompt = f"""
 {WEEK2_AGENT_PROMPT}
 
 User request:
 {user_input}
-    
+
+Target:
+{target}
+
 Previous conversation:
 {json.dumps(self.conversation_history, indent=2)}
-    
+
 Current observations:
 {json.dumps(observations, indent=2)}
-    
+
 Available tools:
 - check_device_status
 - get_recent_logs
 - check_alarm_rules
+- check_system_overview
+- check_system_alarms
+
+Tool rules:
+- Use check_system_overview for fleet-wide health, all devices, unhealthy devices, or critical devices.
+- Use check_system_alarms for fleet-wide alarm summaries.
+- Use check_device_status only when Target is a specific device ID.
+- Use get_recent_logs only when Target is a specific device ID.
+- Use check_alarm_rules only when Target is a specific device ID.
+
+If Target is SYSTEM, do not use device-specific tools.
 
 ACTION must be exactly one tool name only.
 Do not include arguments, JSON, parentheses, or explanations.
-    
+Put THOUGHT and ACTION on separate lines.
+Do not include ACTION inside THOUGHT.
+
 If more information is needed, respond in this exact format:
 THOUGHT: your reasoning
 ACTION: tool_name
 
-Put THOUGHT and ACTION on separate lines.
-Do not include ACTION inside THOUGHT.
-    
+If enough information is already available from previous observations,
+do NOT call additional tools unnecessarily.
+
+When system-level tools already provide sufficient evidence,
+prefer generating a FINAL ANSWER instead of calling more tools.
+
+Do not repeat investigations already covered by previous observations.
+
 If enough information is available, respond in this exact format:
 FINAL ANSWER: your final diagnosis
+
+Maximum reasoning guideline:
+- Fleet-level diagnosis usually requires only 1-2 system-level tools.
+- Avoid device-specific tools during fleet-wide investigations.
 """
+
         response = self.client.chat.completions.create(
             model="gpt-4.1-mini",
-            messages = [
-                {"role": "system", "content": prompt}
+            messages=[
+                {
+                    "role": "system",
+                    "content": prompt
+                }
             ]
         )
 
@@ -54,78 +289,37 @@ FINAL ANSWER: your final diagnosis
         thought = ""
         action = ""
 
-        if "ACTION:" in model_output:
-            before_action, after_action = model_output.split("ACTION:", 1)
+        if "ACTION:" not in model_output:
+            return thought, action
 
-            thought = before_action.replace("THOUGHT:", "").strip()
+        before_action, after_action = model_output.split("ACTION:", 1)
 
-            action = after_action.strip()
-            action = action.split()[0]
-            action = action.replace("`", "").strip()
+        thought = before_action.replace("THOUGHT:", "").strip()
+
+        action = after_action.strip()
+        action = action.split()[0]
+        action = action.replace("`", "").strip()
 
         return thought, action
 
-    def run(self, user_input):
-        observations = []
+    def execute_tool(self, action, target):
+        if action in SYSTEM_LEVEL_TOOLS:
+            return TOOLS[action]()
 
-        device_id = self.extract_device(user_input)
-
-        print(f"\n[Target Device]: {device_id}")
-
-        for step in range(self.max_iterations):
-            print(f"\n--- Iteration {step + 1} ---")
-
-            model_output = self.choose_next_step(user_input, observations)
-
-            if model_output.startswith("FINAL ANSWER:"):
-                final_answer = model_output.replace("FINAL ANSWER:", "").strip()
-
-                self.conversation_history.append({
-                    "role": "user",
-                    "content": user_input
-                })
-                self.conversation_history.append({
-                    "role": "assistant",
-                    "content": final_answer
-                })
-
-                return final_answer
-            thought, action = self.parse_action(model_output)
-
-            print(f"[Thought]: {thought}")
-            print(f"[Action]: {action}")
-
-            if action not in TOOLS:
-                return f"Invalid tool selected: {action}"
-
-            tool_output = TOOLS[action](device_id)
-
-            observation = {
-                "iteration": step + 1,
-                "thought": thought,
-                "action": action,
-                "output": tool_output
+        if target == "SYSTEM":
+            return {
+                "error": "Device-specific tool called without a device target",
+                "action": action
             }
 
-            observations.append(observation)
+        return TOOLS[action](target)
 
-            print("[Latest Observation]:")
-            print(json.dumps(observation, indent=2))
-
-        final_answer = self.generate_final_answer(user_input, observations)
-
-        self.conversation_history.append({
-            "role": "user",
-            "content": user_input
-        })
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": final_answer
-        })
-
+    def build_observation(self, iteration, thought, action, output):
         return {
-            "final_answer": final_answer,
-            "steps": observations
+            "iteration": iteration,
+            "thought": thought,
+            "action": action,
+            "output": output
         }
 
     def generate_final_answer(self, user_input, observations):
@@ -148,31 +342,6 @@ Based only on the observations, provide:
         response = self.client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
-                {"role": "system", "content": prompt}
-            ]
-        )
-
-        return response.choices[0].message.content.strip()
-
-    def extract_device(self, user_input):
-
-        prompt = f"""
-    Extract the device ID from this request.
-
-    Available devices:
-    - sensor-001
-    - sensor-002
-    - gateway-003
-
-    User request:
-    {user_input}
-
-    Return ONLY the device ID.
-    """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
                 {
                     "role": "system",
                     "content": prompt
@@ -182,58 +351,16 @@ Based only on the observations, provide:
 
         return response.choices[0].message.content.strip()
 
-    def run_stream(self, user_input):
-        observations = []
+    def clean_final_answer(self, model_output):
+        return model_output.replace("FINAL ANSWER:", "").strip()
 
-        for step in range(self.max_iterations):
-            model_output = self.choose_next_step(user_input, observations)
+    def save_to_history(self, user_input, final_answer):
+        self.conversation_history.append({
+            "role": "user",
+            "content": user_input
+        })
 
-            if model_output.startswith("FINAL ANSWER:"):
-                final_answer = model_output.replace("FINAL ANSWER:", "").strip()
-                yield {
-                    "type": "final",
-                    "final_answer": final_answer
-                }
-                return
-
-            thought, action = self.parse_action(model_output)
-
-            yield {
-                "type": "thought",
-                "iteration": step + 1,
-                "thought": thought,
-                "action": action
-            }
-
-            if action not in TOOLS:
-                yield {
-                    "type": "error",
-                    "error": f"Invalid tool selected: {action}"
-                }
-                return
-
-            device_id = self.extract_device(user_input)
-
-            tool_output = TOOLS[action](device_id)
-
-            observation = {
-                "iteration": step + 1,
-                "thought": thought,
-                "action": action,
-                "output": tool_output
-            }
-
-            observations.append(observation)
-
-            yield {
-                "type": "observation",
-                "iteration": step + 1,
-                "observation": observation
-            }
-
-        final_answer = self.generate_final_answer(user_input, observations)
-
-        yield {
-            "type": "final",
-            "final_answer": final_answer
-        }
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": final_answer
+        })

@@ -1,13 +1,15 @@
 let currentMode = "week2";
 
 const prompts = [
-    "/diagnose gateway-003",
-    "/diagnose sensor-001",
-    "/diagnose sensor-002",
-    "/status sensor-001",
-    "/status sensor-002",
-    "/logs gateway-003",
-    "/alarms sensor-001"
+    "/overview system health",
+    "/check all unhealthy devices",
+    "/find critical devices",
+    "/diagnose system issue",
+    "/check devices with delayed heartbeat",
+    "/show devices with alarms",
+    "/review current IoT fleet status",
+    "/summarize current fleet risk",
+    "/prioritize devices needing attention"
 ];
 
 function setMode(mode) {
@@ -179,6 +181,10 @@ async function sendStreamMessage(message) {
                 const steps = document.querySelectorAll(".reasoning-step");
                 const latestStep = steps[steps.length - 1];
 
+                if (!latestStep) {
+                    return;
+                }
+
                 latestStep.innerHTML += `
                     <p><strong>Observation:</strong></p>
                     <pre>${JSON.stringify(event.observation.output, null, 2)}</pre>
@@ -217,18 +223,72 @@ function addHistoryItem(message) {
 }
 
 function summarizeHistory(message) {
+    const lowerMessage = message.toLowerCase();
 
-    if (message.includes("gateway-003")) {
-        return "Investigated gateway instability";
+    if (lowerMessage.includes("overview") || lowerMessage.includes("fleet")) {
+        return "Reviewed fleet health";
     }
 
-    if (message.includes("sensor-001")) {
-        return "Checked sensor-001";
+    if (lowerMessage.includes("unhealthy")) {
+        return "Checked unhealthy devices";
     }
 
-    if (message.includes("sensor-002")) {
-        return "Reviewed sensor-002";
+    if (lowerMessage.includes("critical")) {
+        return "Found critical devices";
+    }
+
+    if (lowerMessage.includes("heartbeat")) {
+        return "Checked heartbeat delays";
+    }
+
+    if (lowerMessage.includes("alarm")) {
+        return "Reviewed active alarms";
+    }
+
+    if (lowerMessage.includes("diagnose")) {
+        return "Ran device diagnosis";
     }
 
     return message.slice(0, 40);
 }
+
+async function refreshDevices() {
+    try {
+        const response = await fetch("/api/devices");
+        const data = await response.json();
+
+        const tableBody = document.getElementById("deviceTableBody");
+
+        if (!tableBody) {
+            return;
+        }
+
+        tableBody.innerHTML = "";
+
+        data.devices.forEach(device => {
+            tableBody.innerHTML += `
+                <tr>
+                    <td>${device.device_id}</td>
+                    <td>
+                        <span class="status-pill ${device.status}">
+                            ${device.status}
+                        </span>
+                    </td>
+                    <td>${device.cpu_usage}%</td>
+                    <td>${device.memory_usage}%</td>
+                    <td>${device.heartbeat_delay}s ago</td>
+                    <td>
+                        <button onclick="diagnoseDevice('${device.device_id}')">
+                            Diagnose
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+
+    } catch (error) {
+        console.error("Failed to refresh devices:", error);
+    }
+}
+
+setInterval(refreshDevices, 5000);

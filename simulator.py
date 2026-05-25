@@ -3,7 +3,18 @@ import time
 
 from database import init_db, insert_telemetry
 
-DEVICES = ["sensor-001", "sensor-002", "gateway-003"]
+DEVICES = [
+    "sensor-001",
+    "sensor-002",
+    "sensor-003",
+    "sensor-004",
+    "sensor-005",
+    "sensor-006",
+    "sensor-007",
+    "gateway-001",
+    "gateway-002",
+    "gateway-003"
+]
 
 
 def determine_status(cpu, memory, heartbeat_delay):

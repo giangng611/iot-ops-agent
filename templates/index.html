@@ -1,13 +1,72 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>IoT Ops AI Agent</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 
 <body>
+    <div class="app-container">
 
-<h1>IoT Ops AI Agent Dashboard</h1>
+        <header class="header">
+            <div>
+                <h1>IoT Ops AI Agent</h1>
+                <p>Multi-step reasoning assistant for IoT operations monitoring</p>
+            </div>
+            <span class="badge">Week 2 Demo</span>
+        </header>
 
+        <main class="layout">
+
+            <section class="panel devices-panel">
+                <h2>Device Overview</h2>
+
+                <div class="device-list">
+                    {% for device_id, device in devices.items() %}
+                    <div class="device-card {{ device.status }}">
+                        <div class="device-top">
+                            <h3>{{ device_id }}</h3>
+                            <span>{{ device.status }}</span>
+                        </div>
+
+                        <p>CPU: {{ device.cpu_usage }}</p>
+                        <p>Memory: {{ device.memory_usage }}</p>
+                        <p>Heartbeat: {{ device.last_heartbeat }}</p>
+
+                        <button onclick="diagnoseDevice('{{ device_id }}')">
+                            Diagnose
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="panel agent-panel">
+                <h2>Agent Console</h2>
+
+                <div class="input-row">
+                    <input
+                        id="messageInput"
+                        type="text"
+                        placeholder="Example: diagnose gateway-003"
+                    >
+                    <button onclick="sendMessage()">Run</button>
+                </div>
+
+                <div id="loading" class="loading hidden">
+                    Agent is investigating...
+                </div>
+
+                <div class="response-box">
+                    <h3>Final Diagnosis</h3>
+                    <pre id="responseOutput">No diagnosis yet.</pre>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script src="/static/script.js"></script>
 </body>
 </html>

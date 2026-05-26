@@ -16,10 +16,13 @@ class Week2Agent:
         self.client = client
         self.max_iterations = 3
         self.conversation_history = []
+        self.last_target = None
 
     def run(self, user_input):
         observations = []
         target = self.extract_target(user_input)
+        if target != "SYSTEM":
+            self.last_target = target
 
         for step in range(self.max_iterations):
             model_output = self.choose_next_step(
@@ -89,6 +92,8 @@ class Week2Agent:
     def run_stream(self, user_input):
         observations = []
         target = self.extract_target(user_input)
+        if target != "SYSTEM":
+            self.last_target = target
 
         for step in range(self.max_iterations):
             model_output = self.choose_next_step(
@@ -179,25 +184,32 @@ class Week2Agent:
             for device in devices
         ]
 
+        if self.last_target and self.contains_context_reference(user_input):
+            return self.last_target
+
         prompt = f"""
-Extract the target from the user request.
+    Extract the target from the user request.
 
-Available devices:
-{json.dumps(device_ids, indent=2)}
+    Available devices:
+    {json.dumps(device_ids, indent=2)}
 
-User request:
-{user_input}
+    User request:
+    {user_input}
 
-If the request is about the whole system, all devices, fleet health,
-overall health, unhealthy devices, critical devices, or alarms across devices,
-return SYSTEM.
+    If the request is about the whole system, all devices, fleet health,
+    overall health, unhealthy devices, critical devices, or alarms across devices,
+    return SYSTEM.
 
-Otherwise, return exactly one device ID from the list.
+    If the user refers to a previous device using phrases like "it", "its",
+    "that device", "this device", or "same device", return the most recent
+    device target if available.
 
-Return ONLY one value:
-- SYSTEM
-- or a device ID
-"""
+    Otherwise, return exactly one device ID from the list.
+
+    Return ONLY one value:
+    - SYSTEM
+    - or a device ID
+    """
 
         response = self.client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -211,67 +223,74 @@ Return ONLY one value:
 
         target = response.choices[0].message.content.strip()
 
-        if target not in device_ids and target != "SYSTEM":
+        if target in device_ids:
+            self.last_target = target
+            return target
+
+        if target == "SYSTEM":
             return "SYSTEM"
 
-        return target
+        if self.last_target:
+            return self.last_target
+
+        return "SYSTEM"
 
     def choose_next_step(self, user_input, observations, target):
         prompt = f"""
-{WEEK2_AGENT_PROMPT}
-
-User request:
-{user_input}
-
-Target:
-{target}
-
-Previous conversation:
-{json.dumps(self.conversation_history, indent=2)}
-
-Current observations:
-{json.dumps(observations, indent=2)}
-
-Available tools:
-- check_device_status
-- get_recent_logs
-- check_alarm_rules
-- check_system_overview
-- check_system_alarms
-
-Tool rules:
-- Use check_system_overview for fleet-wide health, all devices, unhealthy devices, or critical devices.
-- Use check_system_alarms for fleet-wide alarm summaries.
-- Use check_device_status only when Target is a specific device ID.
-- Use get_recent_logs only when Target is a specific device ID.
-- Use check_alarm_rules only when Target is a specific device ID.
-
-If Target is SYSTEM, do not use device-specific tools.
-
-ACTION must be exactly one tool name only.
-Do not include arguments, JSON, parentheses, or explanations.
-Put THOUGHT and ACTION on separate lines.
-Do not include ACTION inside THOUGHT.
-
-If more information is needed, respond in this exact format:
-THOUGHT: your reasoning
-ACTION: tool_name
-
-If enough information is already available from previous observations,
-do NOT call additional tools unnecessarily.
-
-When system-level tools already provide sufficient evidence,
-prefer generating a FINAL ANSWER instead of calling more tools.
-
-Do not repeat investigations already covered by previous observations.
-
-If enough information is available, respond in this exact format:
-FINAL ANSWER: your final diagnosis
-
-Maximum reasoning guideline:
-- Fleet-level diagnosis usually requires only 1-2 system-level tools.
-- Avoid device-specific tools during fleet-wide investigations.
-"""
+    {WEEK2_AGENT_PROMPT}
+    
+    User request:
+    {user_input}
+    
+    Target:
+    {target}
+    
+    Previous conversation:
+    {json.dumps(self.conversation_history, indent=2)}
+    
+    Current observations:
+    {json.dumps(observations, indent=2)}
+    
+    Available tools:
+    - check_device_status
+    - get_recent_logs
+    - check_alarm_rules
+    - check_system_overview
+    - check_system_alarms
+    
+    Tool rules:
+    - Use check_system_overview for fleet-wide health, all devices, unhealthy devices, or critical devices.
+    - Use check_system_alarms for fleet-wide alarm summaries.
+    - Use check_device_status only when Target is a specific device ID.
+    - Use get_recent_logs only when Target is a specific device ID.
+    - Use check_alarm_rules only when Target is a specific device ID.
+    
+    If Target is SYSTEM, do not use device-specific tools.
+    
+    ACTION must be exactly one tool name only.
+    Do not include arguments, JSON, parentheses, or explanations.
+    Put THOUGHT and ACTION on separate lines.
+    Do not include ACTION inside THOUGHT.
+    
+    If more information is needed, respond in this exact format:
+    THOUGHT: your reasoning
+    ACTION: tool_name
+    
+    If enough information is already available from previous observations,
+    do NOT call additional tools unnecessarily.
+    
+    When system-level tools already provide sufficient evidence,
+    prefer generating a FINAL ANSWER instead of calling more tools.
+    
+    Do not repeat investigations already covered by previous observations.
+    
+    If enough information is available, respond in this exact format:
+    FINAL ANSWER: your final diagnosis
+    
+    Maximum reasoning guideline:
+    - Fleet-level diagnosis usually requires only 1-2 system-level tools.
+    - Avoid device-specific tools during fleet-wide investigations.
+    """
 
         response = self.client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -324,20 +343,20 @@ Maximum reasoning guideline:
 
     def generate_final_answer(self, user_input, observations):
         prompt = f"""
-You are an IoT operations AI agent.
-
-User request:
-{user_input}
-
-Collected observations:
-{json.dumps(observations, indent=2)}
-
-Based only on the observations, provide:
-1. Summary
-2. Evidence
-3. Likely cause
-4. Suggested next action
-"""
+    You are an IoT operations AI agent.
+    
+    User request:
+    {user_input}
+    
+    Collected observations:
+    {json.dumps(observations, indent=2)}
+    
+    Based only on the observations, provide:
+    1. Summary
+    2. Evidence
+    3. Likely cause
+    4. Suggested next action
+    """
 
         response = self.client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -364,3 +383,20 @@ Based only on the observations, provide:
             "role": "assistant",
             "content": final_answer
         })
+
+    def contains_context_reference(self, user_input):
+        lowered = user_input.lower()
+
+        context_words = [
+            "it",
+            "its",
+            "that device",
+            "this device",
+            "same device",
+            "that one",
+            "this one",
+            "previous device",
+            "the device"
+        ]
+
+        return any(word in lowered for word in context_words)

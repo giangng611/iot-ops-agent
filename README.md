@@ -1,106 +1,156 @@
-# IoT Ops AI Agent
+# IoT Ops Agent
 
-AI-powered IoT operations monitoring platform with multi-step reasoning agents, real-time telemetry simulation, and fleet-level diagnostics.
+AI-powered IoT operations monitoring platform with multi-step reasoning agents, real-time telemetry simulation, streaming diagnostics, and fleet observability.
 
 ---
 
 ## Overview
 
-IoT Ops AI Agent is a simulated observability platform designed to monitor and diagnose IoT infrastructure using LLM-powered agents.
+IoT Ops Agent is a simulated IoT observability and operations platform designed to monitor, diagnose, and investigate device infrastructure using LLM-powered agents.
 
 The project demonstrates the evolution from:
 
-- **IOAA v1** → single-step tool calling assistant
-- **IOAA v2** → multi-step reasoning agent with iterative diagnostics
+- **IOA v1** → single-step tool-calling operational assistant
+- **IOA v2** → multi-step reasoning agent with iterative diagnostics and streaming reasoning traces
 
-The platform includes:
+The platform combines:
 
 - Real-time telemetry simulation
-- SQLite-backed device monitoring
-- Fleet-wide health analysis
-- Streaming reasoning traces
+- SQLite-backed infrastructure monitoring
 - AI-assisted diagnostics
-- Web dashboard interface
+- ReAct-style reasoning workflows
+- Live dashboard updates with WebSockets
+- Interactive observability dashboards
+- Device telemetry analytics
+- Local authentication and persistent chat history
 
 ---
 
-## Features
+# Features
 
-### IOAA v1 — Single-Step Tool Calling
-- Basic LLM tool invocation
+## IOA v1 — Single-Step Tool Calling
+
+- Basic OpenAI tool invocation
 - One-shot device diagnostics
-- Simple operational assistant
-
-### IOAA v2 — Multi-Step Reasoning Agent
-- ReAct-style reasoning loop
-- Multi-step investigations
-- System-wide diagnostics
-- Fleet-level alarm analysis
-- Real-time reasoning trace streaming
-
-### Real-Time Telemetry Simulation
-- 10 simulated IoT devices
-- Periodic telemetry updates
-- Dynamic device health states
-- CPU / memory / heartbeat monitoring
-
-### Dashboard UI
-- ChatGPT-inspired interface
-- Devices tab
-- Prompt library
-- Chat history sidebar
-- Real-time device refresh
-- Streaming reasoning visualization
+- Lightweight operational assistant
+- Simple system overview queries
 
 ---
 
-## Architecture
+## IOA v2 — Multi-Step Reasoning Agent
+
+- ReAct-style reasoning loop
+- Iterative operational investigations
+- Multi-tool diagnostics
+- Fleet-wide health analysis
+- Alarm correlation
+- Streaming reasoning traces
+- Context-aware investigations
+- System-level and device-level workflows
+
+---
+
+## Real-Time Telemetry Simulation
+
+- 10 continuously simulated IoT devices
+- Dynamic telemetry generation
+- Periodic CPU / memory / heartbeat updates
+- Warning and critical state transitions
+- Active alarm generation
+- Historical telemetry tracking
+
+---
+
+## Dashboard UI
+
+- ChatGPT-inspired dark interface
+- Streaming AI responses
+- Live reasoning trace sidebar
+- Realtime WebSocket device updates
+- Devices management tab
+- Fleet analytics charts
+- Device telemetry history charts
+- Alerts dashboard
+- Prompt library
+- Searchable and pinnable chat history
+- Profile/settings workspace
+- Sidebar collapse system
+- Interactive right-side drawers
+
+---
+
+## Authentication System
+
+- Local username/password authentication
+- Session-based login system
+- Persistent user-specific chat history
+- Password update workflow
+- SQLite-backed user management
+
+---
+
+# Architecture
 
 ```text
-Virtual Devices
-        ↓
+Simulated IoT Devices
+          ↓
 Telemetry Simulator
-        ↓
+          ↓
 SQLite Database
-        ↓
-Flask Backend
-        ↓
+          ↓
+Flask Backend API
+          ↓
 AI Agent Layer
-        ↓
-Dashboard UI
+          ↓
+Realtime Dashboard UI
 ```
 
 ---
 
-## Tech Stack
+# Tech Stack
 
+## Backend
 - Python
 - Flask
+- Flask-SocketIO
 - SQLite
 - OpenAI API
-- HTML / CSS / Vanilla JavaScript
+
+## Frontend
+- HTML
+- CSS
+- Vanilla JavaScript
+- Chart.js
+
+## AI / Agent Design
+- ReAct reasoning architecture
+- Tool-calling agents
+- Streaming reasoning traces
+- Context-aware diagnostics
 
 ---
 
-## Example Workflow
+# Example Workflows
 
-### Fleet-Level Diagnosis
+## Fleet-Level Investigation
 
 ```text
 User:
-"overview system health"
+"check devices with delayed heartbeat"
 
 Agent:
 1. check_system_overview
 2. check_system_alarms
-3. Generate final diagnosis
+3. Generate final operational diagnosis
 ```
 
-### Device-Level Investigation
+---
+
+## Device-Level Investigation
 
 ```text
 User:
-"diagnose gateway-003"
+"/diagnose gateway-003"
 
 Agent:
 1. check_device_status
@@ -111,7 +161,60 @@ Agent:
 
 ---
 
-## Project Structure
+## Streaming Reasoning Trace
+
+```text
+Iteration 1
+Thought:
+Need system-wide health overview.
+
+Action:
+check_system_overview
+
+Observation:
+5 warning devices detected.
+```
+
+---
+
+# Real-Time Features
+
+## WebSocket Updates
+
+The dashboard uses Flask-SocketIO for realtime updates including:
+
+- Live device telemetry refresh
+- Realtime fleet health updates
+- Instant alert propagation
+- Dynamic dashboard refreshes
+
+---
+
+## Fleet Analytics
+
+Fleet-level visualizations include:
+
+- Health distribution chart
+- Average fleet metrics
+- Live operational thresholds
+- Alert baseline indicators
+
+---
+
+## Device Analytics
+
+Each device includes:
+
+- Historical telemetry charts
+- CPU trend visualization
+- Memory utilization tracking
+- Heartbeat delay analysis
+- Threshold baselines
+- Historical operational states
+
+---
+
+# Project Structure
 
 ```text
 iot-ops-agent/
@@ -119,60 +222,96 @@ iot-ops-agent/
 ├── app.py
 ├── simulator.py
 ├── database.py
+├── init_db.py
+├── prompts.py
+├── tools.py
 ├── telemetry.db
 │
 ├── agents/
 │   ├── week1_agent.py
 │   └── week2_agent.py
 │
-├── templates/
-│   └── index.html
-│
 ├── static/
 │   ├── style.css
-│   └── script.js
+│   ├── auth.css
+│   ├── script.js
+│   └── auth.js
 │
-├── tools.py
-├── prompts.py
+├── templates/
+│   ├── index.html
+│   └── login.html
+│
+├── screenshots/
+│   ├── dashboard.png
+│   ├── reasoning-trace.png
+│   ├── devices-tab.png
+│   ├── alerts-tab.png
+│   ├── telemetry-history.png
+│   ├── profile-tab.png
+│   ├── login-screen.png
+│   └── prompts-tab.png
+│
+├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## Installation
+# Installation
 
-### Clone repository
+## Clone Repository
 
 ```bash
 git clone https://github.com/giangng611/iot-ops-agent.git
 cd iot-ops-agent
 ```
 
-### Install dependencies
+---
+
+## Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Initialize database
+---
+
+## Configure Environment Variables
+
+Create a `.env` file:
+
+```env
+OPENAI_API_KEY=your_api_key_here
+FLASK_SECRET_KEY=your_secret_key_here
+```
+
+---
+
+## Initialize Database
 
 ```bash
 python3 init_db.py
 ```
 
-### Start telemetry simulator
+---
+
+## Start Telemetry Simulator
 
 ```bash
 python3 simulator.py
 ```
 
-### Start Flask application
+---
+
+## Start Flask Application
 
 ```bash
 python3 app.py
 ```
 
-Open:
+---
+
+## Open Dashboard
 
 ```text
 http://127.0.0.1:5000
@@ -180,39 +319,105 @@ http://127.0.0.1:5000
 
 ---
 
-## Screenshots
+# Screenshots
 
-### Dashboard
+## Dashboard Home
+
+Main AI operations workspace with realtime diagnostics and streaming reasoning traces.
 
 ![Dashboard](screenshots/dashboard.png)
 
 ---
 
-### Devices Tab
+## Streaming Reasoning Trace
 
-![Devices](screenshots/devices.png)
+Realtime ReAct-style operational reasoning with live investigation steps.
 
----
-
-### Prompts Tab
-
-![Reasoning](screenshots/prompts.png)
+![Reasoning-Trace](screenshots/reasoning-trace.png)
 
 ---
 
-## Future Improvements
+## Devices Tab
 
-- Supabase / PostgreSQL integration
-- Real IoT telemetry ingestion
-- WebSocket live updates
-- Authentication
-- Historical analytics
+Fleet inventory view with realtime device telemetry, diagnostics, and historical analytics.
+
+![Devices](screenshots/devices-tab.png)
+
+---
+
+## Device Telemetry History
+
+Interactive historical telemetry visualization with operational baselines.
+
+![Telemetry-History](screenshots/telemetry-history.png)
+
+---
+
+## Alerts Dashboard
+
+Realtime operational alerts and warning management interface.
+
+![Alerts](screenshots/alerts-tab.png)
+
+---
+
+## Profile & Settings
+
+Local account management, workspace settings, and operational preferences.
+
+![Profile](screenshots/profile-tab.png)
+
+---
+
+## Authentication Screen
+
+Local login and account authentication workflow.
+
+![Auth](screenshots/login-screen.png)
+
+---
+
+## Prompt Library
+
+Prebuilt operational investigation prompts for faster diagnostics.
+
+![Prompts](screenshots/prompts-tab.png)
+
+---
+
+# Future Improvements
+
+## Infrastructure
+- PostgreSQL migration
+- Supabase integration
+- Docker deployment
+- Kubernetes deployment
+- Cloud-hosted telemetry ingestion
+
+## AI Features
 - AI anomaly prediction
-- Production deployment
+- Predictive maintenance workflows
+- Multi-agent orchestration
+- Autonomous remediation suggestions
+- Root-cause analysis chains
+
+## Product Features
+- Multi-user organizations
+- RBAC permissions
+- Notification delivery system
+- Email / Slack alerting
+- Exportable operational reports
+
+## Observability
+- Advanced analytics
+- Historical fleet trends
+- Device grouping
+- Geographical infrastructure mapping
+- Real MQTT ingestion
 
 ---
 
-## Author
+# Author
 
-Giang Nguyen Do 
+Giang Nguyen Do  
 Computer Science @ University of Georgia

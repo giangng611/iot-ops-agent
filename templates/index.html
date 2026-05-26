@@ -199,35 +199,79 @@
                 </div>
 
                 <div class="prompt-grid">
-                    <div class="prompt-card" onclick="usePrompt('/overview system health')">
+
+                    <div class="prompt-card"
+                         onclick="usePrompt('/overview system health')">
                         <h3>/overview system health</h3>
-                        <p>Check the overall health of all IoT devices.</p>
+                        <p>
+                            Review overall fleet health and unhealthy device summary.
+                        </p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/check all unhealthy devices')">
+                    <div class="prompt-card"
+                         onclick="usePrompt('/check all unhealthy devices')">
                         <h3>/check all unhealthy devices</h3>
-                        <p>Find devices currently in warning or critical state.</p>
+                        <p>
+                            List all warning and critical devices currently detected.
+                        </p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/find critical devices')">
+                    <div class="prompt-card"
+                         onclick="usePrompt('/find critical devices')">
                         <h3>/find critical devices</h3>
-                        <p>Identify devices that require urgent attention.</p>
+                        <p>
+                            Identify devices currently in critical condition.
+                        </p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/diagnose system issue')">
+                    <div class="prompt-card"
+                         onclick="usePrompt('/diagnose system issue')">
                         <h3>/diagnose system issue</h3>
-                        <p>Run a general system-level investigation.</p>
+                        <p>
+                            Run a fleet-level AI diagnosis workflow.
+                        </p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/check devices with delayed heartbeat')">
+                    <div class="prompt-card"
+                         onclick="usePrompt('/check devices with delayed heartbeat')">
                         <h3>/check devices with delayed heartbeat</h3>
-                        <p>Look for devices that may be offline or unstable.</p>
+                        <p>
+                            Detect devices with heartbeat transmission delays.
+                        </p>
                     </div>
 
-                    <div class="prompt-card" onclick="usePrompt('/show devices with alarms')">
+                    <div class="prompt-card"
+                         onclick="usePrompt('/show devices with alarms')">
                         <h3>/show devices with alarms</h3>
-                        <p>Review devices with active alarm conditions.</p>
+                        <p>
+                            Review all currently active alarms in the system.
+                        </p>
                     </div>
+
+                    <div class="prompt-card"
+                         onclick="usePrompt('/review current IoT fleet status')">
+                        <h3>/review current IoT fleet status</h3>
+                        <p>
+                            Generate a full operational fleet summary.
+                        </p>
+                    </div>
+
+                    <div class="prompt-card"
+                         onclick="usePrompt('/summarize current fleet risk')">
+                        <h3>/summarize current fleet risk</h3>
+                        <p>
+                            Analyze current operational risks across all devices.
+                        </p>
+                    </div>
+
+                    <div class="prompt-card"
+                         onclick="usePrompt('/prioritize devices needing attention')">
+                        <h3>/prioritize devices needing attention</h3>
+                        <p>
+                            Rank devices by urgency and operational impact.
+                        </p>
+                    </div>
+
                 </div>
             </section>
 

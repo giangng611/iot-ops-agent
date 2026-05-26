@@ -1,4 +1,5 @@
 let currentMode = "week2";
+let allDevices = [];
 
 const prompts = [
     "/overview system health",
@@ -269,38 +270,101 @@ async function refreshDevices() {
         const response = await fetch("/api/devices");
         const data = await response.json();
 
-        const tableBody = document.getElementById("deviceTableBody");
-
-        if (!tableBody) {
-            return;
-        }
-
-        tableBody.innerHTML = "";
-
-        data.devices.forEach(device => {
-            tableBody.innerHTML += `
-                <tr>
-                    <td>${device.device_id}</td>
-                    <td>
-                        <span class="status-pill ${device.status}">
-                            ${device.status}
-                        </span>
-                    </td>
-                    <td>${device.cpu_usage}%</td>
-                    <td>${device.memory_usage}%</td>
-                    <td>${device.heartbeat_delay}s ago</td>
-                    <td>
-                        <button onclick="diagnoseDevice('${device.device_id}')">
-                            Diagnose
-                        </button>
-                    </td>
-                </tr>
-            `;
-        });
+        allDevices = data.devices;
+        renderDeviceTable();
 
     } catch (error) {
         console.error("Failed to refresh devices:", error);
     }
 }
+
+function calculatePriority(device) {
+    let score = 0;
+
+    if (device.status === "critical") {
+        score += 100;
+    } else if (device.status === "warning") {
+        score += 50;
+    }
+
+    score += Number(device.cpu_usage) || 0;
+    score += Number(device.memory_usage) || 0;
+    score += (Number(device.heartbeat_delay) || 0) / 10;
+
+    return Math.round(score);
+}
+
+function renderDeviceTable() {
+    const tableBody = document.getElementById("deviceTableBody");
+
+    if (!tableBody) {
+        return;
+    }
+
+    const searchValue = document.getElementById("deviceSearch")?.value.toLowerCase() || "";
+    const statusValue = document.getElementById("statusFilter")?.value || "all";
+    const sortValue = document.getElementById("sortSelect")?.value || "priority";
+
+    let devices = [...allDevices];
+
+    devices = devices.filter(device => {
+        const matchesSearch = device.device_id.toLowerCase().includes(searchValue);
+        const matchesStatus = statusValue === "all" || device.status === statusValue;
+
+        return matchesSearch && matchesStatus;
+    });
+
+    devices.sort((a, b) => {
+        if (sortValue === "priority") {
+            return calculatePriority(b) - calculatePriority(a);
+        }
+
+        if (sortValue === "cpu") {
+            return Number(b.cpu_usage) - Number(a.cpu_usage);
+        }
+
+        if (sortValue === "memory") {
+            return Number(b.memory_usage) - Number(a.memory_usage);
+        }
+
+        if (sortValue === "heartbeat") {
+            return Number(b.heartbeat_delay) - Number(a.heartbeat_delay);
+        }
+
+        if (sortValue === "timestamp") {
+            return new Date(b.timestamp) - new Date(a.timestamp);
+        }
+
+        return 0;
+    });
+
+    tableBody.innerHTML = "";
+
+    devices.forEach(device => {
+        const priority = calculatePriority(device);
+
+        tableBody.innerHTML += `
+            <tr>
+                <td>${device.device_id}</td>
+                <td>
+                    <span class="status-pill ${device.status}">
+                        ${device.status}
+                    </span>
+                </td>
+                <td>${device.cpu_usage}%</td>
+                <td>${device.memory_usage}%</td>
+                <td>${device.heartbeat_delay}s ago</td>
+                <td>${priority}</td>
+                <td>
+                    <button onclick="diagnoseDevice('${device.device_id}')">
+                        Diagnose
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+
 
 setInterval(refreshDevices, 5000);

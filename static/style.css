@@ -425,3 +425,33 @@ th {
     opacity: 0.6;
     cursor: not-allowed;
 }
+
+.device-controls {
+    display: grid;
+    grid-template-columns: 1fr 180px 220px;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.device-controls input,
+.device-controls select {
+    height: 44px;
+}
+
+.devices-table-wrapper {
+    max-height: 620px;
+
+    overflow-y: auto;
+
+    border-radius: 14px;
+}
+
+thead th {
+    position: sticky;
+
+    top: 0;
+
+    background: #171717;
+
+    z-index: 10;
+}

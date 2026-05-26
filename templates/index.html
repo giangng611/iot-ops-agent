@@ -96,36 +96,99 @@
                     <p>Current simulated IoT device inventory</p>
                 </div>
 
-                <div class="table-card">
-                    <table>
-                        <thead>
-                        <tr>
-                            <th>Device ID</th>
-                            <th>Status</th>
-                            <th>CPU</th>
-                            <th>Memory</th>
-                            <th>Heartbeat</th>
-                            <th>Action</th>
-                        </tr>
-                        </thead>
+                <div class="device-controls">
+                    <input
+                        id="deviceSearch"
+                        type="text"
+                        placeholder="Search device..."
+                        oninput="renderDeviceTable()"
+                    >
 
-                        <tbody id="deviceTableBody">
-                        {% for device in devices %}
-                        <tr>
-                            <td>{{ device.device_id }}</td>
-                            <td><span class="status-pill {{ device.status }}">{{ device.status }}</span></td>
-                            <td>{{ device.cpu_usage }}%</td>
-                            <td>{{ device.memory_usage }}%</td>
-                            <td>{{ device.heartbeat_delay }}s ago</td>
-                            <td>
-                                <button onclick="diagnoseDevice('{{ device.device_id }}')">
-                                    Diagnose
-                                </button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                        </tbody>
-                    </table>
+                    <select
+                        id="statusFilter"
+                        onchange="renderDeviceTable()"
+                    >
+                        <option value="all">
+                            All statuses
+                        </option>
+
+                        <option value="healthy">
+                            Healthy
+                        </option>
+
+                        <option value="warning">
+                            Warning
+                        </option>
+
+                        <option value="critical">
+                            Critical
+                        </option>
+                    </select>
+
+                    <select
+                        id="sortSelect"
+                        onchange="renderDeviceTable()"
+                    >
+                        <option value="priority">
+                            Sort by priority
+                        </option>
+
+                        <option value="cpu">
+                            Sort by CPU
+                        </option>
+
+                        <option value="memory">
+                            Sort by memory
+                        </option>
+
+                        <option value="heartbeat">
+                            Sort by heartbeat delay
+                        </option>
+
+                        <option value="timestamp">
+                            Sort by latest timestamp
+                        </option>
+                    </select>
+
+                </div>
+
+                <div class="table-card">
+
+                    <div class="devices-table-wrapper">
+
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>Device ID</th>
+                                <th>Status</th>
+                                <th>CPU</th>
+                                <th>Memory</th>
+                                <th>Heartbeat</th>
+                                <th>Priority</th>
+                                <th>Action</th>
+                            </tr>
+                            </thead>
+
+                            <tbody id="deviceTableBody">
+                            {% for device in devices %}
+                            <tr>
+                                <td>{{ device.device_id }}</td>
+                                <td><span class="status-pill {{ device.status }}">{{ device.status }}</span></td>
+                                <td>{{ device.cpu_usage }}%</td>
+                                <td>{{ device.memory_usage }}%</td>
+                                <td>{{ device.heartbeat_delay }}s ago</td>
+                                <td>
+                                    <button onclick="diagnoseDevice('{{ device.device_id }}')">
+                                        Diagnose
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+
+                    </div>
+
                 </div>
             </section>
 

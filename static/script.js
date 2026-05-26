@@ -1,5 +1,9 @@
 let currentMode = "week2";
 let allDevices = [];
+let chats = [];
+let currentChatId = null;
+let latestReasoningSteps = [];
+let reasoningDrawerOpen = false;
 
 const prompts = [
     "/overview system health",
@@ -36,17 +40,53 @@ function showTab(tabName, buttonElement) {
 }
 
 function newChat() {
+    currentChatId = null;
+    latestReasoningSteps = [];
+
     document.getElementById("messageInput").value = "";
-    document.getElementById("reasoningOutput").innerHTML = "No reasoning yet.";
-    document.getElementById("responseOutput").textContent = "No diagnosis yet.";
+    document.getElementById("chatMessages").innerHTML = "";
+
+    const hero = document.getElementById("homeHero");
+    hero.classList.remove("hidden");
+
+    const suggestions = document.getElementById("promptSuggestions");
+    suggestions.classList.add("hidden");
+    suggestions.innerHTML = "";
+
+    closeReasoningDrawer();
+    renderChatHistory();
+}
+
+function createChatIfNeeded(message) {
+    if (currentChatId !== null) {
+        return;
+    }
+
+    currentChatId = Date.now();
+
+    const chat = {
+        id: currentChatId,
+        title: createHistoryTitle(message),
+        messages: []
+    };
+
+    chats.unshift(chat);
+    renderChatHistory();
 }
 
 function usePrompt(promptText) {
     const input = document.getElementById("messageInput");
+    const suggestions = document.getElementById("promptSuggestions");
+
     input.value = promptText;
+
+    suggestions.classList.add("hidden");
+    suggestions.innerHTML = "";
 
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
+
+    input.focus();
 }
 
 function handleEnter(event) {
@@ -86,24 +126,29 @@ function handlePromptSuggestions() {
 
 async function sendMessage() {
     const input = document.getElementById("messageInput");
-    const output = document.getElementById("responseOutput");
-    const reasoningOutput = document.getElementById("reasoningOutput");
     const loading = document.getElementById("loading");
-    const runButton = document.querySelector(".run-button");
     const suggestions = document.getElementById("promptSuggestions");
+    const runButton = document.querySelector(".run-button");
 
     const message = input.value.trim();
 
     if (!message) {
-        output.textContent = "Please enter a request.";
         return;
     }
 
-    addHistoryItem(message);
+    createChatIfNeeded(message);
+
+    const hero = document.getElementById("homeHero");
+    hero.classList.add("hidden");
 
     suggestions.classList.add("hidden");
-    reasoningOutput.innerHTML = "No reasoning yet.";
-    output.textContent = "";
+    loading.innerHTML = `
+        <span>Agent is thinking...</span>
+        <button class="reasoning-loading-btn" onclick="openReasoningDrawer()">
+            Show reasoning trace
+        </button>
+    `;
+
     loading.classList.remove("hidden");
 
     runButton.disabled = true;
@@ -112,9 +157,13 @@ async function sendMessage() {
         <span>Please wait</span>
     `;
 
+    addUserMessage(message);
+
     try {
+        let finalAnswer = "";
+
         if (currentMode === "week2") {
-            await sendStreamMessage(message);
+            finalAnswer = await sendStreamMessage(message);
         } else {
             const response = await fetch("/api/diagnose", {
                 method: "POST",
@@ -128,16 +177,16 @@ async function sendMessage() {
             });
 
             const data = await response.json();
-
-            if (data.error) {
-                output.textContent = "Error: " + data.error;
-            } else {
-                output.textContent = data.response;
-            }
+            finalAnswer = data.error ? "Error: " + data.error : data.response;
+            latestReasoningSteps = [];
         }
 
+        addAssistantMessage(finalAnswer, latestReasoningSteps.length > 0);
+
+        input.value = "";
+
     } catch (error) {
-        output.textContent = "Request failed: " + error;
+        addAssistantMessage("Request failed: " + error, false);
 
     } finally {
         loading.classList.add("hidden");
@@ -151,10 +200,7 @@ async function sendMessage() {
 }
 
 async function sendStreamMessage(message) {
-    const output = document.getElementById("responseOutput");
-    const reasoningOutput = document.getElementById("reasoningOutput");
-
-    reasoningOutput.innerHTML = "";
+    latestReasoningSteps = [];
 
     const response = await fetch("/api/diagnose-stream", {
         method: "POST",
@@ -166,6 +212,8 @@ async function sendStreamMessage(message) {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+
+    let finalAnswer = "";
 
     while (true) {
         const { value, done } = await reader.read();
@@ -180,39 +228,37 @@ async function sendStreamMessage(message) {
             const event = JSON.parse(jsonText);
 
             if (event.type === "thought") {
-                reasoningOutput.innerHTML += `
-                    <div class="reasoning-step">
-                        <h4>Iteration ${event.iteration}</h4>
+                latestReasoningSteps.push({
+                    iteration: event.iteration,
+                    thought: event.thought,
+                    action: event.action,
+                    output: null
+                });
 
-                        <p><strong>Thought:</strong><br>${event.thought}</p>
-                        <p><strong>Action:</strong><br>${event.action}</p>
-                    </div>
-                `;
+                renderReasoningDrawerLive();
             }
 
             if (event.type === "observation") {
-                const steps = document.querySelectorAll(".reasoning-step");
-                const latestStep = steps[steps.length - 1];
+                const latestStep = latestReasoningSteps[latestReasoningSteps.length - 1];
 
-                if (!latestStep) {
-                    return;
+                if (latestStep) {
+                    latestStep.output = event.observation.output;
                 }
 
-                latestStep.innerHTML += `
-                    <p><strong>Observation:</strong></p>
-                    <pre>${JSON.stringify(event.observation.output, null, 2)}</pre>
-                `;
+                renderReasoningDrawerLive();
             }
 
             if (event.type === "final") {
-                output.textContent = event.final_answer;
+                finalAnswer = event.final_answer;
             }
 
             if (event.type === "error") {
-                output.textContent = "Error: " + event.error;
+                finalAnswer = "Error: " + event.error;
             }
         });
     }
+
+    return finalAnswer;
 }
 
 function diagnoseDevice(deviceId) {
@@ -225,44 +271,56 @@ function diagnoseDevice(deviceId) {
     sendMessage();
 }
 
-function addHistoryItem(message) {
+function renderChatHistory() {
     const history = document.getElementById("chatHistory");
+    history.innerHTML = "";
 
-    const item = document.createElement("div");
-    item.className = "history-item";
-    item.textContent = summarizeHistory(message);
+    chats.forEach(chat => {
+        const item = document.createElement("div");
+        item.className = "history-item";
 
-    history.prepend(item);
+        if (chat.id === currentChatId) {
+            item.classList.add("active");
+        }
+
+        item.textContent = chat.title;
+
+        item.onclick = function () {
+            loadChat(chat.id);
+        };
+
+        history.appendChild(item);
+    });
 }
 
-function summarizeHistory(message) {
-    const lowerMessage = message.toLowerCase();
+function loadChat(chatId) {
+    const chat = chats.find(item => item.id === chatId);
 
-    if (lowerMessage.includes("overview") || lowerMessage.includes("fleet")) {
-        return "Reviewed fleet health";
+    if (!chat) {
+        return;
     }
 
-    if (lowerMessage.includes("unhealthy")) {
-        return "Checked unhealthy devices";
-    }
+    currentChatId = chatId;
 
-    if (lowerMessage.includes("critical")) {
-        return "Found critical devices";
-    }
+    const hero = document.getElementById("homeHero");
+    hero.classList.add("hidden");
 
-    if (lowerMessage.includes("heartbeat")) {
-        return "Checked heartbeat delays";
-    }
+    const chatMessages = document.getElementById("chatMessages");
+    chatMessages.innerHTML = "";
 
-    if (lowerMessage.includes("alarm")) {
-        return "Reviewed active alarms";
-    }
+    chat.messages.forEach(message => {
+        if (message.role === "user") {
+            renderUserMessage(message.content);
+        } else {
+            renderAssistantMessage(
+                message.content,
+                message.hasReasoning,
+                message.reasoningSteps || []
+            );
+        }
+    });
 
-    if (lowerMessage.includes("diagnose")) {
-        return "Ran device diagnosis";
-    }
-
-    return message.slice(0, 40);
+    renderChatHistory();
 }
 
 async function refreshDevices() {
@@ -365,6 +423,155 @@ function renderDeviceTable() {
     });
 }
 
+function addUserMessage(message) {
+    const chat = chats.find(item => item.id === currentChatId);
 
+    if (chat) {
+        chat.messages.push({
+            role: "user",
+            content: message
+        });
+    }
+
+    renderUserMessage(message);
+}
+
+function addAssistantMessage(message, hasReasoning) {
+    const chat = chats.find(item => item.id === currentChatId);
+
+    if (chat) {
+        chat.messages.push({
+            role: "assistant",
+            content: message,
+            hasReasoning: hasReasoning,
+            reasoningSteps: [...latestReasoningSteps]
+        });
+    }
+
+    renderAssistantMessage(message, hasReasoning, latestReasoningSteps);
+}
+
+function renderUserMessage(message) {
+    const chatMessages = document.getElementById("chatMessages");
+
+    chatMessages.innerHTML += `
+        <div class="message-row user-row">
+            <div class="message-bubble user-bubble">
+                ${message}
+            </div>
+        </div>
+    `;
+
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function renderAssistantMessage(message, hasReasoning, reasoningSteps = []) {
+    const chatMessages = document.getElementById("chatMessages");
+    const reasoningId = `reasoning-${Date.now()}-${Math.random()}`;
+
+    window[reasoningId] = reasoningSteps;
+
+    chatMessages.innerHTML += `
+        <div class="message-row assistant-row">
+            <div class="message-bubble assistant-bubble">
+
+                ${hasReasoning ? `
+                    <button class="reasoning-toggle" onclick="openReasoningDrawer('${reasoningId}')">
+                        Show reasoning trace
+                    </button>
+                ` : ""}
+
+                <pre>${message}</pre>
+            </div>
+        </div>
+    `;
+
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function openReasoningDrawer(reasoningId = null) {
+    const drawer = document.getElementById("reasoningDrawer");
+
+    if (reasoningId) {
+        const steps = window[reasoningId] || [];
+        renderReasoningSteps(steps);
+    } else {
+        renderReasoningSteps(latestReasoningSteps);
+    }
+
+    reasoningDrawerOpen = true;
+    drawer.classList.remove("hidden");
+}
+
+function closeReasoningDrawer() {
+    reasoningDrawerOpen = false;
+    document.getElementById("reasoningDrawer").classList.add("hidden");
+}
+
+function renderReasoningDrawerLive() {
+    if (!reasoningDrawerOpen) {
+        return;
+    }
+
+    renderReasoningSteps(latestReasoningSteps);
+}
+
+function renderReasoningSteps(steps) {
+    const content = document.getElementById("reasoningDrawerContent");
+
+    let html = "";
+
+    steps.forEach(step => {
+        html += `
+            <div class="reasoning-step">
+                <h4>Iteration ${step.iteration}</h4>
+
+                <p><strong>Thought:</strong><br>${step.thought}</p>
+                <p><strong>Action:</strong><br>${step.action}</p>
+
+                <p><strong>Observation:</strong></p>
+                <pre>${step.output ? JSON.stringify(step.output, null, 2) : "Waiting for observation..."}</pre>
+            </div>
+        `;
+    });
+
+    content.innerHTML = html || "No reasoning trace yet.";
+}
+
+function createHistoryTitle(message) {
+    const now = new Date();
+    const time = now.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit"
+    });
+
+    const lower = message.toLowerCase();
+
+    if (lower.includes("prioritize")) {
+        return `Prioritized fleet risk · ${time}`;
+    }
+
+    if (lower.includes("overview") || lower.includes("fleet")) {
+        return `Reviewed fleet health · ${time}`;
+    }
+
+    if (lower.includes("critical")) {
+        return `Found critical devices · ${time}`;
+    }
+
+    if (lower.includes("alarm")) {
+        return `Reviewed alarms · ${time}`;
+    }
+
+    if (lower.includes("heartbeat")) {
+        return `Checked heartbeat delays · ${time}`;
+    }
+
+    if (lower.includes("diagnose")) {
+        return `Ran diagnosis · ${time}`;
+    }
+
+    return `New analysis · ${time}`;
+}
 
 setInterval(refreshDevices, 5000);

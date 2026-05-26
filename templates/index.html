@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>IoT Ops AI Agent</title>
+    <title>IoT Ops Agent</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 
@@ -11,7 +11,7 @@
 
     <aside class="sidebar">
         <div class="sidebar-header">
-            <h2>IoT Ops</h2>
+            <h2>IoT Ops Agent</h2>
             <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
         </div>
 
@@ -34,25 +34,25 @@
         <main class="content-scroll">
 
             <section id="homeTab" class="tab-page active-page">
-                <div class="hero">
-                    <h1>IoT Ops AI Agent</h1>
-                    <p>Multi-step reasoning assistant for IoT operations monitoring</p>
+
+                <div id="homeHero" class="home-hero">
+                    <h1>IoT Ops Agent</h1>
+                    <p>Ask about fleet health, critical devices, alarms, or device diagnosis.</p>
                 </div>
 
-                <div class="chat-card">
-                    <div class="input-row">
-                        <select
-                            id="modeSelect"
-                            class="mode-inline"
-                            onchange="setMode(this.value)"
-                        >
-                            <option value="week1">
-                                IOAA v1 (Single step tool calling)
-                            </option>
+                <div id="chatMessages" class="chat-messages"></div>
 
-                            <option value="week2" selected>
-                                IOAA v2 (Multi-step reasoning agent)
-                            </option>
+                <div class="chat-input-wrapper">
+                    <div id="promptSuggestions" class="suggestions hidden"></div>
+
+                    <div id="loading" class="loading hidden">
+                        Agent is thinking...
+                    </div>
+
+                    <div class="input-row chat-input-row">
+                        <select id="modeSelect" class="mode-inline" onchange="setMode(this.value)">
+                            <option value="week1">IOA v1 (Single-step tool calling)</option>
+                            <option value="week2" selected>IOA v2 (Multi-step reasoning agent)</option>
                         </select>
 
                         <input
@@ -67,27 +67,9 @@
                             Run
                             <span>Enter ↵</span>
                         </button>
-
-                    </div>
-
-                    <div id="promptSuggestions" class="suggestions hidden"></div>
-
-                    <div id="loading" class="loading hidden">
-                        Agent is investigating...
-                    </div>
-
-                    <div class="output-grid">
-                        <div class="reasoning-box">
-                            <h3>Reasoning Trace</h3>
-                            <div id="reasoningOutput">No reasoning yet.</div>
-                        </div>
-
-                        <div class="response-box">
-                            <h3>Final Diagnosis</h3>
-                            <pre id="responseOutput">No diagnosis yet.</pre>
-                        </div>
                     </div>
                 </div>
+
             </section>
 
             <section id="devicesTab" class="tab-page">
@@ -278,6 +260,17 @@
         </main>
 
     </section>
+</div>
+
+<div id="reasoningDrawer" class="reasoning-drawer hidden">
+    <div class="drawer-header">
+        <h2>Reasoning Trace</h2>
+        <button onclick="closeReasoningDrawer()">Close</button>
+    </div>
+
+    <div id="reasoningDrawerContent" class="drawer-content">
+        No reasoning trace yet.
+    </div>
 </div>
 
 <script src="/static/script.js"></script>

@@ -18,7 +18,8 @@ from database import (
     add_message,
     get_messages,
     create_user,
-    verify_user
+    verify_user,
+    delete_chat
 )
 
 load_dotenv()
@@ -244,6 +245,19 @@ def api_register():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+@app.route("/api/chats/<int:chat_id>", methods=["DELETE"])
+def api_delete_chat(chat_id):
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    user_id = session.get("user_id")
+
+    delete_chat(chat_id, user_id)
+
+    return jsonify({
+        "status": "deleted"
+    })
 
 if __name__ == "__main__":
 

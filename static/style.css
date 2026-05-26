@@ -69,18 +69,57 @@ body {
 }
 
 .history-item {
-    padding: 14px;
-    border-radius: 12px;
-    color: #d4d4d8;
-    cursor: pointer;
-    margin-bottom: 10px;
-    font-size: 17px;
-    font-weight: 500;
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
 }
 
-.history-item.active,
-.history-item:hover {
-    background: #262626;
+.history-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+    flex: 1;
+}
+
+.history-menu-btn {
+    display: none;
+    background: transparent;
+    color: #a1a1aa;
+    padding: 4px 8px;
+    border-radius: 8px;
+}
+
+.history-item:hover .history-menu-btn {
+    display: block;
+}
+
+.history-menu-btn:hover {
+    background: #333333;
+    color: #ffffff;
+}
+
+.history-menu {
+    position: absolute;
+    right: 8px;
+    top: 42px;
+    background: #212121;
+    border: 1px solid #333333;
+    border-radius: 10px;
+    padding: 6px;
+    z-index: 50;
+}
+
+.history-menu button {
+    background: transparent;
+    color: #ef4444;
+    padding: 8px 14px;
+    border-radius: 8px;
+}
+
+.history-menu button:hover {
+    background: #2f2f2f;
 }
 
 /* Main layout */
@@ -735,14 +774,30 @@ th {
     height: 100% !important;
 }
 
-.logout-link {
-    display: block;
-    color: #a1a1aa;
-    text-decoration: none;
-    margin-top: 12px;
-    font-size: 14px;
+.sidebar-footer {
+    margin-top: auto;
+    padding-top: 16px;
 }
 
-.logout-link:hover {
+.logout-btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+    text-decoration: none;
+
+    background: #262626;
+    color: #ececec;
+
+    border: 1px solid #3f3f46;
+    border-radius: 14px;
+
+    padding: 14px 16px;
+
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.logout-btn:hover {
+    background: #333333;
     color: #ffffff;
 }

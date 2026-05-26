@@ -350,3 +350,21 @@ def verify_user(username, password):
         return None
 
     return user
+
+def delete_chat(chat_id, user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        DELETE FROM messages
+        WHERE chat_id = ?
+    """, (chat_id,))
+
+    cursor.execute("""
+        DELETE FROM chats
+        WHERE id = ?
+        AND user_id = ?
+    """, (chat_id, user_id))
+
+    conn.commit()
+    conn.close()

@@ -326,7 +326,22 @@ function renderChatHistory() {
             item.classList.add("active");
         }
 
-        item.textContent = chat.title;
+        item.innerHTML = `
+            <span class="history-title">${chat.title}</span>
+
+            <button
+                class="history-menu-btn"
+                onclick="event.stopPropagation(); toggleHistoryMenu(${chat.id});"
+            >
+                ⋯
+            </button>
+
+            <div id="history-menu-${chat.id}" class="history-menu hidden">
+                <button onclick="event.stopPropagation(); deleteChat(${chat.id});">
+                    Delete
+                </button>
+            </div>
+        `;
 
         item.onclick = function () {
             loadChat(chat.id);
@@ -1030,6 +1045,40 @@ async function saveMessageToDatabase(role, content, reasoningSteps = null) {
             reasoning_steps: reasoningSteps
         })
     });
+}
+
+function toggleHistoryMenu(chatId) {
+    document.querySelectorAll(".history-menu").forEach(menu => {
+        if (menu.id !== `history-menu-${chatId}`) {
+            menu.classList.add("hidden");
+        }
+    });
+
+    const menu = document.getElementById(`history-menu-${chatId}`);
+    menu.classList.toggle("hidden");
+}
+
+async function deleteChat(chatId) {
+    const confirmed = confirm("Delete this chat history?");
+
+    if (!confirmed) {
+        return;
+    }
+
+    await fetch(`/api/chats/${chatId}`, {
+        method: "DELETE"
+    });
+
+    chats = chats.filter(chat => chat.id !== chatId);
+
+    if (currentChatId === chatId) {
+        currentChatId = null;
+        document.getElementById("chatMessages").innerHTML = "";
+        document.getElementById("homeHero").classList.remove("hidden");
+        closeReasoningDrawer();
+    }
+
+    renderChatHistory();
 }
 
 //setInterval(refreshDevices, 5000);

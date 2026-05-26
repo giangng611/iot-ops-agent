@@ -45,6 +45,13 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    try:
+        cursor.execute("""
+            ALTER TABLE chats ADD COLUMN is_pinned INTEGER DEFAULT 0
+        """)
+    except sqlite3.OperationalError:
+        pass
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,10 +239,10 @@ def get_chats(user_id):
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT id, title, created_at
+        SELECT id, title, created_at, is_pinned
         FROM chats
         WHERE user_id = ?
-        ORDER BY id DESC
+        ORDER BY is_pinned DESC, id DESC
     """, (user_id,))
 
     rows = cursor.fetchall()
@@ -245,7 +252,8 @@ def get_chats(user_id):
         {
             "id": row[0],
             "title": row[1],
-            "created_at": row[2]
+            "created_at": row[2],
+            "is_pinned": bool(row[3])
         }
         for row in rows
     ]
@@ -368,3 +376,68 @@ def delete_chat(chat_id, user_id):
 
     conn.commit()
     conn.close()
+
+def toggle_pin_chat(chat_id, user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT is_pinned
+        FROM chats
+        WHERE id = ?
+        AND user_id = ?
+    """, (chat_id, user_id))
+
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        return None
+
+    new_value = 0 if row[0] else 1
+
+    cursor.execute("""
+        UPDATE chats
+        SET is_pinned = ?
+        WHERE id = ?
+        AND user_id = ?
+    """, (new_value, chat_id, user_id))
+
+    conn.commit()
+    conn.close()
+
+    return bool(new_value)
+
+def change_user_password(user_id, current_password, new_password):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT password_hash
+        FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        return False, "User not found"
+
+    if not check_password_hash(row[0], current_password):
+        conn.close()
+        return False, "Current password is incorrect"
+
+    cursor.execute("""
+        UPDATE users
+        SET password_hash = ?
+        WHERE id = ?
+    """, (
+        generate_password_hash(new_password),
+        user_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return True, "Password updated successfully"

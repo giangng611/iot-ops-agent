@@ -19,7 +19,9 @@ from database import (
     get_messages,
     create_user,
     verify_user,
-    delete_chat
+    delete_chat,
+    toggle_pin_chat,
+    change_user_password
 )
 
 load_dotenv()
@@ -258,6 +260,45 @@ def api_delete_chat(chat_id):
     return jsonify({
         "status": "deleted"
     })
+
+@app.route("/api/chats/<int:chat_id>/pin", methods=["POST"])
+def api_toggle_pin_chat(chat_id):
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    user_id = session.get("user_id")
+    is_pinned = toggle_pin_chat(chat_id, user_id)
+
+    if is_pinned is None:
+        return jsonify({"error": "Chat not found"}), 404
+
+    return jsonify({
+        "is_pinned": is_pinned
+    })
+
+@app.route("/api/profile/change-password", methods=["POST"])
+def api_change_password():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json()
+
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+
+    if not current_password or not new_password:
+        return jsonify({"error": "Both fields are required"}), 400
+
+    success, message = change_user_password(
+        session.get("user_id"),
+        current_password,
+        new_password
+    )
+
+    if not success:
+        return jsonify({"error": message}), 400
+
+    return jsonify({"status": message})
 
 if __name__ == "__main__":
 

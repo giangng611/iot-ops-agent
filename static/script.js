@@ -105,6 +105,7 @@ async function createChatIfNeeded(message) {
     const chat = {
         id: currentChatId,
         title: data.title,
+        isPinned: false,
         messages: []
     };
 
@@ -319,8 +320,21 @@ function diagnoseDevice(deviceId) {
 function renderChatHistory() {
     const history = document.getElementById("chatHistory");
     history.innerHTML = "";
+    const searchValue = document.getElementById("chatSearch")?.value.toLowerCase() || "";
 
-    chats.forEach(chat => {
+    const visibleChats = chats.filter(chat =>
+        chat.title.toLowerCase().includes(searchValue)
+    );
+
+    visibleChats.sort((a, b) => {
+        if (a.isPinned === b.isPinned) {
+            return b.id - a.id;
+        }
+
+        return a.isPinned ? -1 : 1;
+    });
+
+    visibleChats.forEach(chat => {
         const item = document.createElement("div");
         item.className = "history-item";
 
@@ -329,7 +343,15 @@ function renderChatHistory() {
         }
 
         item.innerHTML = `
-            <span class="history-title">${chat.title}</span>
+            <span class="history-title">
+                ${chat.isPinned ? `
+                    <svg class="pin-icon" viewBox="0 0 24 24">
+                        <path d="M14 4l6 6-4 1-4 7-2-2 7-4 1-4-6-6z"></path>
+                        <path d="M5 19l5-5"></path>
+                    </svg>
+                ` : ""}
+                <span>${chat.title}</span>
+            </span>
 
             <button
                 class="history-menu-btn"
@@ -339,6 +361,9 @@ function renderChatHistory() {
             </button>
 
             <div id="history-menu-${chat.id}" class="history-menu hidden">
+                <button onclick="event.stopPropagation(); togglePinChat(${chat.id});">
+                    ${chat.isPinned ? "Unpin" : "Pin"}
+                </button>
                 <button onclick="event.stopPropagation(); deleteChat(${chat.id});">
                     Delete
                 </button>
@@ -1023,6 +1048,7 @@ async function loadChatsFromDatabase() {
     chats = data.chats.map(chat => ({
         id: chat.id,
         title: chat.title,
+        isPinned: chat.is_pinned,
         messages: []
     }));
 
@@ -1083,6 +1109,171 @@ async function deleteChat(chatId) {
     }
 
     renderChatHistory();
+}
+
+function openLogoutModal() {
+    document.getElementById("logoutModal").classList.remove("hidden");
+}
+
+function closeLogoutModal() {
+    document.getElementById("logoutModal").classList.add("hidden");
+}
+
+function confirmLogout() {
+    window.location.href = "/logout";
+}
+
+async function togglePinChat(chatId) {
+    const response = await fetch(`/api/chats/${chatId}/pin`, {
+        method: "POST"
+    });
+
+    const data = await response.json();
+
+    const chat = chats.find(item => item.id === chatId);
+
+    if (chat) {
+        chat.isPinned = data.is_pinned;
+    }
+
+    renderChatHistory();
+}
+
+async function changePassword() {
+    const currentPassword = document.getElementById("currentPassword").value;
+    const newPassword = document.getElementById("newPassword").value;
+    const message = document.getElementById("profileMessage");
+
+    const response = await fetch("/api/profile/change-password", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            current_password: currentPassword,
+            new_password: newPassword
+        })
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+        message.textContent = data.error;
+        return;
+    }
+
+    message.textContent = data.status;
+
+    document.getElementById("currentPassword").value = "";
+    document.getElementById("newPassword").value = "";
+}
+
+function openProfileDrawer(type) {
+    const drawer = document.getElementById("profileDrawer");
+    const title = document.getElementById("profileDrawerTitle");
+    const subtitle = document.getElementById("profileDrawerSubtitle");
+    const content = document.getElementById("profileDrawerContent");
+    const profileTab = document.getElementById("profileTab");
+
+    profileTab.classList.add("drawer-open");
+
+    if (type === "security") {
+        title.textContent = "Security";
+        subtitle.textContent = "Update your account password.";
+
+        content.innerHTML = `
+            <div class="profile-form modal-form">
+                <input id="currentPassword" type="password" placeholder="Current password">
+                <input id="newPassword" type="password" placeholder="New password">
+
+                <button onclick="changePassword()">Update Password</button>
+
+                <p id="profileMessage"></p>
+            </div>
+        `;
+    }
+
+    if (type === "chats") {
+        title.textContent = "Chat History";
+        subtitle.textContent = "Manage saved conversations.";
+
+        content.innerHTML = `
+            <div class="drawer-info-list">
+                <div>
+                    <strong>Search chats</strong>
+                    <p>Use the sidebar search box to quickly find previous conversations.</p>
+                </div>
+
+                <div>
+                    <strong>Pin chats</strong>
+                    <p>Hover over a chat, open the menu, and pin important conversations.</p>
+                </div>
+
+                <div>
+                    <strong>Delete chats</strong>
+                    <p>Use the chat menu to permanently delete a conversation from the database.</p>
+                </div>
+            </div>
+        `;
+    }
+
+    if (type === "workspace") {
+        title.textContent = "Workspace";
+        subtitle.textContent = "Local workspace and storage details.";
+
+        content.innerHTML = `
+            <div class="drawer-info-list">
+                <div>
+                    <strong>Storage</strong>
+                    <p>Telemetry, users, chats, messages, and reasoning traces are stored in SQLite.</p>
+                </div>
+
+                <div>
+                    <strong>Realtime updates</strong>
+                    <p>Device status, alerts, and charts update through WebSocket events.</p>
+                </div>
+
+                <div>
+                    <strong>User isolation</strong>
+                    <p>Each local account has its own saved chat history.</p>
+                </div>
+            </div>
+        `;
+    }
+
+    if (type === "notifications") {
+        title.textContent = "Notifications";
+        subtitle.textContent = "Realtime warning and critical alert behavior.";
+
+        content.innerHTML = `
+            <div class="drawer-info-list">
+                <div>
+                    <strong>Alert Center</strong>
+                    <p>Warning and critical device conditions appear in the Alerts tab.</p>
+                </div>
+
+                <div>
+                    <strong>Alert badge</strong>
+                    <p>The top navigation badge shows the number of active warning and critical devices.</p>
+                </div>
+
+                <div>
+                    <strong>Operational thresholds</strong>
+                    <p>CPU warning: 75%. Memory warning: 80%. Heartbeat warning: 180 seconds.</p>
+                </div>
+            </div>
+        `;
+    }
+
+    drawer.classList.remove("hidden");
+}
+
+function closeProfileDrawer() {
+    const drawer = document.getElementById("profileDrawer");
+    const profileTab = document.getElementById("profileTab");
+
+    drawer.classList.add("hidden");
+    profileTab.classList.remove("drawer-open");
 }
 
 //setInterval(refreshDevices, 5000);

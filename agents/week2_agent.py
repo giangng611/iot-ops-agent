@@ -77,6 +77,19 @@ class Week2Agent:
 
             observations.append(observation)
 
+            if self.has_enough_system_evidence(target, observations):
+                final_answer = self.generate_final_answer(
+                    user_input=user_input,
+                    observations=observations
+                )
+
+                self.save_to_history(user_input, final_answer)
+
+                return {
+                    "final_answer": final_answer,
+                    "steps": observations
+                }
+
         final_answer = self.generate_final_answer(
             user_input=user_input,
             observations=observations
@@ -164,6 +177,21 @@ class Week2Agent:
                 "iteration": step + 1,
                 "observation": observation
             }
+
+            if self.has_enough_system_evidence(target, observations):
+                final_answer = self.generate_final_answer(
+                    user_input=user_input,
+                    observations=observations
+                )
+
+                self.save_to_history(user_input, final_answer)
+
+                yield {
+                    "type": "final",
+                    "final_answer": final_answer
+                }
+
+                return
 
         final_answer = self.generate_final_answer(
             user_input=user_input,
@@ -400,3 +428,17 @@ class Week2Agent:
         ]
 
         return any(word in lowered for word in context_words)
+
+    def has_enough_system_evidence(self, target, observations):
+        if target != "SYSTEM":
+            return False
+
+        actions = [
+            observation["action"]
+            for observation in observations
+        ]
+
+        return (
+                "check_system_overview" in actions
+                and "check_system_alarms" in actions
+        )

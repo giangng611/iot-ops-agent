@@ -28,6 +28,10 @@
         <nav class="topbar">
             <button class="top-tab active" onclick="showTab('home', this)">Home</button>
             <button class="top-tab" onclick="showTab('devices', this)">Devices</button>
+            <button class="top-tab" onclick="showTab('alerts', this)">
+                Alerts
+                <span id="alertBadge" class="alert-badge hidden">0</span>
+            </button>
             <button class="top-tab" onclick="showTab('prompts', this)">Prompts</button>
         </nav>
 
@@ -173,6 +177,19 @@
                     </div>
 
                 </div>
+            </section>
+
+            <section id="alertsTab" class="tab-page">
+                <div class="page-header">
+                    <h1>Alerts</h1>
+                    <p>Real-time active warning and critical device conditions</p>
+                </div>
+
+                <div id="alertSummary" class="alert-summary">
+                    No active alerts.
+                </div>
+
+                <div id="alertList" class="alert-list"></div>
             </section>
 
             <section id="promptsTab" class="tab-page">

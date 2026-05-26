@@ -83,8 +83,22 @@ def device_broadcast_loop():
     while True:
         devices = get_all_latest_devices()
 
+        critical_count = len([
+            device for device in devices
+            if device["status"] == "critical"
+        ])
+
+        warning_count = len([
+            device for device in devices
+            if device["status"] == "warning"
+        ])
+
         socketio.emit("device_update", {
-            "devices": devices
+            "devices": devices,
+            "alerts": {
+                "critical_count": critical_count,
+                "warning_count": warning_count
+            }
         })
 
         time.sleep(5)

@@ -6,7 +6,10 @@ socket.on("connect", () => {
 
 socket.on("device_update", (data) => {
     allDevices = data.devices;
+    currentAlerts = data.alerts;
+
     renderDeviceTable();
+    renderAlertCenter();
 });
 
 let currentMode = "week2";
@@ -15,6 +18,10 @@ let chats = [];
 let currentChatId = null;
 let latestReasoningSteps = [];
 let reasoningDrawerOpen = false;
+let currentAlerts = {
+    critical_count: 0,
+    warning_count: 0
+};
 
 const prompts = [
     "/overview system health",
@@ -583,6 +590,65 @@ function createHistoryTitle(message) {
     }
 
     return `New analysis · ${time}`;
+}
+
+function renderAlertCenter() {
+    const badge = document.getElementById("alertBadge");
+    const summary = document.getElementById("alertSummary");
+    const alertList = document.getElementById("alertList");
+
+    const critical = currentAlerts.critical_count || 0;
+    const warning = currentAlerts.warning_count || 0;
+    const total = critical + warning;
+
+    if (total > 0) {
+        badge.classList.remove("hidden");
+        badge.textContent = total;
+    } else {
+        badge.classList.add("hidden");
+    }
+
+    if (!summary || !alertList) {
+        return;
+    }
+
+    summary.innerHTML = `
+        <div class="alert-summary-card critical-alert">
+            <h2>${critical}</h2>
+            <p>Critical</p>
+        </div>
+
+        <div class="alert-summary-card warning-alert">
+            <h2>${warning}</h2>
+            <p>Warning</p>
+        </div>
+    `;
+
+    const alertDevices = allDevices.filter(device =>
+        device.status === "critical" || device.status === "warning"
+    );
+
+    alertList.innerHTML = "";
+
+    alertDevices.forEach(device => {
+        alertList.innerHTML += `
+            <div class="alert-item ${device.status}">
+                <div>
+                    <h3>${device.device_id}</h3>
+                    <p>
+                        Status: ${device.status} ·
+                        CPU: ${device.cpu_usage}% ·
+                        Memory: ${device.memory_usage}% ·
+                        Heartbeat: ${device.heartbeat_delay}s
+                    </p>
+                </div>
+
+                <button onclick="diagnoseDevice('${device.device_id}')">
+                    Diagnose
+                </button>
+            </div>
+        `;
+    });
 }
 
 //setInterval(refreshDevices, 5000);

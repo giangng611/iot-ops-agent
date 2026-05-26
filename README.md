@@ -2,10 +2,6 @@
 
 AI-powered IoT observability platform with realtime telemetry simulation, multi-step reasoning agents, streaming diagnostics, and fleet analytics.
 
-<p align="center">
-  <img src="screenshots/dashboard.png" width="1000">
-</p>
-
 ---
 
 ## Overview

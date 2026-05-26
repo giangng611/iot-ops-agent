@@ -1,3 +1,14 @@
+const socket = io();
+
+socket.on("connect", () => {
+    console.log("Connected to realtime device stream.");
+});
+
+socket.on("device_update", (data) => {
+    allDevices = data.devices;
+    renderDeviceTable();
+});
+
 let currentMode = "week2";
 let allDevices = [];
 let chats = [];
@@ -574,4 +585,4 @@ function createHistoryTitle(message) {
     return `New analysis · ${time}`;
 }
 
-setInterval(refreshDevices, 5000);
+//setInterval(refreshDevices, 5000);

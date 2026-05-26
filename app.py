@@ -3,6 +3,9 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import os
 import json
+from flask_socketio import SocketIO
+import time
+import threading
 
 from agents.week1_agent import Week1Agent
 from agents.week2_agent import Week2Agent
@@ -11,6 +14,7 @@ from database import get_all_latest_devices
 load_dotenv()
 
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 week1_agent = Week1Agent(client)
@@ -49,9 +53,6 @@ def diagnose():
                 "response": result["final_answer"],
                 "steps": result["steps"]
             })
-        return jsonify({
-            "response": result
-        })
     except Exception as e:
         return jsonify({
             "error": str(e)
@@ -78,5 +79,25 @@ def get_devices():
         "devices": devices
     })
 
+def device_broadcast_loop():
+    while True:
+        devices = get_all_latest_devices()
+
+        socketio.emit("device_update", {
+            "devices": devices
+        })
+
+        time.sleep(5)
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+
+    threading.Thread(
+        target=device_broadcast_loop,
+        daemon=True
+    ).start()
+
+    socketio.run(
+        app,
+        debug=True,
+        port=5001
+    )

@@ -159,6 +159,7 @@
                                 <td>{{ device.cpu_usage }}%</td>
                                 <td>{{ device.memory_usage }}%</td>
                                 <td>{{ device.heartbeat_delay }}s ago</td>
+                                <td>-</td>
                                 <td>
                                     <button onclick="diagnoseDevice('{{ device.device_id }}')">
                                         Diagnose
@@ -273,6 +274,7 @@
     </div>
 </div>
 
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="/static/script.js"></script>
 </body>
 </html>

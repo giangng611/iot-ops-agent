@@ -576,11 +576,11 @@ function createHistoryTitle(message) {
     const lower = message.toLowerCase();
 
     if (lower.includes("prioritize")) {
-        return `Prioritized fleet risk · ${time}`;
+        return `Prioritized devices · ${time}`;
     }
 
-    if (lower.includes("overview") || lower.includes("fleet")) {
-        return `Reviewed fleet health · ${time}`;
+    if (lower.includes("unhealthy")) {
+        return `Checked unhealthy devices · ${time}`;
     }
 
     if (lower.includes("critical")) {
@@ -588,15 +588,27 @@ function createHistoryTitle(message) {
     }
 
     if (lower.includes("alarm")) {
-        return `Reviewed alarms · ${time}`;
+        return `Reviewed active alarms · ${time}`;
     }
 
     if (lower.includes("heartbeat")) {
         return `Checked heartbeat delays · ${time}`;
     }
 
+    if (lower.includes("risk")) {
+        return `Summarized fleet risk · ${time}`;
+    }
+
     if (lower.includes("diagnose")) {
         return `Ran diagnosis · ${time}`;
+    }
+
+    if (lower.includes("overview") || lower.includes("health")) {
+        return `Reviewed system health · ${time}`;
+    }
+
+    if (lower.includes("fleet status")) {
+        return `Reviewed fleet status · ${time}`;
     }
 
     return `New analysis · ${time}`;

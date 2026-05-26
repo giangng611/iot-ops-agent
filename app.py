@@ -80,6 +80,7 @@ def get_devices():
     })
 
 def device_broadcast_loop():
+    DEVICE_BROADCAST_INTERVAL_SECONDS = 30
     while True:
         devices = get_all_latest_devices()
 
@@ -101,7 +102,7 @@ def device_broadcast_loop():
             }
         })
 
-        time.sleep(5)
+        time.sleep(DEVICE_BROADCAST_INTERVAL_SECONDS)
 
 if __name__ == "__main__":
 

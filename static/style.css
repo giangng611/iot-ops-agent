@@ -434,7 +434,7 @@ pre {
 }
 
 .devices-table-wrapper {
-    max-height: 620px;
+    max-height: 360px;
     overflow-y: auto;
     border-radius: 14px;
 }
@@ -651,4 +651,29 @@ th {
 
 .app-shell.sidebar-collapsed .chat-history {
     display: none;
+}
+
+.charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-bottom: 18px;
+}
+
+.chart-card {
+    background: #171717;
+    border: 1px solid #2f2f2f;
+    border-radius: 18px;
+    padding: 20px;
+    height: 260px;
+}
+
+.chart-card h2 {
+    margin-top: 0;
+    margin-bottom: 16px;
+    font-size: 20px;
+}
+
+.chart-card canvas {
+    height: 190px !important;
 }

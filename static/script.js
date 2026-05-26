@@ -10,6 +10,7 @@ socket.on("device_update", (data) => {
 
     renderDeviceTable();
     renderAlertCenter();
+    renderCharts();
 });
 
 let currentMode = "week2";
@@ -22,6 +23,8 @@ let currentAlerts = {
     critical_count: 0,
     warning_count: 0
 };
+let healthChart = null;
+let metricsChart = null;
 
 const prompts = [
     "/overview system health",
@@ -662,6 +665,135 @@ function toggleSidebar() {
     } else {
         toggle.innerHTML = "‹";
     }
+}
+
+function renderCharts() {
+    if (!allDevices || allDevices.length === 0) {
+        return;
+    }
+
+    renderHealthChart();
+    renderMetricsChart();
+}
+
+function renderHealthChart() {
+    const canvas = document.getElementById("healthChart");
+
+    if (!canvas) {
+        return;
+    }
+
+    const healthy = allDevices.filter(device => device.status === "healthy").length;
+    const warning = allDevices.filter(device => device.status === "warning").length;
+    const critical = allDevices.filter(device => device.status === "critical").length;
+
+    const data = {
+        labels: ["Healthy", "Warning", "Critical"],
+        datasets: [
+            {
+                data: [healthy, warning, critical],
+                backgroundColor: ["#22c55e", "#eab308", "#ef4444"],
+                borderColor: "#171717",
+                borderWidth: 2
+            }
+        ]
+    };
+
+    if (healthChart) {
+        healthChart.data = data;
+        healthChart.update();
+        return;
+    }
+
+    healthChart = new Chart(canvas, {
+        type: "doughnut",
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    labels: {
+                        color: "#ececec"
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderMetricsChart() {
+    const canvas = document.getElementById("metricsChart");
+
+    if (!canvas) {
+        return;
+    }
+
+    const total = allDevices.length;
+
+    const avgCpu = Math.round(
+        allDevices.reduce((sum, device) => sum + Number(device.cpu_usage), 0) / total
+    );
+
+    const avgMemory = Math.round(
+        allDevices.reduce((sum, device) => sum + Number(device.memory_usage), 0) / total
+    );
+
+    const avgHeartbeat = Math.round(
+        allDevices.reduce((sum, device) => sum + Number(device.heartbeat_delay), 0) / total
+    );
+
+    const data = {
+        labels: ["Avg CPU %", "Avg Memory %", "Avg Heartbeat Delay"],
+        datasets: [
+            {
+                label: "Fleet Average",
+                data: [avgCpu, avgMemory, avgHeartbeat],
+                backgroundColor: ["#60a5fa", "#a78bfa", "#f97316"],
+                borderRadius: 8
+            }
+        ]
+    };
+
+    if (metricsChart) {
+        metricsChart.data = data;
+        metricsChart.update();
+        return;
+    }
+
+    metricsChart = new Chart(canvas, {
+        type: "bar",
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    ticks: {
+                        color: "#ececec"
+                    },
+                    grid: {
+                        color: "#2f2f2f"
+                    }
+                },
+                y: {
+                    ticks: {
+                        color: "#ececec"
+                    },
+                    grid: {
+                        color: "#2f2f2f"
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: {
+                        color: "#ececec"
+                    }
+                }
+            }
+        }
+    });
 }
 
 //setInterval(refreshDevices, 5000);

@@ -9,6 +9,9 @@ Always respond clearly with:
 2. Evidence
 3. Suggested next action
 
+Important data convention:
+- Heartbeat delay values are measured in seconds.
+
 Do not invent data. Only use the tool output provided.
 """
 
@@ -29,6 +32,9 @@ WEEK2_AGENT_PROMPT = """
 You are an IoT operations AI agent.
 
 Your job is to investigate operational issues step by step.
+
+Important data convention:
+- Heartbeat delay values are measured in seconds.
 
 Use this reasoning style:
 Thought: explain what information you need next.

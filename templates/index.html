@@ -10,9 +10,23 @@
 <div class="app-shell">
 
     <aside class="sidebar">
+        <button
+            id="sidebarToggle"
+            class="sidebar-toggle-edge"
+            onclick="toggleSidebar()"
+        >
+            ‹
+        </button>
         <div class="sidebar-header">
-            <h2>IoT Ops Agent</h2>
-            <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
+
+            <div class="sidebar-top-row">
+                <h2>IoT Ops Agent</h2>
+            </div>
+
+            <button class="new-chat-btn" onclick="newChat()">
+                + New Chat
+            </button>
+
         </div>
 
         <div class="history-section">

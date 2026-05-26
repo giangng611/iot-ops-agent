@@ -592,3 +592,63 @@ th {
 .alert-item.warning {
     border-left: 5px solid #eab308;
 }
+
+.sidebar {
+    position: relative;
+    transition: padding 0.25s ease;
+}
+
+.app-shell.sidebar-collapsed {
+    grid-template-columns: 12px 1fr;
+}
+
+.app-shell.sidebar-collapsed .sidebar {
+    padding: 0;
+}
+
+.app-shell.sidebar-collapsed .sidebar-header,
+.app-shell.sidebar-collapsed .history-section {
+    display: none;
+}
+
+.sidebar-toggle-edge {
+    position: absolute;
+    top: 50%;
+    right: -14px;
+    transform: translateY(-50%);
+
+    width: 28px;
+    height: 96px;
+
+    background: #202020;
+    color: #ffffff;
+
+    border: 1px solid #3f3f46;
+    border-radius: 8px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    font-size: 14px;
+    line-height: 1;
+
+    padding: 0;
+    z-index: 200;
+}
+
+.sidebar-toggle-edge:hover {
+    background: #2a2a2a;
+    border-color: #5a5a5a;
+}
+
+.app-shell.sidebar-collapsed .sidebar-header h2,
+.app-shell.sidebar-collapsed .sidebar-label,
+.app-shell.sidebar-collapsed .history-item,
+.app-shell.sidebar-collapsed .new-chat-btn {
+    display: none;
+}
+
+.app-shell.sidebar-collapsed .chat-history {
+    display: none;
+}

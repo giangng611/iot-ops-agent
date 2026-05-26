@@ -651,4 +651,17 @@ function renderAlertCenter() {
     });
 }
 
+function toggleSidebar() {
+    const appShell = document.querySelector(".app-shell");
+    const toggle = document.getElementById("sidebarToggle");
+
+    appShell.classList.toggle("sidebar-collapsed");
+
+    if (appShell.classList.contains("sidebar-collapsed")) {
+        toggle.innerHTML = "›";
+    } else {
+        toggle.innerHTML = "‹";
+    }
+}
+
 //setInterval(refreshDevices, 5000);

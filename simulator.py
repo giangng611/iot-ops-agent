@@ -16,6 +16,8 @@ DEVICES = [
     "gateway-003"
 ]
 
+SIMULATION_INTERVAL_SECONDS = 30
+
 
 def determine_status(cpu, memory, heartbeat_delay):
     if cpu >= 90 or memory >= 90 or heartbeat_delay >= 600:
@@ -33,52 +35,71 @@ def generate_log(status):
             "gateway timeout",
             "packet loss detected",
             "multiple reconnect failures",
-            "device heartbeat missing"
+            "device heartbeat missing",
+            "high resource usage detected"
         ])
 
     if status == "warning":
         return random.choice([
             "heartbeat delayed",
             "temperature reading timeout",
-            "MQTT reconnect attempt successful"
+            "MQTT reconnect attempt successful",
+            "temporary latency spike detected"
         ])
 
     return random.choice([
         "normal telemetry transmission",
         "stable MQTT connection",
-        "device operating normally"
+        "device operating normally",
+        "heartbeat received successfully"
     ])
 
 
-def generate_alarm(status, cpu):
+def generate_alarm(status, cpu, memory, heartbeat_delay):
     if status == "critical":
-        return "Critical resource usage", "critical"
+        if heartbeat_delay >= 600:
+            return "Heartbeat delay exceeded", "critical"
 
-    if status == "warning" and cpu >= 75:
-        return "High CPU usage", "medium"
+        if cpu >= 90 or memory >= 90:
+            return "Critical resource usage", "critical"
+
+    if status == "warning":
+        if heartbeat_delay >= 180:
+            return "Heartbeat delay warning", "medium"
+
+        if cpu >= 75:
+            return "High CPU usage", "medium"
+
+        if memory >= 75:
+            return "High memory usage", "medium"
 
     return None, None
 
 
 def generate_telemetry(device_id):
-    if device_id == "sensor-002":
-        cpu = random.randint(30, 55)
-        memory = random.randint(40, 60)
-        heartbeat_delay = random.randint(5, 30)
+    if device_id.startswith("gateway"):
+        cpu = random.randint(45, 96)
+        memory = random.randint(45, 94)
+        heartbeat_delay = random.randint(10, 750)
 
-    elif device_id == "sensor-001":
-        cpu = random.randint(65, 85)
-        memory = random.randint(60, 78)
-        heartbeat_delay = random.randint(60, 240)
+    elif device_id in ["sensor-001", "sensor-004", "sensor-007"]:
+        cpu = random.randint(45, 88)
+        memory = random.randint(40, 86)
+        heartbeat_delay = random.randint(10, 360)
 
     else:
-        cpu = random.randint(80, 98)
-        memory = random.randint(75, 95)
-        heartbeat_delay = random.randint(180, 900)
+        cpu = random.randint(25, 70)
+        memory = random.randint(30, 72)
+        heartbeat_delay = random.randint(5, 120)
 
     status = determine_status(cpu, memory, heartbeat_delay)
     log_message = generate_log(status)
-    alarm_name, alarm_severity = generate_alarm(status, cpu)
+    alarm_name, alarm_severity = generate_alarm(
+        status,
+        cpu,
+        memory,
+        heartbeat_delay
+    )
 
     insert_telemetry(
         device_id=device_id,
@@ -99,8 +120,8 @@ def main():
         for device_id in DEVICES:
             generate_telemetry(device_id)
 
-        print("Inserted new telemetry batch.")
-        time.sleep(60)
+        print(f"Inserted telemetry batch for {len(DEVICES)} devices.")
+        time.sleep(SIMULATION_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

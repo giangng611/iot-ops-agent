@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login | IoT Ops Agent</title>
+    <link rel="stylesheet" href="/static/auth.css">
+</head>
+
+<body>
+<div class="auth-container">
+    <div class="auth-card">
+        <h1>IoT Ops Agent</h1>
+        <p>Sign in to your operations workspace</p>
+
+        <input id="username" type="text" placeholder="Username">
+        <input id="password" type="password" placeholder="Password">
+
+        <button onclick="login()">Login</button>
+        <button class="secondary" onclick="register()">Create account</button>
+
+        <p id="authMessage"></p>
+    </div>
+</div>
+
+<script src="/static/auth.js"></script>
+</body>
+</html>

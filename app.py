@@ -6,6 +6,7 @@ import json
 from flask_socketio import SocketIO
 import time
 import threading
+from flask import session, redirect, url_for
 
 from agents.week1_agent import Week1Agent
 from agents.week2_agent import Week2Agent
@@ -15,12 +16,15 @@ from database import (
     create_chat,
     get_chats,
     add_message,
-    get_messages
+    get_messages,
+    create_user,
+    verify_user
 )
 
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -30,9 +34,11 @@ week2_agent = Week2Agent(client)
 
 @app.route("/")
 def home():
+    if not login_required():
+        return redirect(url_for("login"))
+
     devices = get_all_latest_devices()
     return render_template("index.html", devices=devices)
-
 
 @app.route("/api/diagnose", methods=["POST"])
 def diagnose():
@@ -124,7 +130,12 @@ def get_device_history(device_id):
 
 @app.route("/api/chats", methods=["GET"])
 def api_get_chats():
-    chats = get_chats()
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    user_id = session.get("user_id")
+    chats = get_chats(user_id)
+
     return jsonify({
         "chats": chats
     })
@@ -132,20 +143,26 @@ def api_get_chats():
 
 @app.route("/api/chats", methods=["POST"])
 def api_create_chat():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
     data = request.get_json()
     title = data.get("title", "New Chat")
 
-    chat_id = create_chat(title)
+    user_id = session.get("user_id")
+    chat_id = create_chat(user_id, title)
 
     return jsonify({
         "chat_id": chat_id,
         "title": title
     })
 
-
 @app.route("/api/chats/<int:chat_id>/messages", methods=["GET"])
 def api_get_messages(chat_id):
     messages = get_messages(chat_id)
+
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
 
     return jsonify({
         "chat_id": chat_id,
@@ -160,6 +177,9 @@ def api_add_message(chat_id):
     role = data.get("role")
     content = data.get("content")
     reasoning_steps = data.get("reasoning_steps")
+
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
 
     if not role or not content:
         return jsonify({
@@ -179,6 +199,51 @@ def api_add_message(chat_id):
     return jsonify({
         "status": "saved"
     })
+
+def login_required():
+    return "user_id" in session
+
+@app.route("/login", methods=["GET"])
+def login():
+    return render_template("login.html")
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    data = request.get_json()
+
+    username = data.get("username")
+    password = data.get("password")
+
+    user = verify_user(username, password)
+
+    if not user:
+        return jsonify({"error": "Invalid username or password"}), 401
+
+    session["user_id"] = user["id"]
+    session["username"] = user["username"]
+
+    return jsonify({"status": "logged_in"})
+
+
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    data = request.get_json()
+
+    username = data.get("username")
+    password = data.get("password")
+
+    try:
+        create_user(username, password)
+        return jsonify({"status": "registered"})
+    except Exception:
+        return jsonify({"error": "Username already exists"}), 400
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 if __name__ == "__main__":
 

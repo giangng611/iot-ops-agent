@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 
 DB_NAME = "telemetry.db"
 
@@ -30,10 +31,19 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS chats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
             title TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
+
+    try:
+        cursor.execute("""
+            ALTER TABLE chats ADD COLUMN user_id INTEGER
+        """)
+    except sqlite3.OperationalError:
+        pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
@@ -44,6 +54,15 @@ def init_db():
             reasoning_steps TEXT,
             created_at TEXT NOT NULL,
             FOREIGN KEY (chat_id) REFERENCES chats(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
         )
     """)
 
@@ -187,14 +206,15 @@ def get_device_telemetry_history(device_id, limit=30):
 
     return history
 
-def create_chat(title):
+def create_chat(user_id, title):
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO chats (title, created_at)
-        VALUES (?, ?)
+        INSERT INTO chats (user_id, title, created_at)
+        VALUES (?, ?, ?)
     """, (
+        user_id,
         title,
         datetime.now().isoformat(timespec="seconds")
     ))
@@ -207,15 +227,16 @@ def create_chat(title):
     return chat_id
 
 
-def get_chats():
+def get_chats(user_id):
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
         SELECT id, title, created_at
         FROM chats
+        WHERE user_id = ?
         ORDER BY id DESC
-    """)
+    """, (user_id,))
 
     rows = cursor.fetchall()
     conn.close()
@@ -278,3 +299,54 @@ def get_messages(chat_id):
         }
         for row in rows
     ]
+
+def create_user(username, password):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO users (username, password_hash, created_at)
+        VALUES (?, ?, ?)
+    """, (
+        username,
+        generate_password_hash(password),
+        datetime.now().isoformat(timespec="seconds")
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def get_user_by_username(username):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, username, password_hash
+        FROM users
+        WHERE username = ?
+    """, (username,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "username": row[1],
+        "password_hash": row[2]
+    }
+
+
+def verify_user(username, password):
+    user = get_user_by_username(username)
+
+    if not user:
+        return None
+
+    if not check_password_hash(user["password_hash"], password):
+        return None
+
+    return user

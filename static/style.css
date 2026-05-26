@@ -734,3 +734,15 @@ th {
 #deviceHistoryChart {
     height: 100% !important;
 }
+
+.logout-link {
+    display: block;
+    color: #a1a1aa;
+    text-decoration: none;
+    margin-top: 12px;
+    font-size: 14px;
+}
+
+.logout-link:hover {
+    color: #ffffff;
+}

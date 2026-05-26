@@ -11,7 +11,11 @@ from agents.week1_agent import Week1Agent
 from agents.week2_agent import Week2Agent
 from database import (
     get_all_latest_devices,
-    get_device_telemetry_history
+    get_device_telemetry_history,
+    create_chat,
+    get_chats,
+    add_message,
+    get_messages
 )
 
 load_dotenv()
@@ -116,6 +120,64 @@ def get_device_history(device_id):
     return jsonify({
         "device_id": device_id,
         "history": history
+    })
+
+@app.route("/api/chats", methods=["GET"])
+def api_get_chats():
+    chats = get_chats()
+    return jsonify({
+        "chats": chats
+    })
+
+
+@app.route("/api/chats", methods=["POST"])
+def api_create_chat():
+    data = request.get_json()
+    title = data.get("title", "New Chat")
+
+    chat_id = create_chat(title)
+
+    return jsonify({
+        "chat_id": chat_id,
+        "title": title
+    })
+
+
+@app.route("/api/chats/<int:chat_id>/messages", methods=["GET"])
+def api_get_messages(chat_id):
+    messages = get_messages(chat_id)
+
+    return jsonify({
+        "chat_id": chat_id,
+        "messages": messages
+    })
+
+
+@app.route("/api/chats/<int:chat_id>/messages", methods=["POST"])
+def api_add_message(chat_id):
+    data = request.get_json()
+
+    role = data.get("role")
+    content = data.get("content")
+    reasoning_steps = data.get("reasoning_steps")
+
+    if not role or not content:
+        return jsonify({
+            "error": "role and content are required"
+        }), 400
+
+    if reasoning_steps is not None:
+        reasoning_steps = json.dumps(reasoning_steps)
+
+    add_message(
+        chat_id=chat_id,
+        role=role,
+        content=content,
+        reasoning_steps=reasoning_steps
+    )
+
+    return jsonify({
+        "status": "saved"
     })
 
 if __name__ == "__main__":

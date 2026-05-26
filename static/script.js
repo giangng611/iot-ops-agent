@@ -79,16 +79,30 @@ function newChat() {
     renderChatHistory();
 }
 
-function createChatIfNeeded(message) {
+async function createChatIfNeeded(message) {
     if (currentChatId !== null) {
         return;
     }
 
-    currentChatId = Date.now();
+    const title = createHistoryTitle(message);
+
+    const response = await fetch("/api/chats", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            title: title
+        })
+    });
+
+    const data = await response.json();
+
+    currentChatId = data.chat_id;
 
     const chat = {
         id: currentChatId,
-        title: createHistoryTitle(message),
+        title: data.title,
         messages: []
     };
 
@@ -158,7 +172,7 @@ async function sendMessage() {
         return;
     }
 
-    createChatIfNeeded(message);
+    await createChatIfNeeded(message);
 
     const hero = document.getElementById("homeHero");
     hero.classList.add("hidden");
@@ -180,6 +194,8 @@ async function sendMessage() {
     `;
 
     addUserMessage(message);
+
+    await saveMessageToDatabase("user", message);
 
     try {
         let finalAnswer = "";
@@ -205,6 +221,11 @@ async function sendMessage() {
 
         addAssistantMessage(finalAnswer, latestReasoningSteps.length > 0);
 
+        await saveMessageToDatabase(
+            "assistant",
+            finalAnswer,
+            latestReasoningSteps
+        );
         input.value = "";
 
     } catch (error) {
@@ -315,7 +336,7 @@ function renderChatHistory() {
     });
 }
 
-function loadChat(chatId) {
+async function loadChat(chatId) {
     const chat = chats.find(item => item.id === chatId);
 
     if (!chat) {
@@ -329,6 +350,18 @@ function loadChat(chatId) {
 
     const chatMessages = document.getElementById("chatMessages");
     chatMessages.innerHTML = "";
+
+    const response = await fetch(`/api/chats/${chatId}/messages`);
+    const data = await response.json();
+
+    chat.messages = data.messages.map(message => ({
+        role: message.role,
+        content: message.content,
+        hasReasoning: Boolean(message.reasoning_steps),
+        reasoningSteps: message.reasoning_steps
+            ? JSON.parse(message.reasoning_steps)
+            : []
+    }));
 
     chat.messages.forEach(message => {
         if (message.role === "user") {
@@ -963,4 +996,40 @@ function renderDeviceHistoryChart(history) {
         }
     });
 }
+
+async function loadChatsFromDatabase() {
+    const response = await fetch("/api/chats");
+    const data = await response.json();
+
+    chats = data.chats.map(chat => ({
+        id: chat.id,
+        title: chat.title,
+        messages: []
+    }));
+
+    renderChatHistory();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    loadChatsFromDatabase();
+});
+
+async function saveMessageToDatabase(role, content, reasoningSteps = null) {
+    if (currentChatId === null) {
+        return;
+    }
+
+    await fetch(`/api/chats/${currentChatId}/messages`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            role: role,
+            content: content,
+            reasoning_steps: reasoningSteps
+        })
+    });
+}
+
 //setInterval(refreshDevices, 5000);

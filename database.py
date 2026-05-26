@@ -27,6 +27,26 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            reasoning_steps TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (chat_id) REFERENCES chats(id)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -166,3 +186,95 @@ def get_device_telemetry_history(device_id, limit=30):
         })
 
     return history
+
+def create_chat(title):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO chats (title, created_at)
+        VALUES (?, ?)
+    """, (
+        title,
+        datetime.now().isoformat(timespec="seconds")
+    ))
+
+    chat_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
+
+    return chat_id
+
+
+def get_chats():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, title, created_at
+        FROM chats
+        ORDER BY id DESC
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            "id": row[0],
+            "title": row[1],
+            "created_at": row[2]
+        }
+        for row in rows
+    ]
+
+
+def add_message(chat_id, role, content, reasoning_steps=None):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO messages (
+            chat_id,
+            role,
+            content,
+            reasoning_steps,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        chat_id,
+        role,
+        content,
+        reasoning_steps,
+        datetime.now().isoformat(timespec="seconds")
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def get_messages(chat_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT role, content, reasoning_steps, created_at
+        FROM messages
+        WHERE chat_id = ?
+        ORDER BY id ASC
+    """, (chat_id,))
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            "role": row[0],
+            "content": row[1],
+            "reasoning_steps": row[2],
+            "created_at": row[3]
+        }
+        for row in rows
+    ]

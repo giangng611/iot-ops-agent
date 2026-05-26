@@ -9,7 +9,10 @@ import threading
 
 from agents.week1_agent import Week1Agent
 from agents.week2_agent import Week2Agent
-from database import get_all_latest_devices
+from database import (
+    get_all_latest_devices,
+    get_device_telemetry_history
+)
 
 load_dotenv()
 
@@ -103,6 +106,17 @@ def device_broadcast_loop():
         })
 
         time.sleep(DEVICE_BROADCAST_INTERVAL_SECONDS)
+
+
+@app.route("/api/telemetry/<device_id>", methods=["GET"])
+def get_device_history(device_id):
+
+    history = get_device_telemetry_history(device_id)
+
+    return jsonify({
+        "device_id": device_id,
+        "history": history
+    })
 
 if __name__ == "__main__":
 

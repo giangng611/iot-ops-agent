@@ -23,7 +23,7 @@ def determine_status(cpu, memory, heartbeat_delay):
     if cpu >= 90 or memory >= 90 or heartbeat_delay >= 600:
         return "critical"
 
-    if cpu >= 75 or memory >= 75 or heartbeat_delay >= 180:
+    if cpu >= 75 or memory >= 80 or heartbeat_delay >= 180:
         return "warning"
 
     return "healthy"
@@ -60,8 +60,11 @@ def generate_alarm(status, cpu, memory, heartbeat_delay):
         if heartbeat_delay >= 600:
             return "Heartbeat delay exceeded", "critical"
 
-        if cpu >= 90 or memory >= 90:
-            return "Critical resource usage", "critical"
+        if cpu >= 90:
+            return "Critical CPU usage", "critical"
+
+        if memory >= 90:
+            return "Critical memory usage", "critical"
 
     if status == "warning":
         if heartbeat_delay >= 180:
@@ -70,11 +73,10 @@ def generate_alarm(status, cpu, memory, heartbeat_delay):
         if cpu >= 75:
             return "High CPU usage", "medium"
 
-        if memory >= 75:
+        if memory >= 80:
             return "High memory usage", "medium"
 
     return None, None
-
 
 def generate_telemetry(device_id):
     if device_id.startswith("gateway"):

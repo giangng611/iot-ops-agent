@@ -177,7 +177,8 @@
                                 <th>Memory</th>
                                 <th>Heartbeat</th>
                                 <th>Priority</th>
-                                <th>Action</th>
+                                <th>Diagnose</th>
+                                <th>History</th>
                             </tr>
                             </thead>
 
@@ -195,6 +196,12 @@
                                         Diagnose
                                     </button>
                                 </td>
+
+                                <td>
+                                    <button onclick="showDeviceHistory('{{ device.device_id }}')">
+                                        History
+                                    </button>
+                                </td>
                             </tr>
                             {% endfor %}
                             </tbody>
@@ -203,6 +210,7 @@
                     </div>
 
                 </div>
+
             </section>
 
             <section id="alertsTab" class="tab-page">
@@ -314,6 +322,25 @@
 
     <div id="reasoningDrawerContent" class="drawer-content">
         No reasoning trace yet.
+    </div>
+</div>
+
+<div id="deviceHistoryModal" class="modal-overlay hidden">
+    <div class="device-history-modal">
+        <div class="device-history-header">
+            <div>
+                <h2 id="deviceHistoryTitle">Device History</h2>
+                <p>CPU, memory, and heartbeat delay over recent telemetry records.</p>
+            </div>
+
+            <button onclick="closeDeviceHistory()">
+                Close
+            </button>
+        </div>
+
+        <div class="device-history-chart-wrapper">
+            <canvas id="deviceHistoryChart"></canvas>
+        </div>
     </div>
 </div>
 

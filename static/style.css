@@ -593,6 +593,12 @@ th {
     border-left: 5px solid #eab308;
 }
 
+.alert-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
 .sidebar {
     position: relative;
     transition: padding 0.25s ease;
@@ -676,4 +682,55 @@ th {
 
 .chart-card canvas {
     height: 240px !important;
+}
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.68);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay.hidden {
+    display: none;
+}
+
+.device-history-modal {
+    width: min(1000px, 88vw);
+    height: min(680px, 82vh);
+    background: #171717;
+    border: 1px solid #333333;
+    border-radius: 20px;
+    padding: 24px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+}
+
+.device-history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.device-history-header h2 {
+    margin: 0;
+}
+
+.device-history-header p {
+    color: #a1a1aa;
+    margin: 6px 0 0 0;
+}
+
+.device-history-chart-wrapper {
+    flex: 1;
+    min-height: 0;
+}
+
+#deviceHistoryChart {
+    height: 100% !important;
 }

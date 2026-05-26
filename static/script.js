@@ -25,6 +25,7 @@ let currentAlerts = {
 };
 let healthChart = null;
 let metricsChart = null;
+let deviceHistoryChart = null;
 
 const prompts = [
     "/overview system health",
@@ -439,6 +440,12 @@ function renderDeviceTable() {
                         Diagnose
                     </button>
                 </td>
+
+                <td>
+                    <button onclick="showDeviceHistory('${device.device_id}')">
+                        History
+                    </button>
+                </td>
             </tr>
         `;
     });
@@ -646,9 +653,15 @@ function renderAlertCenter() {
                     </p>
                 </div>
 
-                <button onclick="diagnoseDevice('${device.device_id}')">
-                    Diagnose
-                </button>
+                <div class="alert-actions">
+                    <button onclick="diagnoseDevice('${device.device_id}')">
+                        Diagnose
+                    </button>
+
+                    <button onclick="showDeviceHistory('${device.device_id}')">
+                        History
+                    </button>
+                </div>
             </div>
         `;
     });
@@ -796,4 +809,146 @@ function renderMetricsChart() {
     });
 }
 
+async function showDeviceHistory(deviceId) {
+    const modal = document.getElementById("deviceHistoryModal");
+    const title = document.getElementById("deviceHistoryTitle");
+
+    title.textContent = `${deviceId} Telemetry History`;
+    modal.classList.remove("hidden");
+
+    const response = await fetch(`/api/telemetry/${deviceId}`);
+    const data = await response.json();
+
+    renderDeviceHistoryChart(data.history);
+}
+
+function closeDeviceHistory() {
+    const modal = document.getElementById("deviceHistoryModal");
+    modal.classList.add("hidden");
+}
+
+function renderDeviceHistoryChart(history) {
+    const canvas = document.getElementById("deviceHistoryChart");
+
+    if (!canvas) {
+        return;
+    }
+
+    const labels = history.map(item => {
+        const date = new Date(item.timestamp);
+        return date.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit"
+        });
+    });
+
+    const cpuData = history.map(item => item.cpu_usage);
+    const memoryData = history.map(item => item.memory_usage);
+    const heartbeatData = history.map(item => item.heartbeat_delay);
+
+    const cpuWarningLine = history.map(() => 75);
+    const memoryWarningLine = history.map(() => 80);
+    const heartbeatWarningLine = history.map(() => 180);
+
+    const data = {
+        labels: labels,
+        datasets: [
+            {
+                label: "CPU %",
+                data: cpuData,
+                borderColor: "#60a5fa",
+                backgroundColor: "transparent",
+                tension: 0.3,
+                borderWidth: 3
+            },
+            {
+                label: "Memory %",
+                data: memoryData,
+                borderColor: "#ec4899",
+                backgroundColor: "transparent",
+                tension: 0.3,
+                borderWidth: 3,
+                pointRadius: 2,
+                pointHoverRadius: 5
+            },
+            {
+                label: "Heartbeat Delay (s)",
+                data: heartbeatData,
+                borderColor: "#f97316",
+                backgroundColor: "transparent",
+                tension: 0.3,
+                borderWidth: 3
+            },
+            {
+                label: "CPU Warning Threshold",
+                data: cpuWarningLine,
+                borderColor: "#93c5fd",
+                borderDash: [6, 6],
+                pointRadius: 0,
+                backgroundColor: "transparent"
+            },
+            {
+                label: "Memory Warning Threshold",
+                data: memoryWarningLine,
+                borderColor: "#f9a8d4",
+                borderDash: [6, 6],
+                pointRadius: 0,
+                backgroundColor: "transparent"
+            },
+            {
+                label: "Heartbeat Warning Threshold",
+                data: heartbeatWarningLine,
+                borderColor: "#fdba74",
+                borderDash: [6, 6],
+                pointRadius: 0,
+                backgroundColor: "transparent"
+            }
+        ]
+    };
+
+    if (deviceHistoryChart) {
+        deviceHistoryChart.data = data;
+        deviceHistoryChart.update();
+        return;
+    }
+
+    deviceHistoryChart = new Chart(canvas, {
+        type: "line",
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: {
+                mode: "index",
+                intersect: false
+            },
+            scales: {
+                x: {
+                    ticks: {
+                        color: "#ececec"
+                    },
+                    grid: {
+                        color: "#2f2f2f"
+                    }
+                },
+                y: {
+                    ticks: {
+                        color: "#ececec"
+                    },
+                    grid: {
+                        color: "#2f2f2f"
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: {
+                        color: "#ececec"
+                    }
+                }
+            }
+        }
+    });
+}
 //setInterval(refreshDevices, 5000);

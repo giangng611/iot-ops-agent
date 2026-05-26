@@ -130,3 +130,39 @@ def get_all_latest_devices():
         }
         for row in rows
     ]
+
+def get_device_telemetry_history(device_id, limit=30):
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            timestamp,
+            cpu_usage,
+            memory_usage,
+            heartbeat_delay,
+            status
+        FROM telemetry
+        WHERE device_id = ?
+        ORDER BY id DESC
+        LIMIT ?
+    """, (device_id, limit))
+
+    rows = cursor.fetchall()
+
+    conn.close()
+
+    history = []
+
+    for row in reversed(rows):
+        history.append({
+            "timestamp": row["timestamp"],
+            "cpu_usage": row["cpu_usage"],
+            "memory_usage": row["memory_usage"],
+            "heartbeat_delay": row["heartbeat_delay"],
+            "status": row["status"]
+        })
+
+    return history

@@ -181,7 +181,7 @@ body {
 
 .input-row {
     display: grid;
-    grid-template-columns: 300px 1fr 110px;
+    grid-template-columns: 310px 1fr 110px;
     gap: 12px;
     margin-bottom: 12px;
 }
@@ -192,8 +192,8 @@ body {
 }
 
 .mode-inline {
-    width: 300px;
-    min-width: 300px;
+    width: 310px;
+    min-width: 310px;
     height: 64px;
     flex-shrink: 0;
     padding: 0 48px 0 16px;
@@ -434,7 +434,7 @@ pre {
 }
 
 .devices-table-wrapper {
-    max-height: 360px;
+    max-height: 300px;
     overflow-y: auto;
     border-radius: 14px;
 }
@@ -665,7 +665,7 @@ th {
     border: 1px solid #2f2f2f;
     border-radius: 18px;
     padding: 20px;
-    height: 260px;
+    height: 320px;
 }
 
 .chart-card h2 {
@@ -675,5 +675,5 @@ th {
 }
 
 .chart-card canvas {
-    height: 190px !important;
+    height: 240px !important;
 }

@@ -345,12 +345,24 @@ function renderChatHistory() {
         item.innerHTML = `
             <span class="history-title">
                 ${chat.isPinned ? `
-                    <svg class="pin-icon" viewBox="0 0 24 24">
-                        <path d="M14 4l6 6-4 1-4 7-2-2 7-4 1-4-6-6z"></path>
-                        <path d="M5 19l5-5"></path>
+                    <svg
+                        class="pin-icon"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                    >
+                        <path
+                            d="M14 4L20 10L16 11L11 16L8 13L13 8L14 4Z"
+                        ></path>
+
+                        <path
+                            d="M5 19L10 14"
+                        ></path>
                     </svg>
                 ` : ""}
-                <span>${chat.title}</span>
+
+                <span class="history-text">
+                    ${chat.title}
+                </span>
             </span>
 
             <button
@@ -849,10 +861,11 @@ function renderMetricsChart() {
         labels: ["Avg CPU %", "Avg Memory %", "Avg Heartbeat Delay"],
         datasets: [
             {
-                label: "Fleet Average",
                 data: [avgCpu, avgMemory, avgHeartbeat],
                 backgroundColor: ["#60a5fa", "#a78bfa", "#f97316"],
-                borderRadius: 8
+                borderRadius: 8,
+                barPercentage: 0.75,
+                categoryPercentage: 0.8
             }
         ]
     };
@@ -869,8 +882,18 @@ function renderMetricsChart() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            animation: false,
+            layout: {
+                padding: {
+                    top: 8,
+                    left: 8,
+                    right: 8,
+                    bottom: 0
+                }
+            },
             scales: {
                 x: {
+                    offset: true,
                     ticks: {
                         color: "#ececec"
                     },
@@ -879,6 +902,7 @@ function renderMetricsChart() {
                     }
                 },
                 y: {
+                    beginAtZero: true,
                     ticks: {
                         color: "#ececec"
                     },
@@ -889,9 +913,7 @@ function renderMetricsChart() {
             },
             plugins: {
                 legend: {
-                    labels: {
-                        color: "#ececec"
-                    }
+                    display: false
                 }
             }
         }

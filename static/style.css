@@ -116,12 +116,6 @@ body {
     text-overflow: ellipsis;
 }
 
-.history-item:hover .history-title span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .history-menu-btn {
     display: none;
 
@@ -143,18 +137,40 @@ body {
     color: #ffffff;
 }
 
+.history-text {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.history-item:hover .history-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .pin-icon {
-    width: 15px;
-    height: 15px;
+    width: 16px;
+    height: 16px;
 
     flex-shrink: 0;
 
-    stroke: #a1a1aa;
-    stroke-width: 2;
+    opacity: 0.95;
+}
+
+.pin-icon path {
+    stroke: #ffffff;
+
     fill: none;
+
+    stroke-width: 2.8;
 
     stroke-linecap: round;
     stroke-linejoin: round;
+}
+
+.history-item:hover .pin-icon {
+    opacity: 1;
 }
 
 .history-menu {
@@ -286,7 +302,7 @@ body {
 
 .chat-input-wrapper {
     flex-shrink: 0;
-    padding: 16px 60px 28px 60px;
+    padding: 16px 60px 10px 60px;
     background: #0f0f0f;
 }
 
@@ -1229,4 +1245,39 @@ th {
     #profileTab.drawer-open {
         padding-right: 0;
     }
+}
+
+.custom-chart-legend {
+    display: flex;
+    gap: 18px;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: 300;
+}
+
+.custom-chart-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.custom-chart-legend i {
+    width: 34px;
+    height: 10px;
+    display: inline-block;
+    border-radius: 2px;
+}
+
+.legend-cpu {
+    background: #60a5fa;
+}
+
+.legend-memory {
+    background: #a78bfa;
+}
+
+.legend-heartbeat {
+    background: #f97316;
 }

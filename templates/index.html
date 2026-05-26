@@ -190,6 +190,11 @@
 
                     <div class="chart-card">
                         <h2>Average Fleet Metrics</h2>
+                        <div class="custom-chart-legend">
+                            <span><i class="legend-cpu"></i>Avg CPU %</span>
+                            <span><i class="legend-memory"></i>Avg Memory %</span>
+                            <span><i class="legend-heartbeat"></i>Avg Heartbeat Delay</span>
+                        </div>
                         <canvas id="metricsChart"></canvas>
                     </div>
                 </div>
@@ -517,6 +522,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js"></script>
+<script src="/static/script.js?v=2"></script>
 </body>
 </html>

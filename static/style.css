@@ -652,7 +652,8 @@ th {
 }
 
 .app-shell.sidebar-collapsed .sidebar-header,
-.app-shell.sidebar-collapsed .history-section {
+.app-shell.sidebar-collapsed .history-section,
+.app-shell.sidebar-collapsed .sidebar-footer {
     display: none;
 }
 

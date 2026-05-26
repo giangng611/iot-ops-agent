@@ -62,6 +62,8 @@ function showTab(tabName, buttonElement) {
 }
 
 function newChat() {
+    const homeButton = document.querySelector(".top-tab");
+    showTab("home", homeButton);
     currentChatId = null;
     latestReasoningSteps = [];
 
@@ -352,6 +354,8 @@ function renderChatHistory() {
 }
 
 async function loadChat(chatId) {
+    const homeButton = document.querySelector(".top-tab");
+    showTab("home", homeButton);
     const chat = chats.find(item => item.id === chatId);
 
     if (!chat) {

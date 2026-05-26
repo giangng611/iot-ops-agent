@@ -59,6 +59,14 @@ function showTab(tabName, buttonElement) {
     if (buttonElement) {
         buttonElement.classList.add("active");
     }
+
+    if (tabName !== "home") {
+        closeReasoningDrawer();
+    }
+
+    if (tabName !== "profile") {
+        closeProfileDrawer();
+    }
 }
 
 function newChat() {
@@ -164,6 +172,7 @@ function handlePromptSuggestions() {
 }
 
 async function sendMessage() {
+    latestReasoningSteps = [];
     const input = document.getElementById("messageInput");
     const loading = document.getElementById("loading");
     const suggestions = document.getElementById("promptSuggestions");
@@ -181,12 +190,18 @@ async function sendMessage() {
     hero.classList.add("hidden");
 
     suggestions.classList.add("hidden");
-    loading.innerHTML = `
-        <span>Agent is thinking...</span>
-        <button class="reasoning-loading-btn" onclick="openReasoningDrawer()">
-            Show reasoning trace
-        </button>
-    `;
+        if (currentMode === "week2") {
+        loading.innerHTML = `
+            <span>Agent is thinking...</span>
+            <button class="reasoning-loading-btn" onclick="openReasoningDrawer()">
+                Show reasoning trace
+            </button>
+        `;
+    } else {
+        loading.innerHTML = `
+            <span>Agent is thinking...</span>
+        `;
+    }
 
     loading.classList.remove("hidden");
 
@@ -608,6 +623,7 @@ function renderAssistantMessage(message, hasReasoning, reasoningSteps = []) {
 
 function openReasoningDrawer(reasoningId = null) {
     const drawer = document.getElementById("reasoningDrawer");
+    const mainArea = document.querySelector(".main-area");
 
     if (reasoningId) {
         const steps = window[reasoningId] || [];
@@ -617,12 +633,19 @@ function openReasoningDrawer(reasoningId = null) {
     }
 
     reasoningDrawerOpen = true;
+
     drawer.classList.remove("hidden");
+    mainArea.classList.add("reasoning-open");
 }
 
 function closeReasoningDrawer() {
+    const drawer = document.getElementById("reasoningDrawer");
+    const mainArea = document.querySelector(".main-area");
+
     reasoningDrawerOpen = false;
-    document.getElementById("reasoningDrawer").classList.add("hidden");
+
+    drawer.classList.add("hidden");
+    mainArea.classList.remove("reasoning-open");
 }
 
 function renderReasoningDrawerLive() {
@@ -1294,8 +1317,13 @@ function closeProfileDrawer() {
     const drawer = document.getElementById("profileDrawer");
     const profileTab = document.getElementById("profileTab");
 
-    drawer.classList.add("hidden");
-    profileTab.classList.remove("drawer-open");
+    if (drawer) {
+        drawer.classList.add("hidden");
+    }
+
+    if (profileTab) {
+        profileTab.classList.remove("drawer-open");
+    }
 }
 
 //setInterval(refreshDevices, 5000);

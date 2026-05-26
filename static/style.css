@@ -219,6 +219,32 @@ body {
     min-width: 0;
 }
 
+.main-area {
+    transition: padding-right 0.25s ease;
+}
+
+.main-area.reasoning-open {
+    padding-right: 540px;
+}
+
+.main-area.reasoning-open .content-scroll {
+    padding: 32px 20px 32px 20px;
+}
+
+.main-area.reasoning-open .tab-page {
+    max-width: 100%;
+}
+
+.main-area.reasoning-open .chat-messages {
+    padding-left: 24px;
+    padding-right: 24px;
+}
+
+.main-area.reasoning-open .chat-input-wrapper {
+    padding-left: 24px;
+    padding-right: 24px;
+}
+
 .topbar {
     height: 58px;
     background: #0f0f0f;
@@ -498,7 +524,30 @@ button:hover {
 .drawer-content {
     flex: 1;
     overflow-y: auto;
+
     padding: 20px;
+
+    margin-right: 10px;
+    padding-right: 18px;
+
+    scrollbar-gutter: stable;
+}
+
+.drawer-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.drawer-content::-webkit-scrollbar-track {
+    background: #171717;
+}
+
+.drawer-content::-webkit-scrollbar-thumb {
+    background: #d4d4d8;
+    border-radius: 999px;
+}
+
+.drawer-content::-webkit-scrollbar-thumb:hover {
+    background: #ffffff;
 }
 
 .reasoning-step {

@@ -46,3 +46,31 @@ Final Answer: provide the diagnosis.
 Do not give a final answer too early. Gather enough evidence first.
 Use only available tool outputs. Do not invent data.
 """
+
+CHAT_TITLE_PROMPT = """
+You generate short chat titles for an IoT operations dashboard.
+
+Create a concise title based only on the user's first message.
+
+Rules:
+- Maximum 6 words.
+- No timestamp.
+- No quotation marks.
+- No markdown.
+- Mention the device ID if present.
+- Use professional operations language.
+- Return only the title.
+
+Examples:
+User: /diagnose gateway-003
+Title: Diagnose gateway-003
+
+User: check its alarms
+Title: Check device alarms
+
+User: /check devices with delayed heartbeat
+Title: Check heartbeat delays
+
+User: summarize current fleet risk
+Title: Summarize fleet risk
+"""

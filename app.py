@@ -7,6 +7,7 @@ from flask_socketio import SocketIO
 import time
 import threading
 from flask import session, redirect, url_for
+from prompts import CHAT_TITLE_PROMPT
 
 from agents.week1_agent import Week1Agent
 from agents.week2_agent import Week2Agent
@@ -150,7 +151,9 @@ def api_create_chat():
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json()
-    title = data.get("title", "New Chat")
+    message = data.get("message", "")
+
+    title = generate_chat_title(message)
 
     user_id = session.get("user_id")
     chat_id = create_chat(user_id, title)
@@ -299,6 +302,34 @@ def api_change_password():
         return jsonify({"error": message}), 400
 
     return jsonify({"status": message})
+
+def generate_chat_title(user_message):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": CHAT_TITLE_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": user_message
+                }
+            ],
+            temperature=0.2,
+            max_tokens=20
+        )
+
+        title = response.choices[0].message.content.strip()
+
+        if not title:
+            return "New analysis"
+
+        return title[:60]
+
+    except Exception:
+        return "New analysis"
 
 if __name__ == "__main__":
 

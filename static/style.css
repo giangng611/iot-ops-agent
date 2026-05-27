@@ -1517,3 +1517,14 @@ th {
 .danger-btn:hover {
     background: #dc2626;
 }
+
+.disabled-item {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+input:disabled,
+button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}

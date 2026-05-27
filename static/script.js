@@ -30,6 +30,7 @@ let reasoningTypingQueue = Promise.resolve();
 let pendingFinalAnswer = null;
 let reasoningTypingActive = false;
 let pendingDeleteChatId = null;
+let isAgentRunning = false;
 
 const prompts = [
     "/overview system health",
@@ -48,6 +49,10 @@ function setMode(mode) {
 }
 
 function showTab(tabName, buttonElement) {
+    if (isAgentRunning && tabName !== "home") {
+        return;
+    }
+
     const pages = document.querySelectorAll(".tab-page");
 
     pages.forEach(page => {
@@ -74,6 +79,10 @@ function showTab(tabName, buttonElement) {
 }
 
 function newChat() {
+    if (isAgentRunning) {
+        return;
+    }
+
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
     currentChatId = null;
@@ -98,15 +107,13 @@ async function createChatIfNeeded(message) {
         return;
     }
 
-    const title = createHistoryTitle(message);
-
     const response = await fetch("/api/chats", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            title: title
+            message: message
         })
     });
 
@@ -142,6 +149,11 @@ function usePrompt(promptText) {
 
 function handleEnter(event) {
     if (event.key === "Enter") {
+        if (isAgentRunning) {
+            event.preventDefault();
+            return;
+        }
+
         sendMessage();
     }
 }
@@ -176,6 +188,11 @@ function handlePromptSuggestions() {
 }
 
 async function sendMessage() {
+    if (isAgentRunning) {
+        return;
+    }
+
+    isAgentRunning = true;
     latestReasoningSteps = [];
     const input = document.getElementById("messageInput");
     const loading = document.getElementById("loading");
@@ -185,8 +202,13 @@ async function sendMessage() {
     const message = input.value.trim();
 
     if (!message) {
+        isAgentRunning = false;
         return;
     }
+
+    input.value = "";
+    input.disabled = true;
+    setAppBusyState(true);
 
     await createChatIfNeeded(message);
 
@@ -261,6 +283,10 @@ async function sendMessage() {
             Run
             <span>Enter ↵</span>
         `;
+
+        input.disabled = false;
+        isAgentRunning = false;
+        setAppBusyState(false);
     }
 }
 
@@ -861,22 +887,6 @@ function enqueueReasoningObservation(step) {
 
         return typeTextIntoElementPromise(observationElement, observationText, 1);
     });
-}
-
-function createHistoryTitle(message) {
-    const lower = message.toLowerCase();
-
-    if (lower.includes("prioritize")) return "Prioritized devices";
-    if (lower.includes("unhealthy")) return "Checked unhealthy devices";
-    if (lower.includes("critical")) return "Found critical devices";
-    if (lower.includes("alarm")) return "Reviewed active alarms";
-    if (lower.includes("heartbeat")) return "Checked heartbeat delays";
-    if (lower.includes("risk")) return "Summarized fleet risk";
-    if (lower.includes("diagnose")) return "Ran diagnosis";
-    if (lower.includes("overview") || lower.includes("health")) return "Reviewed system health";
-    if (lower.includes("fleet status")) return "Reviewed fleet status";
-
-    return "New analysis";
 }
 
 function renderAlertCenter() {
@@ -1544,6 +1554,32 @@ function typeTextIntoElementPromise(element, text, speed = 8) {
 
         typeNextCharacter();
     });
+}
+
+function setAppBusyState(isBusy) {
+    document.querySelectorAll(".top-tab").forEach(button => {
+        button.disabled = isBusy;
+    });
+
+    document.querySelectorAll(".history-item").forEach(item => {
+        item.classList.toggle("disabled-item", isBusy);
+    });
+
+    const newChatButton = document.querySelector(".new-chat-btn");
+    const logoutButton = document.querySelector(".logout-text-btn");
+    const profileCard = document.querySelector(".profile-card");
+
+    if (newChatButton) {
+        newChatButton.disabled = isBusy;
+    }
+
+    if (logoutButton) {
+        logoutButton.disabled = isBusy;
+    }
+
+    if (profileCard) {
+        profileCard.classList.toggle("disabled-item", isBusy);
+    }
 }
 
 //setInterval(refreshDevices, 5000);

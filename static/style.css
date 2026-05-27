@@ -70,22 +70,21 @@ body {
 
 .history-item {
     position: relative;
-
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
 
-    padding: 14px 14px;
-
-    border-radius: 14px;
+    height: 48px;
+    padding: 0 12px;
+    border-radius: 12px;
 
     color: #d4d4d8;
     cursor: pointer;
 
-    margin-bottom: 12px;
+    margin-bottom: 8px;
 
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 500;
 
     background: transparent;
@@ -104,20 +103,21 @@ body {
     align-items: center;
     gap: 8px;
 
-    line-height: 1.35;
-
-    white-space: normal;
-    overflow-wrap: anywhere;
-}
-
-.history-item:hover .history-title {
     white-space: nowrap;
     overflow: hidden;
+}
+
+.history-text {
+    min-width: 0;
+    overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .history-menu-btn {
-    display: none;
+    display: block;
+    opacity: 0;
+    pointer-events: none;
 
     flex-shrink: 0;
 
@@ -129,24 +129,13 @@ body {
 }
 
 .history-item:hover .history-menu-btn {
-    display: block;
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .history-menu-btn:hover {
     background: #333333;
     color: #ffffff;
-}
-
-.history-text {
-    min-width: 0;
-    white-space: normal;
-    overflow-wrap: anywhere;
-}
-
-.history-item:hover .history-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .pin-icon {
@@ -446,7 +435,8 @@ button:hover {
 
 .message-row {
     display: flex;
-    margin-bottom: 18px;
+    margin-bottom: 22px;
+    width: 100%;
 }
 
 .user-row {
@@ -457,19 +447,39 @@ button:hover {
     justify-content: flex-start;
 }
 
-.message-bubble {
+.message-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.user-row .message-stack {
+    align-items: flex-end;
+    max-width: 82%;
+}
+
+.assistant-row .message-stack {
+    align-items: flex-start;
     max-width: 75%;
+}
+
+.message-bubble {
     padding: 16px 18px;
     border-radius: 18px;
     line-height: 1.6;
 }
 
 .user-bubble {
+    max-width: 100%;
+    white-space: normal;
+
     background: #ffffff;
     color: #111111;
 }
 
 .assistant-bubble {
+    max-width: 100%;
+
     background: #212121;
     color: #ececec;
     border: 1px solid #333333;
@@ -1329,4 +1339,172 @@ th {
 
 .legend-heartbeat {
     background: #f97316;
+}
+
+.message-time {
+    font-size: 12px;
+    color: #71717a;
+    margin-bottom: 6px;
+}
+
+.user-time {
+    text-align: right;
+}
+
+.assistant-time {
+    text-align: left;
+}
+
+/* UI Polish Animations */
+
+:root {
+    --smooth-fast: 0.18s ease;
+}
+
+.top-tab {
+    transition:
+        background var(--smooth-fast),
+        color var(--smooth-fast),
+        border-color var(--smooth-fast),
+        transform var(--smooth-fast);
+}
+
+.top-tab:hover {
+    transform: translateY(-1px);
+}
+
+.tab-page.active-page {
+    animation: pageFadeIn 0.22s ease;
+}
+
+@keyframes pageFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.message-row {
+    animation: messageSlideIn 0.18s ease;
+}
+
+@keyframes messageSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.profile-drawer:not(.hidden) {
+    animation: drawerSlideIn 0.18s ease;
+}
+
+@keyframes drawerSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(18px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.reasoning-drawer,
+.reasoning-drawer:not(.hidden),
+.app-shell,
+.main-area {
+    animation: none !important;
+    transition: none !important;
+}
+
+.modal-overlay:not(.hidden) {
+    animation: overlayFadeIn 0.14s ease;
+}
+
+.device-history-modal,
+.confirm-modal {
+    animation: modalPopIn 0.14s ease;
+}
+
+@keyframes overlayFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes modalPopIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.99);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.loading span::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: #a1a1aa;
+    animation: loadingPulse 0.9s ease-in-out infinite;
+}
+
+@keyframes loadingPulse {
+    0%, 100% {
+        opacity: 0.25;
+        transform: scale(0.85);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1.1);
+    }
+}
+
+* {
+    scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-thumb {
+    background: transparent;
+}
+
+.typing-output.is-typing::after,
+.reasoning-thought.is-typing::after,
+.reasoning-action.is-typing::after,
+.reasoning-observation.is-typing::after {
+    content: "▍";
+    margin-left: 2px;
+    animation: cursorBlink 0.8s infinite;
+}
+
+@keyframes cursorBlink {
+    0%, 50% {
+        opacity: 1;
+    }
+
+    51%, 100% {
+        opacity: 0;
+    }
 }

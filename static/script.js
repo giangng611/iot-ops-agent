@@ -26,6 +26,9 @@ let currentAlerts = {
 let healthChart = null;
 let metricsChart = null;
 let deviceHistoryChart = null;
+let reasoningTypingQueue = Promise.resolve();
+let pendingFinalAnswer = null;
+let reasoningTypingActive = false;
 
 const prompts = [
     "/overview system health",
@@ -237,7 +240,7 @@ async function sendMessage() {
             latestReasoningSteps = [];
         }
 
-        addAssistantMessage(finalAnswer, latestReasoningSteps.length > 0);
+        await addAssistantMessage(finalAnswer, latestReasoningSteps.length > 0);
 
         await saveMessageToDatabase(
             "assistant",
@@ -262,6 +265,8 @@ async function sendMessage() {
 
 async function sendStreamMessage(message) {
     latestReasoningSteps = [];
+    pendingFinalAnswer = null;
+    reasoningTypingQueue = Promise.resolve();
 
     const response = await fetch("/api/diagnose-stream", {
         method: "POST",
@@ -289,14 +294,18 @@ async function sendStreamMessage(message) {
             const event = JSON.parse(jsonText);
 
             if (event.type === "thought") {
-                latestReasoningSteps.push({
+                const step = {
                     iteration: event.iteration,
                     thought: event.thought,
                     action: event.action,
                     output: null
-                });
+                };
 
-                renderReasoningDrawerLive();
+                latestReasoningSteps.push(step);
+
+                if (reasoningDrawerOpen) {
+                    enqueueReasoningThoughtAction(step);
+                }
             }
 
             if (event.type === "observation") {
@@ -304,20 +313,26 @@ async function sendStreamMessage(message) {
 
                 if (latestStep) {
                     latestStep.output = event.observation.output;
-                }
 
-                renderReasoningDrawerLive();
+                    if (reasoningDrawerOpen) {
+                        enqueueReasoningObservation(latestStep);
+                    }
+                }
             }
 
             if (event.type === "final") {
                 finalAnswer = event.final_answer;
+                pendingFinalAnswer = finalAnswer;
             }
 
             if (event.type === "error") {
                 finalAnswer = "Error: " + event.error;
+                pendingFinalAnswer = finalAnswer;
             }
         });
     }
+
+    await reasoningTypingQueue;
 
     return finalAnswer;
 }
@@ -428,6 +443,7 @@ async function loadChat(chatId) {
     chat.messages = data.messages.map(message => ({
         role: message.role,
         content: message.content,
+        createdAt: message.created_at,
         hasReasoning: Boolean(message.reasoning_steps),
         reasoningSteps: message.reasoning_steps
             ? JSON.parse(message.reasoning_steps)
@@ -436,12 +452,14 @@ async function loadChat(chatId) {
 
     chat.messages.forEach(message => {
         if (message.role === "user") {
-            renderUserMessage(message.content);
+            renderUserMessage(message.content, message.createdAt);
         } else {
             renderAssistantMessage(
                 message.content,
                 message.hasReasoning,
-                message.reasoningSteps || []
+                message.reasoningSteps || [],
+                message.createdAt,
+                false
             );
         }
     });
@@ -568,7 +586,7 @@ function addUserMessage(message) {
     renderUserMessage(message);
 }
 
-function addAssistantMessage(message, hasReasoning) {
+async function addAssistantMessage(message, hasReasoning) {
     const chat = chats.find(item => item.id === currentChatId);
 
     if (chat) {
@@ -580,16 +598,24 @@ function addAssistantMessage(message, hasReasoning) {
         });
     }
 
-    renderAssistantMessage(message, hasReasoning, latestReasoningSteps);
+    await renderAssistantMessage(message, hasReasoning, latestReasoningSteps, null, true);
 }
 
-function renderUserMessage(message) {
+function renderUserMessage(message, timestamp = null) {
     const chatMessages = document.getElementById("chatMessages");
 
     chatMessages.innerHTML += `
         <div class="message-row user-row">
-            <div class="message-bubble user-bubble">
-                ${message}
+            <div class="message-stack">
+
+                <div class="message-time user-time">
+                    ${formatMessageTime(timestamp)}
+                </div>
+
+                <div class="message-bubble user-bubble">
+                    ${message}
+                </div>
+
             </div>
         </div>
     `;
@@ -597,7 +623,7 @@ function renderUserMessage(message) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-function renderAssistantMessage(message, hasReasoning, reasoningSteps = []) {
+async function renderAssistantMessage(message, hasReasoning, reasoningSteps = [], timestamp = null, shouldType = false) {
     const chatMessages = document.getElementById("chatMessages");
     const reasoningId = `reasoning-${Date.now()}-${Math.random()}`;
 
@@ -605,18 +631,30 @@ function renderAssistantMessage(message, hasReasoning, reasoningSteps = []) {
 
     chatMessages.innerHTML += `
         <div class="message-row assistant-row">
-            <div class="message-bubble assistant-bubble">
+            <div class="message-stack">
+                <div class="message-time assistant-time">
+                    ${formatMessageTime(timestamp)}
+                </div>
 
-                ${hasReasoning ? `
-                    <button class="reasoning-toggle" onclick="openReasoningDrawer('${reasoningId}')">
-                        Show reasoning trace
-                    </button>
-                ` : ""}
+                <div class="message-bubble assistant-bubble">
+                    ${hasReasoning ? `
+                        <button class="reasoning-toggle" onclick="openReasoningDrawer('${reasoningId}')">
+                            Show reasoning trace
+                        </button>
+                    ` : ""}
 
-                <pre>${message}</pre>
+                    <pre class="typing-output">${shouldType ? "" : message}</pre>
+                </div>
             </div>
         </div>
     `;
+
+    const outputs = chatMessages.querySelectorAll(".typing-output");
+    const latestOutput = outputs[outputs.length - 1];
+
+    if (shouldType) {
+        await typeTextIntoElementPromise(latestOutput, message, 8);
+    }
 
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -625,17 +663,25 @@ function openReasoningDrawer(reasoningId = null) {
     const drawer = document.getElementById("reasoningDrawer");
     const mainArea = document.querySelector(".main-area");
 
-    if (reasoningId) {
-        const steps = window[reasoningId] || [];
-        renderReasoningSteps(steps);
-    } else {
-        renderReasoningSteps(latestReasoningSteps);
-    }
-
-    reasoningDrawerOpen = true;
-
     drawer.classList.remove("hidden");
     mainArea.classList.add("reasoning-open");
+    reasoningDrawerOpen = true;
+
+    if (reasoningId) {
+        const steps = window[reasoningId] || [];
+        renderReasoningStepsStatic(steps);
+        return;
+    }
+
+    renderReasoningStepsStatic(latestReasoningSteps);
+
+    latestReasoningSteps.forEach(step => {
+        const stepElement = document.getElementById(`reasoning-step-${step.iteration}`);
+
+        if (!stepElement) {
+            createReasoningStepElement(step);
+        }
+    });
 }
 
 function closeReasoningDrawer() {
@@ -649,81 +695,187 @@ function closeReasoningDrawer() {
 }
 
 function renderReasoningDrawerLive() {
-    if (!reasoningDrawerOpen) {
-        return;
-    }
-
-    renderReasoningSteps(latestReasoningSteps);
+    return;
 }
 
-function renderReasoningSteps(steps) {
+function renderReasoningStepsStatic(steps) {
     const content = document.getElementById("reasoningDrawerContent");
+
+    if (!steps || steps.length === 0) {
+        content.innerHTML = "No reasoning trace yet.";
+        return;
+    }
 
     let html = "";
 
     steps.forEach(step => {
+        const outputText = step.output
+            ? JSON.stringify(step.output, null, 2)
+            : "Waiting for observation...";
+
         html += `
-            <div class="reasoning-step">
+            <div class="reasoning-step" id="reasoning-step-${step.iteration}">
                 <h4>Iteration ${step.iteration}</h4>
 
-                <p><strong>Thought:</strong><br>${step.thought}</p>
-                <p><strong>Action:</strong><br>${step.action}</p>
+                <p>
+                    <strong>Thought:</strong><br>
+                    <span class="reasoning-thought">${step.thought || ""}</span>
+                </p>
+
+                <p>
+                    <strong>Action:</strong><br>
+                    <span class="reasoning-action">${step.action || ""}</span>
+                </p>
 
                 <p><strong>Observation:</strong></p>
-                <pre>${step.output ? JSON.stringify(step.output, null, 2) : "Waiting for observation..."}</pre>
+                <pre class="reasoning-observation">${outputText}</pre>
+            </div>
+        `;
+    });
+
+    content.innerHTML = html;
+}
+
+function renderReasoningSteps(steps, shouldType = false) {
+    const content = document.getElementById("reasoningDrawerContent");
+
+    let html = "";
+
+    steps.forEach((step, index) => {
+        const outputText = step.output
+            ? JSON.stringify(step.output, null, 2)
+            : "Waiting for observation...";
+
+        html += `
+            <div class="reasoning-step" data-step-index="${index}">
+                <h4>Iteration ${step.iteration}</h4>
+
+                <p>
+                    <strong>Thought:</strong><br>
+                    <span class="reasoning-thought">${shouldType ? "" : step.thought}</span>
+                </p>
+
+                <p>
+                    <strong>Action:</strong><br>
+                    <span class="reasoning-action">${shouldType ? "" : step.action}</span>
+                </p>
+
+                <p><strong>Observation:</strong></p>
+                <pre class="reasoning-observation">${shouldType ? "" : outputText}</pre>
             </div>
         `;
     });
 
     content.innerHTML = html || "No reasoning trace yet.";
+
+    if (!shouldType) {
+        return;
+    }
+
+    steps.forEach((step, index) => {
+        const stepElement = content.querySelector(`[data-step-index="${index}"]`);
+
+        if (!stepElement) {
+            return;
+        }
+
+        const thoughtElement = stepElement.querySelector(".reasoning-thought");
+        const actionElement = stepElement.querySelector(".reasoning-action");
+        const observationElement = stepElement.querySelector(".reasoning-observation");
+
+        const observationText = step.output
+            ? JSON.stringify(step.output, null, 2)
+            : "Waiting for observation...";
+
+        typeReasoningStep(
+            thoughtElement,
+            step.thought,
+            actionElement,
+            step.action,
+            observationElement,
+            observationText
+        );
+    });
+}
+
+function createReasoningStepElement(step) {
+    const content = document.getElementById("reasoningDrawerContent");
+
+    if (content.textContent === "No reasoning trace yet.") {
+        content.innerHTML = "";
+    }
+
+    const existing = document.getElementById(`reasoning-step-${step.iteration}`);
+
+    if (existing) {
+        return existing;
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "reasoning-step";
+    wrapper.id = `reasoning-step-${step.iteration}`;
+
+    wrapper.innerHTML = `
+        <h4>Iteration ${step.iteration}</h4>
+
+        <p>
+            <strong>Thought:</strong><br>
+            <span class="reasoning-thought"></span>
+        </p>
+
+        <p>
+            <strong>Action:</strong><br>
+            <span class="reasoning-action"></span>
+        </p>
+
+        <p><strong>Observation:</strong></p>
+        <pre class="reasoning-observation"></pre>
+    `;
+
+    content.appendChild(wrapper);
+
+    return wrapper;
+}
+
+function enqueueReasoningThoughtAction(step) {
+    reasoningTypingQueue = reasoningTypingQueue.then(() => {
+        const stepElement = createReasoningStepElement(step);
+
+        const thoughtElement = stepElement.querySelector(".reasoning-thought");
+        const actionElement = stepElement.querySelector(".reasoning-action");
+
+        return typeTextIntoElementPromise(thoughtElement, step.thought, 4)
+            .then(() => typeTextIntoElementPromise(actionElement, step.action, 4));
+    });
+}
+
+function enqueueReasoningObservation(step) {
+    reasoningTypingQueue = reasoningTypingQueue.then(() => {
+        const stepElement = createReasoningStepElement(step);
+        const observationElement = stepElement.querySelector(".reasoning-observation");
+
+        const observationText = step.output
+            ? JSON.stringify(step.output, null, 2)
+            : "Waiting for observation...";
+
+        return typeTextIntoElementPromise(observationElement, observationText, 1);
+    });
 }
 
 function createHistoryTitle(message) {
-    const now = new Date();
-    const time = now.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit"
-    });
-
     const lower = message.toLowerCase();
 
-    if (lower.includes("prioritize")) {
-        return `Prioritized devices · ${time}`;
-    }
+    if (lower.includes("prioritize")) return "Prioritized devices";
+    if (lower.includes("unhealthy")) return "Checked unhealthy devices";
+    if (lower.includes("critical")) return "Found critical devices";
+    if (lower.includes("alarm")) return "Reviewed active alarms";
+    if (lower.includes("heartbeat")) return "Checked heartbeat delays";
+    if (lower.includes("risk")) return "Summarized fleet risk";
+    if (lower.includes("diagnose")) return "Ran diagnosis";
+    if (lower.includes("overview") || lower.includes("health")) return "Reviewed system health";
+    if (lower.includes("fleet status")) return "Reviewed fleet status";
 
-    if (lower.includes("unhealthy")) {
-        return `Checked unhealthy devices · ${time}`;
-    }
-
-    if (lower.includes("critical")) {
-        return `Found critical devices · ${time}`;
-    }
-
-    if (lower.includes("alarm")) {
-        return `Reviewed active alarms · ${time}`;
-    }
-
-    if (lower.includes("heartbeat")) {
-        return `Checked heartbeat delays · ${time}`;
-    }
-
-    if (lower.includes("risk")) {
-        return `Summarized fleet risk · ${time}`;
-    }
-
-    if (lower.includes("diagnose")) {
-        return `Ran diagnosis · ${time}`;
-    }
-
-    if (lower.includes("overview") || lower.includes("health")) {
-        return `Reviewed system health · ${time}`;
-    }
-
-    if (lower.includes("fleet status")) {
-        return `Reviewed fleet status · ${time}`;
-    }
-
-    return `New analysis · ${time}`;
+    return "New analysis";
 }
 
 function renderAlertCenter() {
@@ -1324,6 +1476,62 @@ function closeProfileDrawer() {
     if (profileTab) {
         profileTab.classList.remove("drawer-open");
     }
+}
+
+function formatMessageTime(timestamp = null) {
+    const date = timestamp ? new Date(timestamp) : new Date();
+
+    return date.toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+    });
+}
+
+function typeTextIntoElement(element, text, speed = 8) {
+    typeTextIntoElementPromise(element, text, speed);
+}
+
+function typeReasoningStep(thoughtElement, thoughtText, actionElement, actionText, observationElement, observationText) {
+    typeTextIntoElement(thoughtElement, thoughtText, 4, () => {
+        typeTextIntoElement(actionElement, actionText, 4, () => {
+            typeTextIntoElement(observationElement, observationText, 2);
+        });
+    });
+}
+
+function typeTextIntoElementPromise(element, text, speed = 8) {
+    return new Promise(resolve => {
+        if (!element) {
+            resolve();
+            return;
+        }
+
+        element.textContent = "";
+        element.classList.add("is-typing");
+
+        let index = 0;
+
+        function typeNextCharacter() {
+            if (index < text.length) {
+                element.textContent += text.charAt(index);
+                index++;
+
+                element.scrollIntoView({
+                    behavior: "smooth",
+                    block: "nearest"
+                });
+
+                setTimeout(typeNextCharacter, speed);
+            } else {
+                element.classList.remove("is-typing");
+                resolve();
+            }
+        }
+
+        typeNextCharacter();
+    });
 }
 
 //setInterval(refreshDevices, 5000);

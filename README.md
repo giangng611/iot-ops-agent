@@ -4,6 +4,10 @@ AI-powered IoT observability platform with realtime telemetry simulation, multi-
 
 ---
 
+<p align="center">
+  <img src="screenshots/demo.png" width="1000">
+</p>
+
 ## Overview
 
 IoT Ops Agent is a simulated IoT operations platform that monitors virtual devices, streams telemetry updates, detects warning and critical conditions, and uses LLM-powered agents to diagnose infrastructure issues.
@@ -24,7 +28,6 @@ The project compares two agent modes:
 - Device-level historical telemetry charts
 - Local authentication and user-specific chat history
 - Searchable, pinnable, and persistent chat sidebar
-- ChatGPT-inspired dark UI
 
 ---
 

@@ -1582,4 +1582,14 @@ function setAppBusyState(isBusy) {
     }
 }
 
-//setInterval(refreshDevices, 5000);
+function openProfileFromSidebar() {
+    if (isAgentRunning) {
+        return;
+    }
+
+    const profileButton = document.querySelector(
+        '.top-tab[onclick*="profile"]'
+    );
+
+    showTab("profile", profileButton);
+}

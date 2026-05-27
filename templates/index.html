@@ -45,7 +45,7 @@
         </div>
 
         <div class="sidebar-footer">
-            <div class="profile-card">
+            <div class="profile-card" onclick="openProfileFromSidebar()">
                 <div class="profile-avatar">
                     <svg viewBox="0 0 24 24">
                         <path d="M20 21a8 8 0 0 0-16 0"></path>
@@ -59,7 +59,10 @@
                     </p>
                 </div>
 
-                <button class="logout-text-btn" onclick="openLogoutModal()">
+                <button
+                    class="logout-text-btn"
+                    onclick="event.stopPropagation(); openLogoutModal();"
+                >
                     Logout
                 </button>
             </div>

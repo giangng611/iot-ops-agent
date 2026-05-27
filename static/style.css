@@ -1591,3 +1591,75 @@ button:disabled {
 .slash-palette::-webkit-scrollbar {
     display: none;
 }
+
+.alert-item.acknowledged {
+    opacity: 0.72;
+}
+
+.alert-state-pill {
+    display: inline-flex;
+    width: fit-content;
+
+    margin-top: 10px;
+    padding: 4px 9px;
+
+    border-radius: 999px;
+
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.alert-state-pill.active {
+    background: #262626;
+    color: #ffffff;
+    border: 1px solid #3f3f46;
+}
+
+.alert-state-pill.acknowledged {
+    background: #422006;
+    color: #facc15;
+    border: 1px solid #713f12;
+}
+
+.alert-actions .secondary-btn {
+    background: #2f2f2f;
+    color: #ffffff;
+}
+
+.alert-actions .secondary-btn:hover {
+    background: #3f3f46;
+}
+
+.alert-item.resolved {
+    opacity: 0.55;
+
+    border-left-color: #22c55e !important;
+}
+
+.alert-state-pill.resolved {
+    background: #052e16;
+    color: #86efac;
+    border: 1px solid #166534;
+}
+
+.alert-state-pill {
+    gap: 6px;
+    align-items: center;
+}
+
+.alert-state-time {
+    opacity: 0.75;
+    font-weight: 600;
+    text-transform: none;
+}
+
+.alert-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+
+    max-height: calc(100vh - 360px);
+    overflow-y: auto;
+    padding-right: 8px;
+}

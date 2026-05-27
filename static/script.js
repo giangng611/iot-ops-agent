@@ -32,6 +32,7 @@ let reasoningTypingActive = false;
 let pendingDeleteChatId = null;
 let isAgentRunning = false;
 let slashCommands = [];
+let alertStates = {};
 
 const prompts = [
     "/overview system health",
@@ -957,8 +958,26 @@ function renderAlertCenter() {
     alertList.innerHTML = "";
 
     alertDevices.forEach(device => {
+        let alertState = alertStates[device.device_id] || "active";
+
+        const previousStatus = alertStates[device.device_id + "_status"];
+
+        if (
+            alertState === "resolved" &&
+            previousStatus &&
+            previousStatus !== device.status
+        ) {
+            alertState = "active";
+            alertStates[device.device_id] = "active";
+        }
+
+        alertStates[device.device_id + "_status"] = device.status;
+
+        const actionTime = alertStates[device.device_id + "_actionTime"];
+        const actionTimeLabel = actionTime ? formatAlertActionTime(actionTime) : "";
+
         alertList.innerHTML += `
-            <div class="alert-item ${device.status}">
+            <div class="alert-item ${device.status} ${alertState}">
                 <div>
                     <h3>${device.device_id}</h3>
                     <p>
@@ -967,6 +986,11 @@ function renderAlertCenter() {
                         Memory: ${device.memory_usage}% ·
                         Heartbeat: ${device.heartbeat_delay}s
                     </p>
+
+                    <span class="alert-state-pill ${alertState}">
+                        ${alertState}
+                        ${actionTimeLabel ? `<span class="alert-state-time">${actionTimeLabel}</span>` : ""}
+                    </span>
                 </div>
 
                 <div class="alert-actions">
@@ -977,9 +1001,50 @@ function renderAlertCenter() {
                     <button onclick="showDeviceHistory('${device.device_id}')">
                         History
                     </button>
+
+                    ${alertState === "active" ? `
+                        <button
+                            class="secondary-btn"
+                            onclick="acknowledgeAlert('${device.device_id}')"
+                        >
+                            Acknowledge
+                        </button>
+                    ` : ""}
+
+                    ${alertState !== "resolved" ? `
+                        <button
+                            class="secondary-btn"
+                            onclick="resolveAlert('${device.device_id}')"
+                        >
+                            Resolve
+                        </button>
+                    ` : ""}
                 </div>
             </div>
         `;
+    });
+}
+
+function acknowledgeAlert(deviceId) {
+    alertStates[deviceId] = "acknowledged";
+    alertStates[deviceId + "_actionTime"] = new Date().toISOString();
+
+    renderAlertCenter();
+}
+
+function resolveAlert(deviceId) {
+    alertStates[deviceId] = "resolved";
+    alertStates[deviceId + "_actionTime"] = new Date().toISOString();
+
+    renderAlertCenter();
+}
+
+function formatAlertActionTime(timestamp) {
+    const date = new Date(timestamp);
+
+    return date.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit"
     });
 }
 

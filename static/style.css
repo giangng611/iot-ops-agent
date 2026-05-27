@@ -1508,3 +1508,12 @@ th {
         opacity: 0;
     }
 }
+
+.danger-btn {
+    background: #ef4444;
+    color: #ffffff;
+}
+
+.danger-btn:hover {
+    background: #dc2626;
+}

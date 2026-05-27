@@ -520,6 +520,23 @@
     <div id="profileDrawerContent" class="profile-drawer-content"></div>
 </div>
 
+<div id="deleteChatModal" class="modal-overlay hidden">
+    <div class="confirm-modal">
+        <h2>Delete chat?</h2>
+        <p>This will permanently delete this conversation and its messages from the database.</p>
+
+        <div class="confirm-actions">
+            <button class="secondary-btn" onclick="closeDeleteChatModal()">
+                Cancel
+            </button>
+
+            <button class="danger-btn" onclick="confirmDeleteChat()">
+                Delete
+            </button>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="/static/script.js?v=2"></script>

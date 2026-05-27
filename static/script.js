@@ -29,6 +29,7 @@ let deviceHistoryChart = null;
 let reasoningTypingQueue = Promise.resolve();
 let pendingFinalAnswer = null;
 let reasoningTypingActive = false;
+let pendingDeleteChatId = null;
 
 const prompts = [
     "/overview system health",
@@ -1285,12 +1286,22 @@ function toggleHistoryMenu(chatId) {
     menu.classList.toggle("hidden");
 }
 
-async function deleteChat(chatId) {
-    const confirmed = confirm("Delete this chat history?");
+function deleteChat(chatId) {
+    pendingDeleteChatId = chatId;
+    document.getElementById("deleteChatModal").classList.remove("hidden");
+}
 
-    if (!confirmed) {
+function closeDeleteChatModal() {
+    pendingDeleteChatId = null;
+    document.getElementById("deleteChatModal").classList.add("hidden");
+}
+
+async function confirmDeleteChat() {
+    if (pendingDeleteChatId === null) {
         return;
     }
+
+    const chatId = pendingDeleteChatId;
 
     await fetch(`/api/chats/${chatId}`, {
         method: "DELETE"
@@ -1305,6 +1316,7 @@ async function deleteChat(chatId) {
         closeReasoningDrawer();
     }
 
+    closeDeleteChatModal();
     renderChatHistory();
 }
 

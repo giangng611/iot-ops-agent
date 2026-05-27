@@ -31,6 +31,7 @@ let pendingFinalAnswer = null;
 let reasoningTypingActive = false;
 let pendingDeleteChatId = null;
 let isAgentRunning = false;
+let slashCommands = [];
 
 const prompts = [
     "/overview system health",
@@ -160,31 +161,59 @@ function handleEnter(event) {
 
 function handlePromptSuggestions() {
     const input = document.getElementById("messageInput");
-    const suggestions = document.getElementById("promptSuggestions");
+    const palette = document.getElementById("slashPalette");
 
     const value = input.value.trim();
 
     if (!value.startsWith("/")) {
-        suggestions.classList.add("hidden");
-        suggestions.innerHTML = "";
+        palette.classList.add("hidden");
+        palette.innerHTML = "";
         return;
     }
 
-    const filtered = prompts.filter(prompt =>
-        prompt.startsWith(value)
+    const filtered = slashCommands.filter(item =>
+        item.command.toLowerCase().includes(value.toLowerCase()) ||
+        item.title.toLowerCase().includes(value.toLowerCase()) ||
+        item.category.toLowerCase().includes(value.toLowerCase())
     );
 
     if (filtered.length === 0) {
-        suggestions.classList.add("hidden");
-        suggestions.innerHTML = "";
+        palette.classList.add("hidden");
+        palette.innerHTML = "";
         return;
     }
 
-    suggestions.innerHTML = filtered.map(prompt => {
-        return `<div class="suggestion-item" onclick="usePrompt('${prompt}')">${prompt}</div>`;
-    }).join("");
+    palette.innerHTML = filtered.map(item => `
+        <div class="slash-command" onclick="selectSlashCommand('${item.command}')">
+            <div>
+                <strong>${item.title}</strong>
+                <p>${item.command}</p>
+            </div>
 
-    suggestions.classList.remove("hidden");
+            <span>${item.category}</span>
+        </div>
+    `).join("");
+
+    palette.classList.remove("hidden");
+}
+
+function selectSlashCommand(command) {
+    const input = document.getElementById("messageInput");
+    const palette = document.getElementById("slashPalette");
+
+    input.value = command;
+
+    palette.classList.add("hidden");
+    palette.innerHTML = "";
+
+    input.focus();
+}
+
+async function loadSlashCommands() {
+    const response = await fetch("/api/prompts");
+    const data = await response.json();
+
+    slashCommands = data.prompts;
 }
 
 async function sendMessage() {
@@ -1265,6 +1294,7 @@ async function loadChatsFromDatabase() {
 
 document.addEventListener("DOMContentLoaded", () => {
     loadChatsFromDatabase();
+    loadSlashCommands();
 });
 
 async function saveMessageToDatabase(role, content, reasoningSteps = null) {

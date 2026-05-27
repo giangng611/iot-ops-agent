@@ -121,6 +121,62 @@ def device_broadcast_loop():
 
         time.sleep(DEVICE_BROADCAST_INTERVAL_SECONDS)
 
+@app.route("/api/prompts", methods=["GET"])
+def api_get_prompts():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    prompts = [
+        {
+            "command": "/overview system health",
+            "title": "System Health Overview",
+            "category": "Fleet"
+        },
+        {
+            "command": "/check all unhealthy devices",
+            "title": "Check Unhealthy Devices",
+            "category": "Fleet"
+        },
+        {
+            "command": "/find critical devices",
+            "title": "Find Critical Devices",
+            "category": "Alerts"
+        },
+        {
+            "command": "/diagnose system issue",
+            "title": "Diagnose System Issue",
+            "category": "Diagnostics"
+        },
+        {
+            "command": "/check devices with delayed heartbeat",
+            "title": "Check Heartbeat Delays",
+            "category": "Fleet"
+        },
+        {
+            "command": "/show devices with alarms",
+            "title": "Show Active Alarms",
+            "category": "Alerts"
+        },
+        {
+            "command": "/review current IoT fleet status",
+            "title": "Review Fleet Status",
+            "category": "Fleet"
+        },
+        {
+            "command": "/summarize current fleet risk",
+            "title": "Summarize Fleet Risk",
+            "category": "Risk"
+        },
+        {
+            "command": "/prioritize devices needing attention",
+            "title": "Prioritize Devices",
+            "category": "Risk"
+        }
+    ]
+
+    return jsonify({
+        "prompts": prompts
+    })
 
 @app.route("/api/telemetry/<device_id>", methods=["GET"])
 def get_device_history(device_id):

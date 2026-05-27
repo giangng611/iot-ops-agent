@@ -271,81 +271,36 @@
                     <p>Preset commands for common IoT operations workflows</p>
                 </div>
 
-                <div class="prompt-grid">
+                <div class="prompt-toolbar">
+                    <button class="new-prompt-btn" onclick="openPromptModal()">
+                        + New Prompt
+                    </button>
 
-                    <div class="prompt-card"
-                         onclick="usePrompt('/overview system health')">
-                        <h3>/overview system health</h3>
-                        <p>
-                            Review overall fleet health and unhealthy device summary.
-                        </p>
-                    </div>
+                    <input
+                        id="promptSearchInput"
+                        type="text"
+                        placeholder="Search prompts..."
+                        oninput="renderPromptCards()"
+                    >
 
-                    <div class="prompt-card"
-                         onclick="usePrompt('/check all unhealthy devices')">
-                        <h3>/check all unhealthy devices</h3>
-                        <p>
-                            List all warning and critical devices currently detected.
-                        </p>
-                    </div>
+                    <select id="promptCategoryFilter" onchange="renderPromptCards()">
+                        <option value="all">All Categories</option>
+                        <option value="Fleet">Fleet</option>
+                        <option value="Alerts">Alerts</option>
+                        <option value="Diagnostics">Diagnostics</option>
+                        <option value="Risk">Risk</option>
+                        <option value="Operations">Operations</option>
+                        <option value="Custom">Custom</option>
+                    </select>
 
-                    <div class="prompt-card"
-                         onclick="usePrompt('/find critical devices')">
-                        <h3>/find critical devices</h3>
-                        <p>
-                            Identify devices currently in critical condition.
-                        </p>
-                    </div>
-
-                    <div class="prompt-card"
-                         onclick="usePrompt('/diagnose system issue')">
-                        <h3>/diagnose system issue</h3>
-                        <p>
-                            Run a fleet-level AI diagnosis workflow.
-                        </p>
-                    </div>
-
-                    <div class="prompt-card"
-                         onclick="usePrompt('/check devices with delayed heartbeat')">
-                        <h3>/check devices with delayed heartbeat</h3>
-                        <p>
-                            Detect devices with heartbeat transmission delays.
-                        </p>
-                    </div>
-
-                    <div class="prompt-card"
-                         onclick="usePrompt('/show devices with alarms')">
-                        <h3>/show devices with alarms</h3>
-                        <p>
-                            Review all currently active alarms in the system.
-                        </p>
-                    </div>
-
-                    <div class="prompt-card"
-                         onclick="usePrompt('/review current IoT fleet status')">
-                        <h3>/review current IoT fleet status</h3>
-                        <p>
-                            Generate a full operational fleet summary.
-                        </p>
-                    </div>
-
-                    <div class="prompt-card"
-                         onclick="usePrompt('/summarize current fleet risk')">
-                        <h3>/summarize current fleet risk</h3>
-                        <p>
-                            Analyze current operational risks across all devices.
-                        </p>
-                    </div>
-
-                    <div class="prompt-card"
-                         onclick="usePrompt('/prioritize devices needing attention')">
-                        <h3>/prioritize devices needing attention</h3>
-                        <p>
-                            Rank devices by urgency and operational impact.
-                        </p>
-                    </div>
-
+                    <select id="promptTypeFilter" onchange="renderPromptCards()">
+                        <option value="all">All Types</option>
+                        <option value="default">Default</option>
+                        <option value="custom">Custom</option>
+                    </select>
                 </div>
+
+                <div id="promptGrid" class="prompt-grid"></div>
             </section>
 
             <section id="profileTab" class="tab-page">
@@ -537,6 +492,84 @@
             <button class="danger-btn" onclick="confirmDeleteChat()">
                 Delete
             </button>
+        </div>
+    </div>
+</div>
+
+<div id="deletePromptModal" class="modal-overlay hidden">
+    <div class="confirm-modal">
+        <h2>Delete prompt?</h2>
+        <p>This will permanently delete this custom prompt.</p>
+
+        <div class="confirm-actions">
+            <button class="secondary-btn" onclick="closeDeletePromptModal()">
+                Cancel
+            </button>
+
+            <button class="danger-btn" onclick="confirmDeletePrompt()">
+                Delete
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="promptModal" class="modal-overlay hidden">
+    <div class="confirm-modal prompt-modal">
+        <h2>Create Prompt</h2>
+
+        <div class="profile-form">
+
+            <div class="prompt-field-group">
+                <label>Prompt Title</label>
+
+                <p class="field-helper">
+                    Short workflow name shown in prompt cards and slash commands.
+                </p>
+
+                <input
+                    id="promptTitleInput"
+                    type="text"
+                    placeholder="e.g. Gateway Stability Sweep"
+                >
+            </div>
+
+            <div class="prompt-field-group">
+                <label>Workflow Category</label>
+
+                <p class="field-helper">
+                    Used for organizing prompts and slash-command filtering.
+                </p>
+
+                <select id="promptCategoryInput">
+                    <option value="Fleet">Fleet</option>
+                    <option value="Alerts">Alerts</option>
+                    <option value="Diagnostics">Diagnostics</option>
+                    <option value="Risk">Risk</option>
+                    <option value="Operations">Operations</option>
+                    <option value="Custom">Custom</option>
+                </select>
+            </div>
+
+            <div class="prompt-field-group">
+                <label>Prompt Command</label>
+
+                <p class="field-helper">
+                    Natural-language operational workflow executed by the AI agent.
+                </p>
+
+                <textarea
+                    id="promptCommandInput"
+                    class="prompt-textarea"
+                    placeholder="e.g. Investigate all gateway heartbeat anomalies and summarize operational risk."
+                ></textarea>
+            </div>
+
+            <p id="promptModalMessage"></p>
+        </div>
+
+        <div class="confirm-actions">
+            <button class="secondary-btn" onclick="closePromptModal()">Cancel</button>
+            <button onclick="createCustomPrompt()">Create</button>
         </div>
     </div>
 </div>

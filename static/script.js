@@ -33,6 +33,8 @@ let pendingDeleteChatId = null;
 let isAgentRunning = false;
 let slashCommands = [];
 let alertStates = {};
+let promptsData = [];
+let pendingDeletePromptId = null;
 
 const prompts = [
     "/overview system health",
@@ -214,7 +216,191 @@ async function loadSlashCommands() {
     const response = await fetch("/api/prompts");
     const data = await response.json();
 
+    promptsData = data.prompts;
     slashCommands = data.prompts;
+
+    renderPromptCards();
+}
+
+function renderPromptCards() {
+    const grid = document.getElementById("promptGrid");
+    const typeFilter =
+    document.getElementById("promptTypeFilter")?.value || "all";
+
+    if (!grid) {
+        return;
+    }
+
+    const categoryFilter =
+        document.getElementById("promptCategoryFilter")?.value || "all";
+
+    const searchValue =
+        document.getElementById("promptSearchInput")?.value.toLowerCase() || "";
+
+    const filteredPrompts = promptsData.filter(prompt => {
+        const matchesCategory =
+            categoryFilter === "all" || prompt.category === categoryFilter;
+
+        const matchesSearch =
+            prompt.title.toLowerCase().includes(searchValue) ||
+            prompt.command.toLowerCase().includes(searchValue) ||
+            prompt.category.toLowerCase().includes(searchValue);
+
+        const matchesType =
+            typeFilter === "all" ||
+            (typeFilter === "default" && prompt.is_default) ||
+            (typeFilter === "custom" && !prompt.is_default);
+
+        return matchesCategory && matchesSearch && matchesType;
+    });
+
+    grid.innerHTML = "";
+
+    filteredPrompts.forEach(prompt => {
+        grid.innerHTML += `
+            <div class="prompt-card">
+                <div class="prompt-card-top">
+                    <span class="prompt-category">${prompt.category}</span>
+                    ${prompt.is_default ? `<span class="prompt-default">Default</span>` : `<span class="prompt-custom">Custom</span>`}
+                </div>
+
+                <h3>${prompt.title}</h3>
+                <p>${prompt.command}</p>
+
+                <div class="prompt-card-actions">
+                    <button onclick="usePrompt('${prompt.command}')">
+                        Use
+                    </button>
+
+                    ${
+                        prompt.is_default
+                            ? `
+
+                            `
+                            : `
+                                <button
+                                    class="secondary-btn"
+                                    onclick="openEditPromptModal(${prompt.id})"
+                                >
+                                    Edit
+                                </button>
+
+                                <button
+                                    class="danger-btn"
+                                    onclick="deleteCustomPrompt(${prompt.id})"
+                                >
+                                    Delete
+                                </button>
+                            `
+                    }
+                </div>
+            </div>
+        `;
+    });
+}
+
+function openPromptModal() {
+    editingPromptId = null;
+
+    document.querySelector("#promptModal h2").textContent = "Create Prompt";
+    document.getElementById("promptModal").classList.remove("hidden");
+    document.getElementById("promptModalMessage").textContent = "";
+}
+
+function closePromptModal() {
+    editingPromptId = null;
+    document.querySelector("#promptModal h2").textContent = "Create Prompt";
+    document.getElementById("promptModal").classList.add("hidden");
+
+    document.getElementById("promptTitleInput").value = "";
+    document.getElementById("promptCategoryInput").value = "";
+    document.getElementById("promptCommandInput").value = "";
+    document.getElementById("promptModalMessage").textContent = "";
+}
+
+let editingPromptId = null;
+
+function openEditPromptModal(promptId) {
+    const prompt = promptsData.find(item => item.id === promptId);
+
+    if (!prompt) {
+        return;
+    }
+
+    editingPromptId = promptId;
+
+    document.querySelector("#promptModal h2").textContent = "Edit Prompt";
+    document.getElementById("promptTitleInput").value = prompt.title;
+    document.getElementById("promptCategoryInput").value = prompt.category;
+    document.getElementById("promptCommandInput").value = prompt.command;
+    document.getElementById("promptModalMessage").textContent = "";
+
+    document.getElementById("promptModal").classList.remove("hidden");
+}
+
+async function createCustomPrompt() {
+    const title = document.getElementById("promptTitleInput").value.trim();
+    const category = document.getElementById("promptCategoryInput").value.trim() || "Custom";
+    const command = document.getElementById("promptCommandInput").value.trim();
+    const message = document.getElementById("promptModalMessage");
+
+    if (!title || !command) {
+        message.textContent = "Title and prompt command are required.";
+        return;
+    }
+
+    const url = editingPromptId
+        ? `/api/prompts/${editingPromptId}`
+        : "/api/prompts";
+
+    const method = editingPromptId ? "PUT" : "POST";
+
+    const response = await fetch(url, {
+        method: method,
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            title: title,
+            category: category,
+            command: command
+        })
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+        message.textContent = data.error;
+        return;
+    }
+
+    closePromptModal();
+    await loadSlashCommands();
+}
+
+function deleteCustomPrompt(promptId) {
+    pendingDeletePromptId = promptId;
+    document.getElementById("deletePromptModal").classList.remove("hidden");
+}
+
+function closeDeletePromptModal() {
+    pendingDeletePromptId = null;
+    document.getElementById("deletePromptModal").classList.add("hidden");
+}
+
+async function confirmDeletePrompt() {
+    if (pendingDeletePromptId === null) {
+        return;
+    }
+
+    const promptId = pendingDeletePromptId;
+
+    await fetch(`/api/prompts/${promptId}`, {
+        method: "DELETE"
+    });
+
+    closeDeletePromptModal();
+    await loadSlashCommands();
 }
 
 async function sendMessage() {

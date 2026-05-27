@@ -73,6 +73,20 @@ def init_db():
         )
     """)
 
+    CREATE_PROMPTS_TABLE = """
+    CREATE TABLE IF NOT EXISTS prompts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        command TEXT NOT NULL,
+        category TEXT NOT NULL,
+        is_default INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+
+    cursor.execute(CREATE_PROMPTS_TABLE)
+
     conn.commit()
     conn.close()
 
@@ -441,3 +455,75 @@ def change_user_password(user_id, current_password, new_password):
     conn.close()
 
     return True, "Password updated successfully"
+
+def get_prompts(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, title, command, category, is_default
+        FROM prompts
+        WHERE user_id = ? OR is_default = 1
+        ORDER BY is_default DESC, id DESC
+    """, (user_id,))
+
+    rows = cursor.fetchall()
+
+    prompts = []
+    for row in rows:
+        prompts.append({
+            "id": row[0],
+            "title": row[1],
+            "command": row[2],
+            "category": row[3],
+            "is_default": row[4]
+        })
+
+    conn.close()
+    return prompts
+
+def create_prompt(user_id, title, command, category):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO prompts (user_id, title, command, category, is_default)
+        VALUES (?, ?, ?, ?, 0)
+    """, (user_id, title, command, category))
+
+    conn.commit()
+    prompt_id = cursor.lastrowid
+    conn.close()
+
+    return prompt_id
+
+def update_prompt(prompt_id, user_id, title, command, category):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE prompts
+        SET title = ?, command = ?, category = ?
+        WHERE id = ? AND user_id = ? AND is_default = 0
+    """, (title, command, category, prompt_id, user_id))
+
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+
+    return updated > 0
+
+def delete_prompt(prompt_id, user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        DELETE FROM prompts
+        WHERE id = ? AND user_id = ? AND is_default = 0
+    """, (prompt_id, user_id))
+
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+
+    return deleted > 0

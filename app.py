@@ -22,7 +22,11 @@ from database import (
     verify_user,
     delete_chat,
     toggle_pin_chat,
-    change_user_password
+    change_user_password,
+    get_prompts,
+    create_prompt,
+    update_prompt,
+    delete_prompt
 )
 
 load_dotenv()
@@ -126,57 +130,117 @@ def api_get_prompts():
     if not login_required():
         return jsonify({"error": "Unauthorized"}), 401
 
-    prompts = [
+    user_id = session.get("user_id")
+    prompts = get_prompts(user_id)
+
+    default_prompts = [
         {
-            "command": "/overview system health",
+            "id": "default-1",
             "title": "System Health Overview",
-            "category": "Fleet"
+            "command": "/overview system health",
+            "category": "Fleet",
+            "is_default": 1
         },
         {
-            "command": "/check all unhealthy devices",
+            "id": "default-2",
             "title": "Check Unhealthy Devices",
-            "category": "Fleet"
+            "command": "/check all unhealthy devices",
+            "category": "Fleet",
+            "is_default": 1
         },
         {
-            "command": "/find critical devices",
+            "id": "default-3",
             "title": "Find Critical Devices",
-            "category": "Alerts"
+            "command": "/find critical devices",
+            "category": "Alerts",
+            "is_default": 1
         },
         {
-            "command": "/diagnose system issue",
+            "id": "default-4",
             "title": "Diagnose System Issue",
-            "category": "Diagnostics"
+            "command": "/diagnose system issue",
+            "category": "Diagnostics",
+            "is_default": 1
         },
         {
-            "command": "/check devices with delayed heartbeat",
+            "id": "default-5",
             "title": "Check Heartbeat Delays",
-            "category": "Fleet"
+            "command": "/check devices with delayed heartbeat",
+            "category": "Fleet",
+            "is_default": 1
         },
         {
-            "command": "/show devices with alarms",
+            "id": "default-6",
             "title": "Show Active Alarms",
-            "category": "Alerts"
-        },
-        {
-            "command": "/review current IoT fleet status",
-            "title": "Review Fleet Status",
-            "category": "Fleet"
-        },
-        {
-            "command": "/summarize current fleet risk",
-            "title": "Summarize Fleet Risk",
-            "category": "Risk"
-        },
-        {
-            "command": "/prioritize devices needing attention",
-            "title": "Prioritize Devices",
-            "category": "Risk"
+            "command": "/show devices with alarms",
+            "category": "Alerts",
+            "is_default": 1
         }
     ]
 
     return jsonify({
-        "prompts": prompts
+        "prompts": default_prompts + prompts
     })
+
+@app.route("/api/prompts", methods=["POST"])
+def api_create_prompt():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json()
+
+    title = data.get("title")
+    command = data.get("command")
+    category = data.get("category", "Custom")
+
+    if not title or not command:
+        return jsonify({"error": "Title and command are required"}), 400
+
+    user_id = session.get("user_id")
+    prompt_id = create_prompt(user_id, title, command, category)
+
+    return jsonify({
+        "id": prompt_id,
+        "title": title,
+        "command": command,
+        "category": category,
+        "is_default": 0
+    })
+
+@app.route("/api/prompts/<int:prompt_id>", methods=["PUT"])
+def api_update_prompt(prompt_id):
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json()
+
+    title = data.get("title")
+    command = data.get("command")
+    category = data.get("category", "Custom")
+
+    if not title or not command:
+        return jsonify({"error": "Title and command are required"}), 400
+
+    user_id = session.get("user_id")
+    success = update_prompt(prompt_id, user_id, title, command, category)
+
+    if not success:
+        return jsonify({"error": "Prompt not found or cannot edit default prompt"}), 404
+
+    return jsonify({"status": "updated"})
+
+@app.route("/api/prompts/<int:prompt_id>", methods=["DELETE"])
+def api_delete_prompt(prompt_id):
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    user_id = session.get("user_id")
+    success = delete_prompt(prompt_id, user_id)
+
+    if not success:
+        return jsonify({"error": "Prompt not found or cannot delete default prompt"}), 404
+
+    return jsonify({"status": "deleted"})
 
 @app.route("/api/telemetry/<device_id>", methods=["GET"])
 def get_device_history(device_id):

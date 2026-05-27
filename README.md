@@ -31,58 +31,6 @@ The project compares two agent modes:
 
 ---
 
-## Screenshots
-
-### Dashboard Home
-
-<p align="center">
-  <img src="screenshots/dashboard.png" width="1000">
-</p>
-
-### Streaming Reasoning Trace
-
-<p align="center">
-  <img src="screenshots/reasoning-trace.png" width="1000">
-</p>
-
-### Devices Tab
-
-<p align="center">
-  <img src="screenshots/devices-tab.png" width="1000">
-</p>
-
-### Device Telemetry History
-
-<p align="center">
-  <img src="screenshots/telemetry-history.png" width="1000">
-</p>
-
-### Alerts Dashboard
-
-<p align="center">
-  <img src="screenshots/alerts-tab.png" width="1000">
-</p>
-
-### Profile & Settings
-
-<p align="center">
-  <img src="screenshots/profile-tab.png" width="1000">
-</p>
-
-### Authentication Screen
-
-<p align="center">
-  <img src="screenshots/login-screen.png" width="1000">
-</p>
-
-### Prompt Library
-
-<p align="center">
-  <img src="screenshots/prompts-tab.png" width="1000">
-</p>
-
----
-
 ## Architecture
 
 ```text

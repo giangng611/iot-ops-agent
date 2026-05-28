@@ -10,6 +10,7 @@ from flask import session, redirect, url_for
 from prompts import CHAT_TITLE_PROMPT
 from simulator import DEVICES, generate_telemetry
 from datetime import datetime
+import time
 
 from agents.ioa_v1_agent import IOAV1Agent
 from agents.ioa_v2_agent import IOAV2Agent
@@ -36,6 +37,7 @@ from database import (
     get_user_by_username,
     get_user_usage_stats
 )
+from benchmark_logger import log_benchmark_result
 
 load_dotenv()
 
@@ -76,9 +78,30 @@ def diagnose():
 
     try:
         mode = data.get("mode", "ioa_v2_custom")
+        start_time = time.time()
 
         if mode == "ioa_v1_custom":
             result = ioa_v1_agent.run(user_input)
+
+            latency_seconds = round(
+                time.time() - start_time,
+                2
+            )
+
+            log_benchmark_result(
+                mode="IOA v1 · Custom Python",
+                prompt=user_input,
+                latency_seconds=latency_seconds,
+                accuracy_score=0,
+                tool_usage_score=0,
+                reasoning_clarity_score=0,
+                observability_score=0,
+                development_complexity_score=2,
+                integration_speed_score=3,
+                ecosystem_score=2,
+                maintainability_score=3,
+                notes="Automatic benchmark capture from UI execution."
+            )
 
             return jsonify({
                 "response": result,
@@ -88,12 +111,52 @@ def diagnose():
         if mode == "ioa_v2_langchain":
             result = langchain_agent.run(user_input)
 
+            latency_seconds = round(
+                time.time() - start_time,
+                2
+            )
+
+            log_benchmark_result(
+                mode="IOA v2 · LangChain",
+                prompt=user_input,
+                latency_seconds=latency_seconds,
+                accuracy_score=0,
+                tool_usage_score=0,
+                reasoning_clarity_score=0,
+                observability_score=0,
+                development_complexity_score=5,
+                integration_speed_score=5,
+                ecosystem_score=5,
+                maintainability_score=4,
+                notes="Automatic benchmark capture from UI execution."
+            )
+
             return jsonify({
                 "response": result["final_answer"],
                 "steps": result["steps"]
             })
 
         result = ioa_v2_agent.run(user_input)
+
+        latency_seconds = round(
+            time.time() - start_time,
+            2
+        )
+
+        log_benchmark_result(
+            mode="IOA v2 · Custom Python",
+            prompt=user_input,
+            latency_seconds=latency_seconds,
+            accuracy_score=0,
+            tool_usage_score=0,
+            reasoning_clarity_score=0,
+            observability_score=0,
+            development_complexity_score=1,
+            integration_speed_score=2,
+            ecosystem_score=2,
+            maintainability_score=3,
+            notes="Automatic benchmark capture from UI execution."
+        )
 
         return jsonify({
             "response": result["final_answer"],
@@ -110,6 +173,7 @@ def diagnose_stream():
     data = request.get_json()
     user_input = data.get("message", "")
     mode = data.get("mode", "ioa_v2_custom")
+    start_time = time.time()
 
     def generate():
         try:
@@ -122,6 +186,23 @@ def diagnose_stream():
                 })}\n\n"
 
                 result = langchain_agent.run(user_input)
+
+                latency_seconds = round(time.time() - start_time, 2)
+
+                log_benchmark_result(
+                    mode="IOA v2 · LangChain",
+                    prompt=user_input,
+                    latency_seconds=latency_seconds,
+                    accuracy_score=0,
+                    tool_usage_score=0,
+                    reasoning_clarity_score=0,
+                    observability_score=0,
+                    development_complexity_score=5,
+                    integration_speed_score=5,
+                    ecosystem_score=5,
+                    maintainability_score=4,
+                    notes="Automatic benchmark capture from streamed UI execution."
+                )
 
                 yield f"data: {json.dumps({
                     'type': 'observation',
@@ -160,6 +241,23 @@ def diagnose_stream():
 
             for event in ioa_v2_agent.run_stream(user_input):
                 yield f"data: {json.dumps(event)}\n\n"
+
+            latency_seconds = round(time.time() - start_time, 2)
+
+            log_benchmark_result(
+                mode="IOA v2 · Custom Python",
+                prompt=user_input,
+                latency_seconds=latency_seconds,
+                accuracy_score=0,
+                tool_usage_score=0,
+                reasoning_clarity_score=0,
+                observability_score=0,
+                development_complexity_score=1,
+                integration_speed_score=2,
+                ecosystem_score=2,
+                maintainability_score=3,
+                notes="Automatic benchmark capture from streamed UI execution."
+            )
 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"

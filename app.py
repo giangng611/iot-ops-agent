@@ -114,13 +114,48 @@ def diagnose_stream():
     def generate():
         try:
             if mode == "ioa_v2_langchain":
+                yield f"data: {json.dumps({
+                    'type': 'thought',
+                    'iteration': 1,
+                    'thought': 'Using LangChain as the orchestration runtime.',
+                    'action': 'Initialize LangChain agent execution'
+                })}\n\n"
+
                 result = langchain_agent.run(user_input)
 
-                yield f"data: {json.dumps({'type': 'thought', 'iteration': 1, 'thought': 'LangChain agent is handling the request.', 'action': 'create_agent tool loop'})}\n\n"
+                yield f"data: {json.dumps({
+                    'type': 'observation',
+                    'iteration': 1,
+                    'observation': {
+                        'output': {
+                            'framework': 'LangChain',
+                            'agent_style': 'Framework-managed tool-calling agent',
+                            'trace_visibility': 'Limited internal reasoning visibility',
+                            'note': 'LangChain abstracts most internal Thought/Action/Observation steps unless callbacks are added.'
+                        }
+                    }
+                })}\n\n"
 
-                yield f"data: {json.dumps({'type': 'observation', 'iteration': 1, 'observation': {'output': result['steps'][0]['output']}})}\n\n"
+                yield f"data: {json.dumps({
+                    'type': 'thought',
+                    'iteration': 2,
+                    'thought': 'LangChain returned a final operational diagnosis.',
+                    'action': 'Format final answer for IoT Ops Agent UI'
+                })}\n\n"
 
-                yield f"data: {json.dumps({'type': 'final', 'final_answer': result['final_answer']})}\n\n"
+                yield f"data: {json.dumps({
+                    'type': 'observation',
+                    'iteration': 2,
+                    'observation': {
+                        'output': result['steps'][0]['output']
+                    }
+                })}\n\n"
+
+                yield f"data: {json.dumps({
+                    'type': 'final',
+                    'final_answer': result['final_answer']
+                })}\n\n"
+
                 return
 
             for event in ioa_v2_agent.run_stream(user_input):

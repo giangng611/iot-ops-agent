@@ -117,7 +117,7 @@ Create a `.env` file:
 ```env
 OPENAI_API_KEY=your_openai_api_key
 FLASK_SECRET_KEY=your_secret_key
-DEMO_ACCESS_CODE=your_demo_access_code
+ACCESS_CODE=please_contact_project_owner
 ```
 
 ### 4. Initialize Database

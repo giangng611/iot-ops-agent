@@ -184,6 +184,7 @@ Features include:
 <p align="center">
   <img src="../screenshots/signup-screen.png" width="1000">
 </p>
+
 ---
 
 ## Realtime Telemetry Simulation

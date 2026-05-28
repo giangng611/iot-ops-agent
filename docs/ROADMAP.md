@@ -1,91 +1,154 @@
 # Roadmap
 
-Future improvements for IoT Ops Agent.
+Future improvements and long-term direction for IoT Ops Agent.
 
 ---
 
-## Infrastructure
+## Infrastructure & Deployment
 
-- PostgreSQL migration
-- Supabase integration
-- Docker deployment
-- Cloud deployment
-- Custom domain
-- Production environment configuration
+### Planned Improvements
+
+* PostgreSQL migration
+* Supabase integration
+* Docker containerization
+* production-ready deployment architecture
+* custom domain support
+* persistent cloud storage
+* scalable telemetry workers
+* improved environment configuration
+
+### Deployment Evolution
+
+```text id="1c8qlu"
+Flask Application
+        ↓
+Gunicorn / Gevent
+        ↓
+PostgreSQL
+        ↓
+Cloud Infrastructure
+        ↓
+Custom Domain + HTTPS
+```
 
 ---
 
 ## Realtime Systems
 
-- Replace polling loops with event-driven telemetry ingestion
-- Add MQTT ingestion
-- Add device groups
-- Add device metadata management
-- Add realtime notification toasts
+Planned realtime infrastructure improvements include:
+
+* MQTT telemetry ingestion
+* event-driven telemetry pipelines
+* device grouping
+* device metadata management
+* realtime notification toasts
+* distributed telemetry streams
+* alert synchronization improvements
+* background telemetry workers
 
 ---
 
-## AI Improvements
+## AI & Agent Systems
 
-- Multi-agent architecture
-- Anomaly detection
-- Predictive maintenance
-- Root-cause analysis chains
-- Runbook retrieval
-- Operational memory
-- Automated remediation recommendations
+Future AI improvements may include:
+
+* multi-agent orchestration
+* anomaly detection
+* predictive maintenance analysis
+* root-cause investigation chains
+* operational memory systems
+* runbook retrieval
+* automated remediation recommendations
+* contextual incident summarization
+
+Potential future agent capabilities:
+
+```text id="9e2y8z"
+Telemetry anomaly detected
+        ↓
+AI investigation chain
+        ↓
+Root-cause analysis
+        ↓
+Operational recommendations
+        ↓
+Suggested remediation workflow
+```
 
 ---
 
 ## Product Features
 
-- Organization/workspace support
-- Role-based access control
-- Admin dashboard
-- Notification preferences
-- Email or Slack alert delivery
-- Exportable reports
-- Saved investigation templates
+Future platform-level improvements:
+
+* organization/workspace support
+* role-based access control (RBAC)
+* admin dashboard
+* notification preferences
+* email or Slack alert delivery
+* exportable operational reports
+* saved investigation templates
+* shared operational prompt libraries
 
 ---
 
-## Observability
+## Observability & Analytics
 
-- Historical fleet-wide trends
-- Device comparison charts
-- Alert timeline
-- Incident timeline
-- Device dependency graph
-- Geographic device map
+Planned observability improvements include:
+
+* historical fleet-wide analytics
+* device comparison dashboards
+* incident timelines
+* alert history visualization
+* operational trend analysis
+* device dependency graphs
+* geographic device maps
+* long-term telemetry retention
 
 ---
 
-## Deployment
+## Security & Authentication
 
-Possible deployment path:
+Future authentication improvements may include:
 
-```text
-Flask App
-  ↓
-Gunicorn / eventlet
-  ↓
-PostgreSQL
-  ↓
-Cloud platform
-  ↓
-Custom domain
-```
+* production-grade authentication
+* OAuth integration
+* password reset workflows
+* audit logging
+* API rate limiting
+* account recovery systems
+* multi-user access controls
+* session management improvements
+
+---
+
+## Frontend & UX
+
+Potential UI and UX improvements:
+
+* theme customization
+* responsive mobile layout
+* keyboard shortcuts
+* advanced dashboard customization
+* configurable alert panels
+* improved loading states
+* toast notifications
+* accessibility improvements
 
 ---
 
 ## Long-Term Vision
 
-IoT Ops Agent can evolve from a simulated AI operations dashboard into a real operational copilot for IoT infrastructure.
+IoT Ops Agent is designed as a simulated AI-assisted operations platform that can evolve toward real-world operational observability systems.
 
-Potential production use cases:
+The long-term goal is to transform the platform from a telemetry simulation environment into an AI operational copilot capable of supporting real infrastructure workflows.
 
-- monitoring device fleets
-- diagnosing connectivity issues
-- analyzing telemetry trends
-- prioritizing incidents
-- supporting operators with AI-assisted investigations
+Potential production use cases include:
+
+* monitoring IoT device fleets
+* diagnosing connectivity failures
+* analyzing telemetry trends
+* prioritizing operational incidents
+* assisting operators during investigations
+* supporting AI-assisted operational workflows
+* reducing manual troubleshooting effort

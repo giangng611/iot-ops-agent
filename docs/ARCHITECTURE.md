@@ -1,19 +1,19 @@
 # Architecture
 
-IoT Ops Agent is structured as a full-stack AI operations platform.
+IoT Ops Agent is structured as a full-stack AI operations platform that combines realtime telemetry simulation, AI-assisted diagnostics, operational alert management, and persistent user workspaces.
 
 ---
 
 ## High-Level Flow
 
-```text
+```text id="4s1l4p"
 Simulated IoT Devices
           ↓
 Telemetry Simulator
           ↓
 SQLite Database
           ↓
-Flask Backend API
+Flask + SocketIO Backend
           ↓
 AI Agent Layer
           ↓
@@ -26,87 +26,124 @@ Realtime Dashboard UI
 
 ## 1. Telemetry Simulator
 
-`simulator.py` generates virtual telemetry for 10 IoT devices.
+`simulator.py` continuously generates telemetry for a simulated fleet of IoT devices.
 
 Each device produces:
 
-- CPU usage
-- memory usage
-- heartbeat delay
-- status
-- log message
-- alarm metadata
+* CPU usage
+* memory usage
+* heartbeat delay
+* operational status
+* log messages
+* alarm metadata
+* alert severity
 
-Statuses are computed from operational thresholds:
+Operational status is computed from telemetry thresholds.
 
-```text
-CPU warning: >= 75%
-Memory warning: >= 80%
-Heartbeat warning: >= 180s
+### Warning Thresholds
 
-CPU critical: >= 90%
-Memory critical: >= 90%
-Heartbeat critical: >= 600s
+```text id="b89tjk"
+CPU usage >= 75%
+Memory usage >= 80%
+Heartbeat delay >= 180s
 ```
+
+### Critical Thresholds
+
+```text id="2z59g0"
+CPU usage >= 90%
+Memory usage >= 90%
+Heartbeat delay >= 600s
+```
+
+The simulator continuously inserts telemetry into the database, which powers realtime dashboards, alerts, telemetry charts, and AI diagnosis workflows.
 
 ---
 
 ## 2. SQLite Database
 
-`database.py` stores:
+`database.py` manages persistent application storage.
 
-- telemetry records
-- users
-- chats
-- messages
-- reasoning traces
+The database stores:
+
+* telemetry records
+* users
+* chats
+* messages
+* prompts
+* reasoning traces
 
 Main tables include:
 
-```text
+```text id="qvgj8u"
 telemetry
 users
 chats
 messages
+prompts
 ```
+
+The database layer also handles:
+
+* authentication
+* password hashing
+* session-linked chat persistence
+* prompt CRUD operations
+* telemetry history queries
+* profile management
 
 ---
 
 ## 3. Flask Backend
 
-`app.py` provides:
+`app.py` acts as the main backend orchestration layer.
 
-- dashboard routes
-- authentication routes
-- telemetry APIs
-- chat persistence APIs
-- profile APIs
-- streaming diagnosis endpoint
-- WebSocket broadcasting
+The backend provides:
+
+* dashboard routes
+* authentication APIs
+* telemetry APIs
+* prompt APIs
+* profile APIs
+* chat persistence APIs
+* realtime streaming endpoints
+* WebSocket broadcasting
+
+The backend also coordinates:
+
+* OpenAI API calls
+* reasoning trace streaming
+* alert generation
+* telemetry retrieval
+* frontend synchronization
 
 ---
 
 ## 4. WebSocket Layer
 
-Flask-SocketIO broadcasts realtime updates to the frontend.
+Flask-SocketIO enables realtime communication between the backend and frontend dashboard.
 
-The dashboard receives:
+The frontend receives events such as:
 
-```text
+```text id="j5gvr0"
 device_update
 ```
 
-and updates:
+Realtime events update:
 
-- device table
-- fleet charts
-- alert center
+* device tables
+* fleet health charts
+* operational alerts
+* dashboard statistics
+* telemetry history views
+
+The WebSocket layer allows the dashboard to update without requiring page refreshes.
 
 ---
 
 ## 5. Agent Layer
 
-The project includes two agent modes.
+The platform includes two operational AI modes.
 
 ### IOA v1
 
@@ -114,21 +151,25 @@ Single-step tool-calling assistant.
 
 Flow:
 
-```text
-User query
-→ select one tool
-→ call tool
-→ generate final answer
+```text id="9v1ql8"
+User Query
+→ Tool Selection
+→ Tool Execution
+→ Final Response
 ```
+
+IOA v1 performs direct operational diagnosis with a simplified reasoning process.
+
+---
 
 ### IOA v2
 
-Multi-step reasoning agent.
+Multi-step reasoning agent using a ReAct-style workflow.
 
 Flow:
 
-```text
-User query
+```text id="r5d9oj"
+User Query
 → Thought
 → Action
 → Observation
@@ -136,57 +177,128 @@ User query
 → Final Answer
 ```
 
-The reasoning trace is streamed to the frontend in realtime.
+IOA v2 supports:
+
+* iterative reasoning
+* multi-step diagnosis
+* operational context tracking
+* streamed reasoning traces
+* persistent reasoning history
+
+Reasoning events are streamed to the frontend in realtime through the reasoning drawer.
 
 ---
 
 ## 6. Frontend UI
 
-The frontend uses:
+The frontend is built using:
 
-- HTML
-- CSS
-- Vanilla JavaScript
-- Chart.js
-- Socket.IO client
+* HTML
+* CSS
+* Vanilla JavaScript
+* Chart.js
+* Socket.IO client
 
-Main UI areas:
+Main UI modules include:
 
-- Home chat workspace
-- Devices tab
-- Alerts tab
-- Prompts tab
-- Profile tab
-- Reasoning drawer
-- Device history modal
+* Home AI workspace
+* Devices tab
+* Alerts tab
+* Prompts tab
+* Profile tab
+* Reasoning drawer
+* Device history modal
+* Prompt management modal
+* Authentication views
+
+The frontend supports realtime synchronization with backend telemetry and operational state changes.
 
 ---
 
-## Context-Aware Agent Behavior
+## 7. Authentication & Session Management
 
-The agent tracks the latest target device.
+The platform includes a local authentication system with protected workspace access.
+
+Authentication features include:
+
+* login
+* access-code protected registration
+* password hashing
+* session persistence
+* protected API routes
+* username updates
+* password updates
+* account deletion workflows
+
+User sessions are maintained using Flask session management.
+
+---
+
+## 8. Prompt Workflow System
+
+The platform includes a reusable operational prompt system.
+
+Prompt workflows support:
+
+* default prompts
+* custom prompts
+* prompt categories
+* slash-command integration
+* prompt search
+* prompt filtering
+* persistent storage
+
+Prompts are synchronized between the Prompts tab and the AI chat workspace.
+
+---
+
+## 9. Operational Alert System
+
+The alert subsystem continuously evaluates telemetry conditions and generates operational alerts.
+
+Alert workflows include:
+
+* warning alerts
+* critical alerts
+* acknowledge actions
+* resolve actions
+* realtime alert synchronization
+* fleet-level operational visibility
+
+Alerts are surfaced in both the dashboard UI and AI diagnosis workflows.
+
+---
+
+## 10. Context-Aware Agent Behavior
+
+The AI agent tracks operational context across conversations.
 
 Example:
 
-```text
+```text id="jlwm4y"
 User: diagnose gateway-003
 Agent: diagnoses gateway-003
 
 User: check its alarms
-Agent: understands "its" = gateway-003
+Agent: understands "its" refers to gateway-003
 ```
+
+This allows the assistant to maintain short-term operational context during multi-step diagnosis sessions.
 
 ---
 
-## Reasoning Trace Streaming
+## 11. Reasoning Trace Streaming
 
-The backend streams intermediate reasoning events:
+The backend streams intermediate reasoning events during IOA v2 execution.
 
-```text
+Event types include:
+
+```text id="rqz6pl"
 thought
+action
 observation
 final
 error
 ```
 
-The frontend renders these events in the right-side reasoning drawer.
+The frontend renders these events inside the realtime reasoning drawer, allowing users to inspect intermediate agent behavior during operational diagnosis.

@@ -1,6 +1,6 @@
 # IoT Ops Agent
 
-AI-powered IoT observability platform with realtime telemetry simulation, multi-step reasoning agents, streaming diagnostics, and fleet analytics.
+AI-powered IoT observability platform with realtime telemetry simulation, multi-step reasoning agents, operational alert management, and persistent AI-assisted diagnostics.
 
 ---
 
@@ -8,26 +8,45 @@ AI-powered IoT observability platform with realtime telemetry simulation, multi-
   <img src="screenshots/demo.png" width="1000">
 </p>
 
-## Overview
-
-IoT Ops Agent is a simulated IoT operations platform that monitors virtual devices, streams telemetry updates, detects warning and critical conditions, and uses LLM-powered agents to diagnose infrastructure issues.
-
-The project compares two agent modes:
-
-- **IOA v1** — single-step tool-calling assistant
-- **IOA v2** — multi-step reasoning agent with streaming ReAct-style diagnostics
+<p align="center">
+  <strong>Live Demo:</strong><br>
+  https://iot-ops-agent.onrender.com
+</p>
 
 ---
 
-## Key Features
+## Overview
 
-- Multi-step AI diagnostics with reasoning traces
-- Realtime WebSocket device updates
-- SQLite-backed telemetry, users, chats, and reasoning history
-- Fleet-level health and alert dashboards
-- Device-level historical telemetry charts
-- Local authentication and user-specific chat history
-- Searchable, pinnable, and persistent chat sidebar
+IoT Ops Agent is a full-stack simulated IoT operations platform designed to monitor virtual device fleets, stream realtime telemetry, detect operational anomalies, and diagnose infrastructure issues using LLM-powered reasoning agents.
+
+The system combines:
+
+* realtime telemetry simulation
+* operational alert monitoring
+* AI-assisted diagnostics
+* persistent chat workflows
+* user authentication
+* prompt workflow management
+* telemetry visualization
+
+The project compares two operational AI modes:
+
+* **IOA v1** — single-step tool-calling assistant
+* **IOA v2** — multi-step reasoning agent with streaming ReAct-style diagnostics
+
+---
+
+## Core Features
+
+* multi-step AI diagnostics
+* realtime telemetry monitoring
+* operational alert workflows
+* telemetry history visualization
+* persistent chat history
+* prompt workflow management
+* access-controlled authentication
+* realtime SocketIO updates
+* profile and workspace management
 
 ---
 
@@ -40,7 +59,7 @@ Telemetry Simulator
           ↓
 SQLite Database
           ↓
-Flask Backend API
+Flask + SocketIO Backend
           ↓
 AI Agent Layer
           ↓
@@ -51,37 +70,71 @@ Realtime Dashboard UI
 
 ## Tech Stack
 
-**Backend**
-- Python
-- Flask
-- Flask-SocketIO
-- SQLite
-- OpenAI API
+### Backend
 
-**Frontend**
-- HTML
-- CSS
-- Vanilla JavaScript
-- Chart.js
+* Python
+* Flask
+* Flask-SocketIO
+* SQLite
+* OpenAI API
 
-**AI**
-- ReAct-style reasoning loop
-- Tool-calling agents
-- Streaming reasoning traces
-- Context-aware diagnostics
+### Frontend
+
+* HTML
+* CSS
+* Vanilla JavaScript
+* Chart.js
+
+### AI & Agent Systems
+
+* ReAct-style reasoning loops
+* tool-calling agents
+* streamed reasoning traces
+* context-aware diagnostics
+* operational prompt workflows
 
 ---
 
 ## Quick Start
 
+### 1. Clone Repository
+
 ```bash
 git clone https://github.com/giangng611/iot-ops-agent.git
 cd iot-ops-agent
+```
 
+### 2. Install Dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
+### 3. Configure Environment Variables
+
+Create a `.env` file:
+
+```env
+OPENAI_API_KEY=your_openai_api_key
+FLASK_SECRET_KEY=your_secret_key
+DEMO_ACCESS_CODE=your_demo_access_code
+```
+
+### 4. Initialize Database
+
+```bash
 python3 init_db.py
+```
+
+### 5. Start Telemetry Simulator
+
+```bash
 python3 simulator.py
+```
+
+### 6. Start Flask Application
+
+```bash
 python3 app.py
 ```
 
@@ -93,16 +146,40 @@ http://127.0.0.1:5001
 
 ---
 
+## Deployment Notes
+
+The application is currently structured for Render deployment.
+
+Environment variables should be configured through the deployment provider instead of committing secrets directly into the repository.
+
+---
+
 ## Documentation
 
-- [Setup Guide](docs/SETUP.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Features](docs/FEATURES.md)
-- [Roadmap](docs/ROADMAP.md)
+* [Setup Guide](docs/SETUP.md)
+* [Architecture](docs/ARCHITECTURE.md)
+* [Features](docs/FEATURES.md)
+* [Roadmap](docs/ROADMAP.md)
+
+---
+
+## Future Improvements
+
+* PostgreSQL migration
+* RBAC and admin dashboards
+* persistent cloud storage
+* external notification integrations
+* production-grade authentication
+
+---
+
+## License
+
+MIT License © 2026 Giang Nguyen Do
 
 ---
 
 ## Author
 
-Giang Nguyen Do  
+Giang Nguyen Do
 Computer Science @ University of Georgia

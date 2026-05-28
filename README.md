@@ -1,6 +1,6 @@
 # IoT Ops Agent
 
-AI-powered IoT observability platform with realtime telemetry simulation, multi-step reasoning agents, operational alert management, and persistent AI-assisted diagnostics.
+AI-powered IoT observability platform with realtime telemetry simulation, operational alert management, persistent AI-assisted diagnostics, and orchestration runtime benchmarking.
 
 ---
 
@@ -15,11 +15,11 @@ AI-powered IoT observability platform with realtime telemetry simulation, multi-
 
 ---
 
-## Overview
+# Overview
 
 IoT Ops Agent is a full-stack simulated IoT operations platform designed to monitor virtual device fleets, stream realtime telemetry, detect operational anomalies, and diagnose infrastructure issues using LLM-powered reasoning agents.
 
-The system combines:
+The platform combines:
 
 * realtime telemetry simulation
 * operational alert monitoring
@@ -28,15 +28,17 @@ The system combines:
 * user authentication
 * prompt workflow management
 * telemetry visualization
+* orchestration runtime benchmarking
 
-The project compares two operational AI modes:
+The project currently supports multiple orchestration runtimes:
 
-* **IOA v1** — single-step tool-calling assistant
-* **IOA v2** — multi-step reasoning agent with streaming ReAct-style diagnostics
+* **IOA v1 · Custom Python** — single-step tool-calling assistant
+* **IOA v2 · Custom Python** — multi-step ReAct-style reasoning runtime
+* **IOA v2 · LangChain** — framework-managed orchestration runtime
 
 ---
 
-## Core Features
+# Core Features
 
 * multi-step AI diagnostics
 * realtime telemetry monitoring
@@ -47,10 +49,13 @@ The project compares two operational AI modes:
 * access-controlled authentication
 * realtime SocketIO updates
 * profile and workspace management
+* orchestration runtime benchmarking
+* streamed reasoning traces
+* benchmark execution logging
 
 ---
 
-## Architecture
+# Architecture
 
 ```text
 Simulated IoT Devices
@@ -61,16 +66,16 @@ SQLite Database
           ↓
 Flask + SocketIO Backend
           ↓
-AI Agent Layer
+AI Orchestration Layer
           ↓
 Realtime Dashboard UI
 ```
 
 ---
 
-## Tech Stack
+# Tech Stack
 
-### Backend
+## Backend
 
 * Python
 * Flask
@@ -78,39 +83,67 @@ Realtime Dashboard UI
 * SQLite
 * OpenAI API
 
-### Frontend
+## Frontend
 
 * HTML
 * CSS
 * Vanilla JavaScript
 * Chart.js
 
-### AI & Agent Systems
+## AI & Orchestration Systems
 
-* ReAct-style reasoning loops
-* tool-calling agents
+* custom ReAct-style reasoning loops
+* LangChain orchestration runtime
 * streamed reasoning traces
+* tool-calling agents
 * context-aware diagnostics
 * operational prompt workflows
+* runtime benchmarking pipeline
 
 ---
 
-## Quick Start
+# Runtime Benchmarking
 
-### 1. Clone Repository
+The platform includes a benchmarking system for comparing orchestration runtimes inside the same operational environment.
+
+Current benchmark dimensions include:
+
+* operational accuracy
+* telemetry grounding
+* reasoning clarity
+* runtime observability
+* integration complexity
+* ecosystem support
+* development speed
+
+Benchmark results are automatically logged into CSV execution records for evaluation and aggregation.
+
+See:
+
+* [Benchmarking Guide](docs/BENCHMARKING.md)
+
+---
+
+# Quick Start
+
+## 1. Clone Repository
 
 ```bash
 git clone https://github.com/giangng611/iot-ops-agent.git
 cd iot-ops-agent
 ```
 
-### 2. Install Dependencies
+---
+
+## 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment Variables
+---
+
+## 3. Configure Environment Variables
 
 Create a `.env` file:
 
@@ -120,19 +153,25 @@ FLASK_SECRET_KEY=your_secret_key
 ACCESS_CODE=please_contact_project_owner
 ```
 
-### 4. Initialize Database
+---
+
+## 4. Initialize Database
 
 ```bash
 python3 init_db.py
 ```
 
-### 5. Start Telemetry Simulator
+---
+
+## 5. Start Telemetry Simulator
 
 ```bash
 python3 simulator.py
 ```
 
-### 6. Start Flask Application
+---
+
+## 6. Start Flask Application
 
 ```bash
 python3 app.py
@@ -146,7 +185,7 @@ http://127.0.0.1:5001
 
 ---
 
-## Deployment Notes
+# Deployment Notes
 
 The application is currently structured for Render deployment.
 
@@ -154,32 +193,36 @@ Environment variables should be configured through the deployment provider inste
 
 ---
 
-## Documentation
+# Documentation
 
 * [Setup Guide](docs/SETUP.md)
 * [Architecture](docs/ARCHITECTURE.md)
 * [Features](docs/FEATURES.md)
+* [Benchmarking](docs/BENCHMARKING.md)
 * [Roadmap](docs/ROADMAP.md)
 
 ---
 
-## Future Improvements
+# Future Improvements
 
+* LangGraph integration
 * PostgreSQL migration
 * RBAC and admin dashboards
 * persistent cloud storage
 * external notification integrations
 * production-grade authentication
+* local model runtime support
+* advanced orchestration evaluation
 
 ---
 
-## License
+# License
 
 MIT License © 2026 Giang Nguyen Do
 
 ---
 
-## Author
+# Author
 
 Giang Nguyen Do
 Computer Science @ University of Georgia

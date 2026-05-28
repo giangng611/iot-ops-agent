@@ -1,6 +1,27 @@
+function showSignup() {
+    document.getElementById("loginPanel").classList.add("hidden");
+    document.getElementById("signupPanel").classList.remove("hidden");
+    document.getElementById("authMessage").textContent = "";
+
+    document.getElementById("goLoginBtn").classList.add("hidden");
+}
+
+function showLogin() {
+    document.getElementById("signupPanel").classList.add("hidden");
+    document.getElementById("loginPanel").classList.remove("hidden");
+    document.getElementById("authMessage").textContent = "";
+
+    document.getElementById("goLoginBtn").classList.add("hidden");
+}
+
+function showForgotPassword() {
+    document.getElementById("authMessage").textContent =
+        "Account access is managed by the system administrator. Please contact the project owner.";
+}
+
 async function login() {
-    const username = document.getElementById("username").value.trim();
-    const password = document.getElementById("password").value.trim();
+    const username = document.getElementById("loginUsername").value.trim();
+    const password = document.getElementById("loginPassword").value.trim();
     const message = document.getElementById("authMessage");
 
     const response = await fetch("/api/login", {
@@ -24,10 +45,10 @@ async function login() {
     window.location.href = "/";
 }
 
-
 async function register() {
-    const username = document.getElementById("username").value.trim();
-    const password = document.getElementById("password").value.trim();
+    const username = document.getElementById("signupUsername").value.trim();
+    const password = document.getElementById("signupPassword").value.trim();
+    const accessCode = document.getElementById("accessCode").value.trim();
     const message = document.getElementById("authMessage");
 
     const response = await fetch("/api/register", {
@@ -37,7 +58,8 @@ async function register() {
         },
         body: JSON.stringify({
             username: username,
-            password: password
+            password: password,
+            access_code: accessCode
         })
     });
 
@@ -48,5 +70,8 @@ async function register() {
         return;
     }
 
-    message.textContent = "Account created. You can now log in.";
+    message.textContent =
+    "Account created successfully. Please continue to log in.";
+
+    document.getElementById("goLoginBtn").classList.remove("hidden");
 }

@@ -369,13 +369,21 @@ def api_register():
 
     username = data.get("username")
     password = data.get("password")
+    access_code = data.get("access_code")
+
+    required_code = os.getenv("ACCESS_CODE")
+
+    if not required_code:
+        return jsonify({"error": "Invalid access code"}), 500
+
+    if access_code != required_code:
+        return jsonify({"error": "Invalid access code"}), 403
 
     try:
         create_user(username, password)
         return jsonify({"status": "registered"})
     except Exception:
         return jsonify({"error": "Username already exists"}), 400
-
 
 @app.route("/logout")
 def logout():

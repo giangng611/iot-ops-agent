@@ -7,18 +7,50 @@
 </head>
 
 <body>
+
 <div class="auth-container">
     <div class="auth-card">
-        <h1>IoT Ops Agent</h1>
-        <p>Sign in to your operations workspace</p>
 
-        <input id="username" type="text" placeholder="Username">
-        <input id="password" type="password" placeholder="Password">
+        <div id="loginPanel" class="auth-panel">
+            <h1>IoT Ops Agent</h1>
+            <p>Sign in to your operations workspace</p>
 
-        <button onclick="login()">Login</button>
-        <button class="secondary" onclick="register()">Create account</button>
+            <input id="loginUsername" type="text" placeholder="Username">
+            <input id="loginPassword" type="password" placeholder="Password">
+
+            <button onclick="login()">Login</button>
+
+            <div class="auth-links">
+                <p onclick="showForgotPassword()">Need help accessing your account?</p>
+                <p onclick="showSignup()">Don’t have an account? Sign up</p>
+            </div>
+        </div>
+
+        <div id="signupPanel" class="auth-panel hidden">
+            <h1>Create account</h1>
+            <p>Enter the access code to create an account</p>
+
+            <input id="signupUsername" type="text" placeholder="Username">
+            <input id="signupPassword" type="password" placeholder="Password">
+            <input id="accessCode" type="password" placeholder="Access code">
+
+            <button onclick="register()">Create account</button>
+
+            <button
+                id="goLoginBtn"
+                class="secondary hidden"
+                onclick="showLogin()"
+            >
+                Continue to login
+            </button>
+
+            <div class="auth-links">
+                <p onclick="showLogin()">Already have an account? Log in</p>
+            </div>
+        </div>
 
         <p id="authMessage"></p>
+
     </div>
 </div>
 

@@ -65,3 +65,37 @@ body {
 #authMessage {
     min-height: 22px;
 }
+
+
+.auth-links {
+    margin-top: 18px;
+
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+
+    align-items: center;
+}
+
+.auth-links p {
+    margin: 0;
+
+    font-size: 13px;
+    color: #8a8a8a;
+
+    cursor: pointer;
+
+    transition: color 0.18s ease;
+}
+
+.auth-links p:hover {
+    color: #ffffff;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.auth-panel {
+    width: 100%;
+}

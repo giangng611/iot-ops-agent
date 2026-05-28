@@ -1,21 +1,25 @@
 # Features
 
-IoT Ops Agent combines realtime IoT monitoring, AI-assisted diagnostics, persistent chat workflows, and operational fleet management into a single platform.
+IoT Ops Agent combines realtime IoT monitoring, AI-assisted diagnostics, persistent chat workflows, operational alert handling, prompt management, and user workspace controls into a single platform.
 
 ---
 
 ## Realtime AI Operations Workspace
 
-The home workspace supports:
+The home workspace provides an AI-powered operations console for interacting with the simulated IoT fleet.
+
+Features include:
 
 - IOA v1 single-step diagnosis
-- IOA v2 multi-step reasoning
-- Streaming responses
-- Live typing effects
-- Persistent reasoning traces
-- Timestamped conversations
-- Chat history persistence
-- Busy-state protection during execution
+- IOA v2 multi-step reasoning agent
+- streaming responses
+- live typing effects
+- persistent reasoning traces
+- timestamped conversations
+- saved chat history
+- AI-generated chat titles
+- pinned and searchable conversations
+- busy-state protection during agent execution
 
 <p align="center">
   <img src="../screenshots/dashboard.png" width="1000">
@@ -25,7 +29,7 @@ The home workspace supports:
 
 ## ReAct-Style Reasoning Trace
 
-IOA v2 streams intermediate reasoning steps using a multi-step ReAct workflow.
+IOA v2 streams intermediate reasoning steps using a ReAct-style workflow.
 
 The reasoning drawer displays:
 
@@ -34,6 +38,8 @@ The reasoning drawer displays:
 - observations
 - streamed JSON outputs
 - final answer generation
+- saved reasoning traces for previous assistant messages
+- live drawer behavior while the agent is running
 
 <p align="center">
   <img src="../screenshots/reasoning-trace.png" width="1000">
@@ -43,18 +49,19 @@ The reasoning drawer displays:
 
 ## Device Fleet Monitoring
 
-The Devices tab provides realtime fleet visibility.
+The Devices tab provides realtime fleet visibility for the simulated IoT environment.
 
 Features include:
 
 - live telemetry updates
 - device search
 - status filtering
-- sorting by operational metrics
+- sorting by priority, CPU, memory, heartbeat delay, and timestamp
 - fleet health visualization
 - average telemetry charts
 - direct device diagnosis
 - telemetry history inspection
+- realtime SocketIO updates
 
 <p align="center">
   <img src="../screenshots/devices-tab.png" width="1000">
@@ -68,11 +75,12 @@ Each device includes a telemetry history modal for operational investigation.
 
 Charts display:
 
-- CPU trends
-- memory trends
+- CPU usage trends
+- memory usage trends
 - heartbeat delay trends
-- historical timestamps
+- recent telemetry timestamps
 - operational warning thresholds
+- device-level historical context for diagnosis
 
 <p align="center">
   <img src="../screenshots/telemetry-history.png" width="1000">
@@ -86,14 +94,16 @@ The Alerts tab provides realtime operational incident management.
 
 Features include:
 
-- critical/warning tracking
-- acknowledge workflows
-- resolve workflows
-- alert state timestamps
+- critical and warning alert tracking
+- alert acknowledgment workflow
+- alert resolution workflow
+- alert state badges
+- acknowledge/resolve timestamps
 - active incident monitoring
-- persistent alert visibility
+- persistent visibility for unresolved device conditions
 - direct diagnosis actions
-- fleet risk prioritization
+- device history access from alerts
+- scrollable alert list with fixed header and summary cards
 
 <p align="center">
   <img src="../screenshots/alerts-tab.png" width="1000">
@@ -103,17 +113,19 @@ Features include:
 
 ## Prompt Workflow System
 
-The Prompts tab acts as an operational workflow catalog.
+The Prompts tab acts as a reusable operational workflow catalog.
 
 Features include:
 
 - default system prompts
-- custom prompts
-- prompt CRUD operations
+- custom user prompts
+- create, edit, and delete prompt workflows
+- delete confirmation modal
 - category filtering
-- default/custom filtering
+- default/custom type filtering
 - prompt search
 - slash-command integration
+- synced prompt catalog between the Prompts tab and chat input
 - persistent prompt storage
 
 <p align="center">
@@ -124,16 +136,25 @@ Features include:
 
 ## Profile & Workspace Management
 
-The Profile tab centralizes account and workspace controls.
+The Profile tab centralizes account, usage, session, and workspace controls.
 
 Features include:
 
 - account overview
-- security settings
-- password updates
-- workspace explanations
-- operational preferences
-- profile side drawer
+- username update workflow
+- password update workflow with confirmation modal
+- delete account workflow with password confirmation
+- logout confirmation
+- usage statistics
+- saved conversation metrics
+- message count metrics
+- custom prompt count
+- monitored device count
+- session activity drawer
+- realtime stream status indicator
+- runtime environment indicator
+- notification status overview
+- profile side drawer for account actions
 
 <p align="center">
   <img src="../screenshots/profile-tab.png" width="1000">
@@ -141,23 +162,28 @@ Features include:
 
 ---
 
-## Authentication & Session Management
+## Authentication & Access Control
 
-The platform includes a complete authentication flow.
+The platform includes a complete authentication and access-control flow.
 
 Features include:
 
-- registration
 - login
+- access-code protected registration
+- demo access control
 - logout confirmation
 - session persistence
 - protected routes
 - password hashing
+- administrator-managed account access messaging
 
 <p align="center">
   <img src="../screenshots/login-screen.png" width="1000">
 </p>
 
+<p align="center">
+  <img src="../screenshots/signup-screen.png" width="1000">
+</p>
 ---
 
 ## Realtime Telemetry Simulation
@@ -171,11 +197,41 @@ Each device tracks:
 - heartbeat delay
 - operational status
 - telemetry timestamps
+- log messages
+- alarm names
+- alarm severity
 
 The simulation powers:
 
 - fleet dashboards
-- alerts
+- alert generation
 - AI diagnosis
 - telemetry charts
 - operational reasoning workflows
+- realtime frontend updates
+
+---
+
+## Deployment-Ready Demo Architecture
+
+The project is structured as a deployable full-stack demo application.
+
+Current deployment architecture includes:
+
+- Flask backend
+- Flask-SocketIO realtime communication
+- SQLite demo database
+- OpenAI API integration
+- Render deployment support
+- environment-variable based secrets
+- seeded telemetry data on startup
+- protected demo signup through access code
+
+Future production improvements may include:
+
+- PostgreSQL or Supabase migration
+- persistent cloud storage
+- stronger rate limiting
+- admin dashboard
+- production-grade authentication
+- external alert notification channels

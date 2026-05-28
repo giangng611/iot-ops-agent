@@ -2,8 +2,8 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 
-from agents.week1_agent import Week1Agent
-from agents.week2_agent import Week2Agent
+from agents.ioa_v1_agent import IOAV1Agent
+from agents.ioa_v2_agent import IOAV2Agent
 
 load_dotenv()
 client = OpenAI(
@@ -12,21 +12,21 @@ client = OpenAI(
 
 def choose_agent():
     print("Choose an agent:")
-    print("1. Week 1 - Single-step tool calling")
-    print("2. Week 2 - Multi-step reasoning agent")
+    print("1. IOA V1 - Single-step tool calling")
+    print("2. IOA V2 - Multi-step reasoning agent")
 
     choice = input("Enter 1 or 2: ").strip()
 
     if choice == "1":
-        print("\nRunning Week 1 Agent...\n")
-        return Week1Agent(client)
+        print("\nRunning IOA V1 Agent...\n")
+        return IOAV1Agent(client)
 
     if choice == "2":
-        print("\nRunning Week 2 Agent...\n")
-        return Week2Agent(client)
+        print("\nRunning IOA V2 Agent...\n")
+        return IOAV2Agent(client)
 
-    print("\nInvalid choice. Defaulting to Week 1 Agent.\n")
-    return Week1Agent(client)
+    print("\nInvalid choice. Defaulting to IOA V1 Agent.\n")
+    return IOAV1Agent(client)
 
 
 def main():

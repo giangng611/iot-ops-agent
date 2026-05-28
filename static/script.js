@@ -17,7 +17,7 @@ socket.on("device_update", (data) => {
     updateDevicesMonitoredDisplay();
 });
 
-let currentMode = "week2";
+let currentMode = "ioa_v2_custom";
 let allDevices = [];
 let chats = [];
 let currentChatId = null;
@@ -439,7 +439,10 @@ async function sendMessage() {
     hero.classList.add("hidden");
 
     suggestions.classList.add("hidden");
-        if (currentMode === "week2") {
+        if (
+            currentMode === "ioa_v2_custom" ||
+            currentMode === "ioa_v2_langchain"
+        ) {
         loading.innerHTML = `
             <span>Agent is thinking...</span>
             <button class="reasoning-loading-btn" onclick="openReasoningDrawer()">
@@ -467,7 +470,10 @@ async function sendMessage() {
     try {
         let finalAnswer = "";
 
-        if (currentMode === "week2") {
+        if (
+            currentMode === "ioa_v2_custom" ||
+            currentMode === "ioa_v2_langchain"
+        ) {
             finalAnswer = await sendStreamMessage(message);
         } else {
             const response = await fetch("/api/diagnose", {
@@ -523,7 +529,10 @@ async function sendStreamMessage(message) {
         headers: {
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ message: message })
+        body: JSON.stringify({
+            message: message,
+            mode: currentMode
+        })
     });
 
     const reader = response.body.getReader();
@@ -1843,12 +1852,17 @@ function openProfileDrawer(type) {
         subtitle.textContent = "Runtime and workspace status for this session.";
 
         const selectedMode =
-            document.getElementById("modeSelect")?.value || "week2";
+        document.getElementById("modeSelect")?.value || "ioa_v2_custom";
 
-        const modeLabel =
-            selectedMode === "week2"
-                ? "IOA v2 · Multi-step reasoning agent"
-                : "IOA v1 · Single-step tool calling";
+        let modeLabel = "IOA v2 · Custom Python ReAct Agent";
+
+        if (selectedMode === "ioa_v1_custom") {
+            modeLabel = "IOA v1 · Custom Python Tool Calling";
+        }
+
+        if (selectedMode === "ioa_v2_langchain") {
+            modeLabel = "IOA v2 · LangChain Agent";
+        }
 
         const deviceCount =
             allDevices.length || 0;

@@ -1,7 +1,7 @@
 import json
 
 from tools import TOOLS
-from prompts import WEEK2_AGENT_PROMPT
+from prompts import IOA_V2_AGENT_PROMPT
 from database import get_all_latest_devices
 
 
@@ -11,7 +11,7 @@ SYSTEM_LEVEL_TOOLS = [
 ]
 
 
-class Week2Agent:
+class IOAV2Agent:
     def __init__(self, client):
         self.client = client
         self.max_iterations = 3
@@ -265,7 +265,7 @@ class Week2Agent:
 
     def choose_next_step(self, user_input, observations, target):
         prompt = f"""
-    {WEEK2_AGENT_PROMPT}
+    {IOA_V2_AGENT_PROMPT}
     
     User request:
     {user_input}

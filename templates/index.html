@@ -103,8 +103,17 @@
                     <div id="slashPalette" class="slash-palette hidden"></div>
                     <div class="input-row chat-input-row">
                         <select id="modeSelect" class="mode-inline" onchange="setMode(this.value)">
-                            <option value="week1">IOA v1 (Single-step tool calling)</option>
-                            <option value="week2" selected>IOA v2 (Multi-step reasoning agent)</option>
+                            <option value="ioa_v1_custom">
+                                IOA v1 · Custom Python
+                            </option>
+
+                            <option value="ioa_v2_custom" selected>
+                                IOA v2 · Custom Python
+                            </option>
+
+                            <option value="ioa_v2_langchain">
+                                IOA v2 · LangChain
+                            </option>
                         </select>
 
                         <input

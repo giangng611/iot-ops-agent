@@ -28,7 +28,7 @@ Available tools:
 Return only the tool name. Do not explain.
 """
 
-WEEK2_AGENT_PROMPT = """
+IOA_V2_AGENT_PROMPT = """
 You are an IoT operations AI agent.
 
 Your job is to investigate operational issues step by step.

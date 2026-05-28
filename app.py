@@ -11,8 +11,9 @@ from prompts import CHAT_TITLE_PROMPT
 from simulator import DEVICES, generate_telemetry
 from datetime import datetime
 
-from agents.week1_agent import Week1Agent
-from agents.week2_agent import Week2Agent
+from agents.ioa_v1_agent import IOAV1Agent
+from agents.ioa_v2_agent import IOAV2Agent
+from agents.langchain_agent import LangChainAgent
 from database import (
     init_db,
     get_all_latest_devices,
@@ -47,8 +48,9 @@ socketio = SocketIO(
 )
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-week1_agent = Week1Agent(client)
-week2_agent = Week2Agent(client)
+ioa_v1_agent = IOAV1Agent(client)
+ioa_v2_agent = IOAV2Agent(client)
+langchain_agent = LangChainAgent()
 
 init_db()
 
@@ -73,23 +75,31 @@ def diagnose():
         return jsonify({"error": "No message provided"}), 400
 
     try:
-        mode = data.get("mode", "week2")
+        mode = data.get("mode", "ioa_v2_custom")
 
-        if mode == "week1":
-            result = week1_agent.run(user_input)
+        if mode == "ioa_v1_custom":
+            result = ioa_v1_agent.run(user_input)
 
             return jsonify({
                 "response": result,
                 "steps": []
             })
 
-        else:
-            result = week2_agent.run(user_input)
+        if mode == "ioa_v2_langchain":
+            result = langchain_agent.run(user_input)
 
             return jsonify({
                 "response": result["final_answer"],
                 "steps": result["steps"]
             })
+
+        result = ioa_v2_agent.run(user_input)
+
+        return jsonify({
+            "response": result["final_answer"],
+            "steps": result["steps"]
+        })
+
     except Exception as e:
         return jsonify({
             "error": str(e)
@@ -99,11 +109,23 @@ def diagnose():
 def diagnose_stream():
     data = request.get_json()
     user_input = data.get("message", "")
+    mode = data.get("mode", "ioa_v2_custom")
 
     def generate():
         try:
-            for event in week2_agent.run_stream(user_input):
+            if mode == "ioa_v2_langchain":
+                result = langchain_agent.run(user_input)
+
+                yield f"data: {json.dumps({'type': 'thought', 'iteration': 1, 'thought': 'LangChain agent is handling the request.', 'action': 'create_agent tool loop'})}\n\n"
+
+                yield f"data: {json.dumps({'type': 'observation', 'iteration': 1, 'observation': {'output': result['steps'][0]['output']}})}\n\n"
+
+                yield f"data: {json.dumps({'type': 'final', 'final_answer': result['final_answer']})}\n\n"
+                return
+
+            for event in ioa_v2_agent.run_stream(user_input):
                 yield f"data: {json.dumps(event)}\n\n"
+
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 

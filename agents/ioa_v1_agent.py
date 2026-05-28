@@ -4,7 +4,7 @@ from tools import TOOLS
 from prompts import SYSTEM_PROMPT, TOOL_SELECTION_PROMPT
 
 
-class Week1Agent:
+class IOAV1Agent:
     def __init__(self, client):
         self.client = client
         self.conversation_history = []

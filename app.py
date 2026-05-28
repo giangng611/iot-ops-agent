@@ -12,6 +12,7 @@ from prompts import CHAT_TITLE_PROMPT
 from agents.week1_agent import Week1Agent
 from agents.week2_agent import Week2Agent
 from database import (
+    init_db,
     get_all_latest_devices,
     get_device_telemetry_history,
     create_chat,
@@ -42,6 +43,8 @@ socketio = SocketIO(
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 week1_agent = Week1Agent(client)
 week2_agent = Week2Agent(client)
+
+init_db()
 
 
 @app.route("/")

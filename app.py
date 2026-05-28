@@ -8,6 +8,7 @@ import time
 import threading
 from flask import session, redirect, url_for
 from prompts import CHAT_TITLE_PROMPT
+from simulator import DEVICES, generate_telemetry
 
 from agents.week1_agent import Week1Agent
 from agents.week2_agent import Week2Agent
@@ -46,6 +47,9 @@ week2_agent = Week2Agent(client)
 
 init_db()
 
+if len(get_all_latest_devices()) == 0:
+    for device_id in DEVICES:
+        generate_telemetry(device_id)
 
 @app.route("/")
 def home():

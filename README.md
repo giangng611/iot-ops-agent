@@ -1,6 +1,6 @@
 # IoT Ops Agent
 
-AI-powered IoT observability platform with realtime telemetry simulation, operational alert management, persistent AI-assisted diagnostics, and orchestration runtime benchmarking.
+AI-powered IoT observability platform with realtime telemetry simulation, operational alert management, AI-assisted diagnostics, and orchestration runtime benchmarking.
 
 ---
 
@@ -35,6 +35,7 @@ The project currently supports multiple orchestration runtimes:
 * **IOA v1 · Custom Python** — single-step tool-calling assistant
 * **IOA v2 · Custom Python** — multi-step ReAct-style reasoning runtime
 * **IOA v2 · LangChain** — framework-managed orchestration runtime
+* **IOA v2 · LangGraph** — graph-based orchestration runtime
 
 ---
 
@@ -94,6 +95,7 @@ Realtime Dashboard UI
 
 * custom ReAct-style reasoning loops
 * LangChain orchestration runtime
+* LangGraph orchestration runtime
 * streamed reasoning traces
 * tool-calling agents
 * context-aware diagnostics
@@ -118,9 +120,7 @@ Current benchmark dimensions include:
 
 Benchmark results are automatically logged into CSV execution records for evaluation and aggregation.
 
-See:
-
-* [Benchmarking Guide](docs/BENCHMARKING.md)
+See the [Benchmarking Guide](docs/BENCHMARKING.md) for details.
 
 ---
 
@@ -177,7 +177,7 @@ python3 simulator.py
 python3 app.py
 ```
 
-Open:
+Open the application:
 
 ```text
 http://127.0.0.1:5001
@@ -205,7 +205,6 @@ Environment variables should be configured through the deployment provider inste
 
 # Future Improvements
 
-* LangGraph integration
 * PostgreSQL migration
 * RBAC and admin dashboards
 * persistent cloud storage
@@ -213,6 +212,7 @@ Environment variables should be configured through the deployment provider inste
 * production-grade authentication
 * local model runtime support
 * advanced orchestration evaluation
+* workflow automation runtimes
 
 ---
 

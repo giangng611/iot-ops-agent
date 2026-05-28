@@ -15,6 +15,7 @@ import time
 from agents.ioa_v1_agent import IOAV1Agent
 from agents.ioa_v2_agent import IOAV2Agent
 from agents.langchain_agent import LangChainAgent
+from agents.langgraph_agent import LangGraphAgent
 from database import (
     init_db,
     get_all_latest_devices,
@@ -53,6 +54,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 ioa_v1_agent = IOAV1Agent(client)
 ioa_v2_agent = IOAV2Agent(client)
 langchain_agent = LangChainAgent()
+langgraph_agent = LangGraphAgent()
 
 init_db()
 
@@ -106,6 +108,34 @@ def diagnose():
             return jsonify({
                 "response": result,
                 "steps": []
+            })
+
+        if mode == "ioa_v2_langgraph":
+            result = langgraph_agent.run(user_input)
+
+            latency_seconds = round(
+                time.time() - start_time,
+                2
+            )
+
+            log_benchmark_result(
+                mode="IOA v2 · LangGraph",
+                prompt=user_input,
+                latency_seconds=latency_seconds,
+                accuracy_score=0,
+                tool_usage_score=0,
+                reasoning_clarity_score=0,
+                observability_score=0,
+                development_complexity_score=4,
+                integration_speed_score=4,
+                ecosystem_score=4,
+                maintainability_score=4,
+                notes="Automatic benchmark capture from UI execution."
+            )
+
+            return jsonify({
+                "response": result["final_answer"],
+                "steps": result["steps"]
             })
 
         if mode == "ioa_v2_langchain":
@@ -177,6 +207,29 @@ def diagnose_stream():
 
     def generate():
         try:
+            if mode == "ioa_v2_langgraph":
+                for event in langgraph_agent.run_stream(user_input):
+                    yield f"data: {json.dumps(event)}\n\n"
+
+                latency_seconds = round(time.time() - start_time, 2)
+
+                log_benchmark_result(
+                    mode="IOA v2 · LangGraph",
+                    prompt=user_input,
+                    latency_seconds=latency_seconds,
+                    accuracy_score=0,
+                    tool_usage_score=0,
+                    reasoning_clarity_score=0,
+                    observability_score=0,
+                    development_complexity_score=4,
+                    integration_speed_score=4,
+                    ecosystem_score=4,
+                    maintainability_score=4,
+                    notes="Automatic benchmark capture from streamed UI execution."
+                )
+
+                return
+
             if mode == "ioa_v2_langchain":
                 yield f"data: {json.dumps({
                     'type': 'thought',

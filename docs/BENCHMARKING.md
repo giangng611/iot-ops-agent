@@ -31,16 +31,16 @@ IoT telemetry
 → different AI runtimes
 ```
 
-This allows fair comparison across:
+This allows fair comparison across multiple orchestration approaches:
 
-* IOA v1 · Custom Python
 * IOA v2 · Custom Python
 * IOA v2 · LangChain
+* IOA v2 · LangGraph
 
 Future evaluation phases may include:
 
-* LangGraph
 * Dify
+* n8n
 * CrewAI
 * AutoGen
 * local model runtimes
@@ -58,13 +58,8 @@ timestamp,mode,prompt,latency_seconds,accuracy_score,tool_usage_score,reasoning_
 2026-05-28T16:06:32,IOA v2 · Custom Python,/diagnose system issue,10.73,5,5,5,5,1,2,2,3,"Full reasoning trace available."
 ```
 
-Each row represents:
+Each row represents one runtime, one prompt, and one execution result.
 
-```text
-one runtime
-+ one prompt
-+ one execution result
-```
 
 ---
 
@@ -191,7 +186,7 @@ Measures how visible the internal reasoning process is.
 | Score | Meaning                                        |
 | ----- | ---------------------------------------------- |
 | 5     | Full Thought → Action → Observation visibility |
-| 4     | Strong traceability                            |
+| 4     | Strong graph or framework-level traceability   |
 | 3     | Partial framework trace                        |
 | 2     | Minimal visibility                             |
 | 1     | Black-box execution                            |
@@ -262,29 +257,25 @@ Characteristics:
 
 * explicit ReAct-style orchestration
 * realtime reasoning streaming
-* full observability
+* full Thought → Action → Observation visibility
 * custom orchestration loop
 * maximum runtime control
 
 Strengths:
 
-* transparency
-* debugging visibility
-* telemetry grounding
-* orchestration flexibility
+* highest transparency
+* strong debugging visibility
+* strong telemetry grounding
+* full orchestration flexibility
 
 Tradeoffs:
 
-* higher engineering complexity
+* highest engineering complexity
 * lower ecosystem support
 * slower development workflow
 
-Best suited for:
+Best suited for production-grade operational copilots requiring maximum transparency and orchestration control.
 
-```text
-production-grade operational copilots
-requiring maximum transparency and orchestration control
-```
 
 ---
 
@@ -310,50 +301,91 @@ Tradeoffs:
 * lower runtime observability
 * reduced debugging transparency
 
-Best suited for:
-
-```text
-rapid AI workflow development
-and framework-based experimentation
-```
+Best suited for rapid AI workflow development and framework-based experimentation.
 
 ---
 
-# Benchmark Aggregation
+## IOA v2 · LangGraph
 
-Raw CSV rows represent individual executions.
+Characteristics:
 
-Final evaluation tables aggregate averages across multiple runs.
+* graph-based orchestration
+* explicit node-based execution flow
+* stronger traceability than standard LangChain
+* structured state transitions
+* framework-supported agent graph design
 
-Example:
+Strengths:
 
-| Runtime                | Avg Accuracy | Avg Observability | Avg Latency | Dev Complexity | Integration Speed |
-| ---------------------- | ------------ | ----------------- | ----------- | -------------- | ----------------- |
-| IOA v2 · Custom Python | 5.0          | 5.0               | 10.04s      | 1.0            | 2.0               |
-| IOA v2 · LangChain     | 3.0          | 2.0               | 11.28s      | 5.0            | 5.0               |
+* strong balance between framework support and observability
+* faster execution in Phase 1 benchmark runs
+* clearer runtime structure than standard LangChain
+* better traceability through graph nodes
+* lower implementation burden than fully custom orchestration
+
+Tradeoffs:
+
+* less low-level control than custom Python
+* more implementation effort than standard LangChain
+* graph structure must be designed carefully
+
+Best suited for stateful operational agents requiring a balance of framework support,
+runtime structure, and reasoning transparency.
 
 ---
 
-# Key Benchmark Finding
+# Phase 1 Benchmark Results
 
-The benchmark demonstrates a clear engineering tradeoff between:
+The Phase 1 benchmark tested three shared prompts across three orchestration runtimes.
 
-```text
-runtime transparency and orchestration control
-vs
-framework abstraction and development speed
-```
+| Runtime                | Avg Accuracy | Avg Tool Usage | Avg Reasoning Clarity | Avg Observability | Avg Latency | Dev Complexity | Integration Speed | Ecosystem | Maintainability |
+| ---------------------- | -----------: | -------------: | --------------------: | ----------------: | ----------: | -------------: | ----------------: | --------: | --------------: |
+| IOA v2 · Custom Python |          5.0 |            5.0 |                   5.0 |               5.0 |      10.04s |            1.0 |               2.0 |       2.0 |             3.0 |
+| IOA v2 · LangChain     |          3.0 |            3.0 |                   4.0 |               2.0 |      11.28s |            5.0 |               5.0 |       5.0 |             4.0 |
+| IOA v2 · LangGraph     |          5.0 |            5.0 |                   5.0 |               4.0 |       6.66s |            4.0 |               4.0 |       4.0 |             4.0 |
 
-The custom IOA v2 runtime achieved stronger:
+---
 
-* reasoning visibility
-* telemetry grounding
-* operational traceability
-* debugging transparency
+# Key Benchmark Findings
 
-because the orchestration loop was explicitly implemented and streamed step-by-step.
+The benchmark demonstrates a clear engineering tradeoff between runtime transparency and orchestration control versus framework abstraction and development speed.
 
-LangChain reduced implementation complexity and accelerated integration, but internal reasoning behavior became more abstracted due to framework-managed orchestration.
+## Custom Python
+
+The custom IOA v2 runtime achieved the strongest observability because the orchestration loop was explicitly implemented and streamed step-by-step.
+
+It is the best fit when:
+
+* full reasoning visibility is required
+* debugging control matters
+* custom orchestration behavior is important
+
+---
+
+## LangChain
+
+LangChain provided the fastest framework-level integration path, but its internal orchestration behavior was more abstracted.
+
+It is the best fit when:
+
+* rapid prototyping is the priority
+* ecosystem integrations matter
+* lower implementation effort is preferred
+
+---
+
+## LangGraph
+
+LangGraph offered the strongest balance in Phase 1.
+
+It preserved much of the framework productivity advantage while improving traceability through graph-based node execution.
+
+It is the best fit when:
+
+* stateful orchestration is needed
+* framework support is useful
+* reasoning traceability still matters
+* graph-based workflow design fits the application
 
 ---
 
@@ -369,4 +401,11 @@ Scores such as:
 
 are assigned using human evaluation based on operational outputs and runtime behavior.
 
-The goal is not perfect scientific scoring. The goal is engineering evaluation of AI orchestration tradeoffs
+The goal is not perfect scientific scoring. The goal is engineering evaluation of AI orchestration tradeoffs.
+
+---
+
+# Long-Term Goal
+
+The benchmarking layer allows IoT Ops Agent to evolve into
+an AI orchestration evaluation platform where multiple runtimes and agent architectures can be tested against the same operational environment.

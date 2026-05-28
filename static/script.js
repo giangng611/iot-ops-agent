@@ -441,7 +441,8 @@ async function sendMessage() {
     suggestions.classList.add("hidden");
         if (
             currentMode === "ioa_v2_custom" ||
-            currentMode === "ioa_v2_langchain"
+            currentMode === "ioa_v2_langchain" ||
+            currentMode === "ioa_v2_langgraph"
         ) {
         loading.innerHTML = `
             <span>Agent is thinking...</span>
@@ -472,7 +473,8 @@ async function sendMessage() {
 
         if (
             currentMode === "ioa_v2_custom" ||
-            currentMode === "ioa_v2_langchain"
+            currentMode === "ioa_v2_langchain" ||
+            currentMode === "ioa_v2_langgraph"
         ) {
             finalAnswer = await sendStreamMessage(message);
         } else {
@@ -1862,6 +1864,10 @@ function openProfileDrawer(type) {
 
         if (selectedMode === "ioa_v2_langchain") {
             modeLabel = "IOA v2 · LangChain Agent";
+        }
+
+        if (selectedMode === "ioa_v2_langgraph") {
+            modeLabel = "IOA v2 · LangGraph Agent";
         }
 
         const deviceCount =

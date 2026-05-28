@@ -321,7 +321,9 @@
                             </div>
 
                             <div>
-                                <h2>{{ session.get("username", "User") }}</h2>
+                                <h2 id="profileMainUsername">
+                                    {{ session.get("username", "User") }}
+                                </h2>
                                 <p>Local account · IoT Ops Agent workspace</p>
                             </div>
                         </div>
@@ -329,7 +331,7 @@
 
                     <div class="profile-settings-grid">
 
-                        <button class="settings-card clickable-card" onclick="openProfileDrawer('security')">
+                        <button class="settings-card clickable-card" onclick="openProfileDrawer('settings')">
                             <div class="settings-card-header">
                                 <div class="settings-icon">
                                     <svg viewBox="0 0 24 24">
@@ -339,8 +341,8 @@
                                 </div>
 
                                 <div>
-                                    <h3>Security</h3>
-                                    <p>Update your password and manage account security.</p>
+                                    <h3>Settings</h3>
+                                    <p>Manage password, username, logout, and account actions.</p>
                                 </div>
                             </div>
 
@@ -349,7 +351,7 @@
                             </span>
                         </button>
 
-                        <button class="settings-card clickable-card" onclick="openProfileDrawer('chats')">
+                        <button class="settings-card clickable-card" onclick="openProfileDrawer('usage')">
                             <div class="settings-card-header">
                                 <div class="settings-icon">
                                     <svg viewBox="0 0 24 24">
@@ -360,8 +362,8 @@
                                 </div>
 
                                 <div>
-                                    <h3>Chat History</h3>
-                                    <p>Search, pin, and delete saved conversations.</p>
+                                    <h3>Usage Statistics</h3>
+                                    <p>View chats, messages, prompts, and monitored devices.</p>
                                 </div>
                             </div>
 
@@ -381,8 +383,8 @@
                                 </div>
 
                                 <div>
-                                    <h3>Workspace</h3>
-                                    <p>View local workspace and storage details.</p>
+                                    <h3>Session Activity</h3>
+                                    <p>View current session, runtime, storage, and realtime status.</p>
                                 </div>
                             </div>
 
@@ -570,6 +572,48 @@
         <div class="confirm-actions">
             <button class="secondary-btn" onclick="closePromptModal()">Cancel</button>
             <button onclick="createCustomPrompt()">Create</button>
+        </div>
+    </div>
+</div>
+
+<div id="changePasswordConfirmModal" class="modal-overlay hidden">
+    <div class="confirm-modal">
+        <h2>Update password?</h2>
+        <p>Are you sure you want to change your account password?</p>
+
+        <div class="confirm-actions">
+            <button class="secondary-btn" onclick="closeChangePasswordConfirmModal()">
+                Cancel
+            </button>
+
+            <button onclick="confirmChangePassword()">
+                Update Password
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="deleteAccountModal" class="modal-overlay hidden">
+    <div class="confirm-modal">
+        <h2>Delete account?</h2>
+        <p>This will permanently delete your account, chats, messages, and custom prompts.</p>
+
+        <input
+            id="deleteAccountPassword"
+            type="password"
+            placeholder="Enter your password to confirm"
+        >
+
+        <p id="deleteAccountMessage"></p>
+
+        <div class="confirm-actions">
+            <button class="secondary-btn" onclick="closeDeleteAccountModal()">
+                Cancel
+            </button>
+
+            <button class="danger-btn" onclick="confirmDeleteAccount()">
+                Delete Account
+            </button>
         </div>
     </div>
 </div>

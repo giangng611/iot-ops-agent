@@ -28,7 +28,11 @@ from database import (
     get_prompts,
     create_prompt,
     update_prompt,
-    delete_prompt
+    delete_prompt,
+    update_username,
+    delete_user_account,
+    get_user_by_username,
+    get_user_usage_stats
 )
 
 load_dotenv()
@@ -469,6 +473,69 @@ def generate_chat_title(user_message):
 
     except Exception:
         return "New analysis"
+
+@app.route("/api/profile/change-username", methods=["POST"])
+def api_change_username():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json()
+    new_username = data.get("new_username", "").strip()
+
+    if not new_username:
+        return jsonify({"error": "New username is required"}), 400
+
+    existing_user = get_user_by_username(new_username)
+
+    if existing_user:
+        return jsonify({"error": "Username already exists"}), 400
+
+    success = update_username(session.get("user_id"), new_username)
+
+    if not success:
+        return jsonify({"error": "Unable to update username"}), 400
+
+    session["username"] = new_username
+
+    return jsonify({
+        "status": "Username updated successfully",
+        "username": new_username
+    })
+
+@app.route("/api/profile/delete-account", methods=["POST"])
+def api_delete_account():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json()
+    password = data.get("password", "")
+
+    username = session.get("username")
+    user = verify_user(username, password)
+
+    if not user:
+        return jsonify({"error": "Password is incorrect"}), 400
+
+    user_id = session.get("user_id")
+    success = delete_user_account(user_id)
+
+    if not success:
+        return jsonify({"error": "Unable to delete account"}), 400
+
+    session.clear()
+
+    return jsonify({
+        "status": "Account deleted"
+    })
+
+@app.route("/api/profile/usage-stats", methods=["GET"])
+def api_usage_stats():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    stats = get_user_usage_stats(session.get("user_id"))
+
+    return jsonify(stats)
 
 if __name__ == "__main__":
 

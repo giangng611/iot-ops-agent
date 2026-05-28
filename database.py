@@ -527,3 +527,95 @@ def delete_prompt(prompt_id, user_id):
     conn.close()
 
     return deleted > 0
+
+def update_username(user_id, new_username):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE users
+        SET username = ?
+        WHERE id = ?
+    """, (new_username, user_id))
+
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+
+    return updated > 0
+
+def delete_user_account(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        DELETE FROM messages
+        WHERE chat_id IN (
+            SELECT id FROM chats WHERE user_id = ?
+        )
+    """, (user_id,))
+
+    cursor.execute("""
+        DELETE FROM chats
+        WHERE user_id = ?
+    """, (user_id,))
+
+    cursor.execute("""
+        DELETE FROM prompts
+        WHERE user_id = ?
+        AND is_default = 0
+    """, (user_id,))
+
+    cursor.execute("""
+        DELETE FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+
+    return deleted > 0
+
+def get_user_usage_stats(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM chats
+        WHERE user_id = ?
+    """, (user_id,))
+    chat_count = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM messages
+        WHERE chat_id IN (
+            SELECT id FROM chats WHERE user_id = ?
+        )
+    """, (user_id,))
+    message_count = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM prompts
+        WHERE user_id = ?
+        AND is_default = 0
+    """, (user_id,))
+    custom_prompt_count = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(DISTINCT device_id)
+        FROM telemetry
+    """)
+    device_count = cursor.fetchone()[0]
+
+    conn.close()
+
+    return {
+        "chat_count": chat_count,
+        "message_count": message_count,
+        "custom_prompt_count": custom_prompt_count,
+        "device_count": device_count
+    }

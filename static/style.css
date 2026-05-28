@@ -702,7 +702,7 @@ th {
 }
 
 .hidden {
-    display: none;
+    display: none !important;
 }
 
 .alert-badge {
@@ -947,6 +947,29 @@ th {
     color: #a1a1aa;
 }
 
+.confirm-modal input {
+    width: 100%;
+    height: 54px;
+
+    margin-top: 18px;
+
+    padding: 0 14px;
+
+    border-radius: 12px;
+
+    background: #212121;
+    color: #ececec;
+
+    border: 1px solid #3f3f46;
+
+    font-size: 15px;
+}
+
+.confirm-modal input::placeholder {
+    color: #8a8a8a;
+    font-size: 14px;
+}
+
 .confirm-actions {
     display: flex;
     justify-content: flex-end;
@@ -1146,6 +1169,8 @@ th {
     display: flex;
     flex-direction: column;
     gap: 12px;
+
+    animation: pageFadeIn 0.18s ease;
 }
 
 .profile-form input {
@@ -1853,4 +1878,20 @@ button:disabled {
 
 #promptsTab.active-page .prompt-grid {
     padding-bottom: 32px;
+}
+
+.status-online {
+    color: #22c55e;
+    font-weight: 700;
+}
+
+.status-offline {
+    color: #ef4444;
+    font-weight: 700;
+}
+
+.status-online::before,
+.status-offline::before {
+    content: "●";
+    margin-right: 6px;
 }

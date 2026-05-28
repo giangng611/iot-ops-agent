@@ -35,6 +35,7 @@ let slashCommands = [];
 let alertStates = {};
 let promptsData = [];
 let pendingDeletePromptId = null;
+let pendingPasswordChange = null;
 
 const prompts = [
     "/overview system health",
@@ -1639,9 +1640,34 @@ async function togglePinChat(chatId) {
     renderChatHistory();
 }
 
-async function changePassword() {
+function changePassword() {
     const currentPassword = document.getElementById("currentPassword").value;
     const newPassword = document.getElementById("newPassword").value;
+    const message = document.getElementById("profileMessage");
+
+    if (!currentPassword || !newPassword) {
+        message.textContent = "Both fields are required.";
+        return;
+    }
+
+    pendingPasswordChange = {
+        currentPassword: currentPassword,
+        newPassword: newPassword
+    };
+
+    document.getElementById("changePasswordConfirmModal").classList.remove("hidden");
+}
+
+function closeChangePasswordConfirmModal() {
+    pendingPasswordChange = null;
+    document.getElementById("changePasswordConfirmModal").classList.add("hidden");
+}
+
+async function confirmChangePassword() {
+    if (!pendingPasswordChange) {
+        return;
+    }
+
     const message = document.getElementById("profileMessage");
 
     const response = await fetch("/api/profile/change-password", {
@@ -1650,8 +1676,8 @@ async function changePassword() {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            current_password: currentPassword,
-            new_password: newPassword
+            current_password: pendingPasswordChange.currentPassword,
+            new_password: pendingPasswordChange.newPassword
         })
     });
 
@@ -1659,6 +1685,7 @@ async function changePassword() {
 
     if (data.error) {
         message.textContent = data.error;
+        closeChangePasswordConfirmModal();
         return;
     }
 
@@ -1666,6 +1693,8 @@ async function changePassword() {
 
     document.getElementById("currentPassword").value = "";
     document.getElementById("newPassword").value = "";
+
+    closeChangePasswordConfirmModal();
 }
 
 function openProfileDrawer(type) {
@@ -1677,18 +1706,93 @@ function openProfileDrawer(type) {
 
     profileTab.classList.add("drawer-open");
 
-    if (type === "security") {
-        title.textContent = "Security";
-        subtitle.textContent = "Update your account password.";
+    if (type === "settings") {
+        title.textContent = "Settings";
+        subtitle.textContent =
+            "Manage account preferences and workspace actions.";
 
         content.innerHTML = `
-            <div class="profile-form modal-form">
-                <input id="currentPassword" type="password" placeholder="Current password">
-                <input id="newPassword" type="password" placeholder="New password">
+            <div class="drawer-info-list">
 
-                <button onclick="changePassword()">Update Password</button>
+                <div>
+                    <strong>Change password</strong>
+                    <p>Update your account password securely.</p>
 
-                <p id="profileMessage"></p>
+                    <button class="secondary-btn" onclick="togglePasswordPanel()">
+                        Change Password
+                    </button>
+
+                    <div id="passwordPanel" class="profile-form hidden">
+                        <input id="currentPassword" type="password" placeholder="Current password">
+                        <input id="newPassword" type="password" placeholder="New password">
+
+                        <div class="inline-form-actions">
+
+                            <button onclick="changePassword()">
+                                Update Password
+                            </button>
+
+                            <button
+                                class="secondary-btn"
+                                onclick="closePasswordPanel()"
+                            >
+                                Cancel
+                            </button>
+
+                        </div>
+
+                        <p id="profileMessage"></p>
+                    </div>
+                </div>
+
+                <div>
+                    <strong>Change username</strong>
+                    <p>Rename your local demo account.</p>
+
+                    <button class="secondary-btn" onclick="toggleUsernamePanel()">
+                        Change Username
+                    </button>
+
+                    <div id="usernamePanel" class="profile-form hidden">
+                        <input id="newUsername" type="text" placeholder="New username">
+
+                        <div class="inline-form-actions">
+
+                            <button onclick="changeUsername()">
+                                Update Username
+                            </button>
+
+                            <button
+                                class="secondary-btn"
+                                onclick="closeUsernamePanel()"
+                            >
+                                Cancel
+                            </button>
+
+                        </div>
+
+                        <p id="usernameMessage"></p>
+                    </div>
+                </div>
+
+                <div>
+                    <strong>Log out</strong>
+                    <p>End your current session and return to the login screen.</p>
+
+                    <button class="secondary-btn" onclick="openLogoutModal()">
+                        Log out
+                    </button>
+                </div>
+
+                <div>
+                    <strong>Delete account</strong>
+                    <p>Permanently remove your account and saved workspace data.</p>
+
+                    <button class="danger-btn" onclick="openDeleteAccountModal()">
+                        Delete Account
+                    </button>
+                </div>
+
             </div>
         `;
     }
@@ -1718,51 +1822,157 @@ function openProfileDrawer(type) {
     }
 
     if (type === "workspace") {
-        title.textContent = "Workspace";
-        subtitle.textContent = "Local workspace and storage details.";
+        title.textContent = "Session Activity";
+        subtitle.textContent = "Runtime and workspace status for this session.";
+
+        const selectedMode =
+            document.getElementById("modeSelect")?.value || "week2";
+
+        const modeLabel =
+            selectedMode === "week2"
+                ? "IOA v2 · Multi-step reasoning agent"
+                : "IOA v1 · Single-step tool calling";
+
+        const deviceCount =
+            allDevices.length || 0;
+
+        const hasRecentTelemetry =
+            allDevices.some(device => {
+                const timestamp =
+                    new Date(device.timestamp).getTime();
+
+                const now = Date.now();
+
+                return (now - timestamp) < 90000;
+            });
+
+        const realtimeStatus =
+            hasRecentTelemetry
+                ? '<span class="status-online">Connected</span>'
+                : '<span class="status-offline">Disconnected</span>';
+
+        const environment =
+            window.location.hostname.includes("localhost") ||
+            window.location.hostname.includes("127.0.0.1")
+                ? "Local development"
+                : "Render deployment";
 
         content.innerHTML = `
             <div class="drawer-info-list">
                 <div>
-                    <strong>Storage</strong>
-                    <p>Telemetry, users, chats, messages, and reasoning traces are stored in SQLite.</p>
+                    <strong>Current Agent Mode</strong>
+                    <p>${modeLabel}</p>
                 </div>
 
                 <div>
-                    <strong>Realtime updates</strong>
-                    <p>Device status, alerts, and charts update through WebSocket events.</p>
+                    <strong>Realtime Stream</strong>
+                    <p>${realtimeStatus}</p>
                 </div>
 
                 <div>
-                    <strong>User isolation</strong>
-                    <p>Each local account has its own saved chat history.</p>
+                    <strong>Devices Monitored</strong>
+                    <p>${deviceCount}</p>
+                </div>
+
+                <div>
+                    <strong>Runtime Environment</strong>
+                    <p>${environment}</p>
+                </div>
+
+                <div>
+                    <strong>Storage Layer</strong>
+                    <p>SQLite demo database for users, chats, messages, prompts, and telemetry.</p>
                 </div>
             </div>
         `;
     }
 
     if (type === "notifications") {
+
         title.textContent = "Notifications";
-        subtitle.textContent = "Realtime warning and critical alert behavior.";
+
+        subtitle.textContent =
+            "Realtime alert behavior and workspace notification preferences.";
+
+        const alertBadgeEnabled =
+            !document
+                .getElementById("alertBadge")
+                .classList.contains("hidden");
+
+        const criticalEnabled = true;
+        const warningEnabled = true;
+
+        const refreshInterval =
+            "30 seconds";
+
+        content.innerHTML = `
+            <div class="drawer-info-list">
+
+                <div>
+                    <strong>Critical Alerts</strong>
+
+                    <p>
+                        <span class="status-online">
+                            Enabled
+                        </span>
+                    </p>
+                </div>
+
+                <div>
+                    <strong>Warning Alerts</strong>
+
+                    <p>
+                        <span class="status-online">
+                            Enabled
+                        </span>
+                    </p>
+                </div>
+
+                <div>
+                    <strong>Alert Badge</strong>
+
+                    <p>
+                        ${
+                            alertBadgeEnabled
+                                ? '<span class="status-online">Visible</span>'
+                                : '<span class="status-offline">Hidden</span>'
+                        }
+                    </p>
+                </div>
+
+                <div>
+                    <strong>Telemetry Refresh Interval</strong>
+
+                    <p>${refreshInterval}</p>
+                </div>
+
+                <div>
+                    <strong>Notification Environment</strong>
+
+                    <p>
+                        Browser-based realtime alert monitoring
+                        powered by Flask-SocketIO.
+                    </p>
+                </div>
+
+            </div>
+        `;
+    }
+
+    if (type === "usage") {
+        title.textContent = "Usage Statistics";
+        subtitle.textContent = "Account-level activity across your workspace.";
 
         content.innerHTML = `
             <div class="drawer-info-list">
                 <div>
-                    <strong>Alert Center</strong>
-                    <p>Warning and critical device conditions appear in the Alerts tab.</p>
-                </div>
-
-                <div>
-                    <strong>Alert badge</strong>
-                    <p>The top navigation badge shows the number of active warning and critical devices.</p>
-                </div>
-
-                <div>
-                    <strong>Operational thresholds</strong>
-                    <p>CPU warning: 75%. Memory warning: 80%. Heartbeat warning: 180 seconds.</p>
+                    <strong>Loading usage statistics...</strong>
+                    <p>Please wait.</p>
                 </div>
             </div>
         `;
+
+        loadUsageStats(content);
     }
 
     drawer.classList.remove("hidden");
@@ -1778,6 +1988,160 @@ function closeProfileDrawer() {
 
     if (profileTab) {
         profileTab.classList.remove("drawer-open");
+    }
+}
+
+function openChangeUsernamePanel() {
+    const message = document.getElementById("profileMessage");
+    const mainProfileName = document.querySelector(".profile-name-main");
+
+    if (mainProfileName) {
+        mainProfileName.textContent = data.username;
+    }
+
+    if (message) {
+        message.textContent = "Username change will be added in the next step.";
+    }
+}
+
+function openDeleteAccountModal() {
+    document.getElementById("deleteAccountModal").classList.remove("hidden");
+    document.getElementById("deleteAccountMessage").textContent = "";
+    document.getElementById("deleteAccountPassword").value = "";
+}
+
+function closeDeleteAccountModal() {
+    document.getElementById("deleteAccountModal").classList.add("hidden");
+}
+
+async function confirmDeleteAccount() {
+    const password = document.getElementById("deleteAccountPassword").value;
+    const message = document.getElementById("deleteAccountMessage");
+
+    if (!password) {
+        message.textContent = "Password is required.";
+        return;
+    }
+
+    const response = await fetch("/api/profile/delete-account", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            password: password
+        })
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+        message.textContent = data.error;
+        return;
+    }
+
+    window.location.href = "/login";
+}
+
+function togglePasswordPanel() {
+
+    const panel =
+        document.getElementById("passwordPanel");
+
+    const usernamePanel =
+        document.getElementById("usernamePanel");
+
+    usernamePanel.classList.add("hidden");
+
+    panel.classList.toggle("hidden");
+}
+function toggleUsernamePanel() {
+
+    const panel =
+        document.getElementById("usernamePanel");
+
+    const passwordPanel =
+        document.getElementById("passwordPanel");
+
+    passwordPanel.classList.add("hidden");
+
+    panel.classList.toggle("hidden");
+}
+
+async function changeUsername() {
+    const newUsername = document.getElementById("newUsername").value.trim();
+    const message = document.getElementById("usernameMessage");
+
+    if (!newUsername) {
+        message.textContent = "New username is required.";
+        return;
+    }
+
+    const response = await fetch("/api/profile/change-username", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            new_username: newUsername
+        })
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+        message.textContent = data.error;
+        return;
+    }
+
+    message.textContent = data.status;
+
+    document.querySelectorAll(".profile-name").forEach(element => {
+        element.textContent = data.username;
+    });
+
+    const mainUsername =
+        document.getElementById("profileMainUsername");
+
+    if (mainUsername) {
+        mainUsername.textContent = data.username;
+    }
+
+    document.getElementById("newUsername").value = "";
+}
+
+function closePasswordPanel() {
+
+    const panel =
+        document.getElementById("passwordPanel");
+
+    panel.classList.add("hidden");
+
+    document.getElementById("currentPassword").value = "";
+    document.getElementById("newPassword").value = "";
+
+    const message =
+        document.getElementById("profileMessage");
+
+    if (message) {
+        message.textContent = "";
+    }
+}
+
+function closeUsernamePanel() {
+
+    const panel =
+        document.getElementById("usernamePanel");
+
+    panel.classList.add("hidden");
+
+    document.getElementById("newUsername").value = "";
+
+    const message =
+        document.getElementById("usernameMessage");
+
+    if (message) {
+        message.textContent = "";
     }
 }
 
@@ -1873,4 +2237,45 @@ function openProfileFromSidebar() {
     );
 
     showTab("profile", profileButton);
+}
+
+async function loadUsageStats(content) {
+    const response = await fetch("/api/profile/usage-stats");
+    const data = await response.json();
+
+    if (data.error) {
+        content.innerHTML = `
+            <div class="drawer-info-list">
+                <div>
+                    <strong>Error</strong>
+                    <p>${data.error}</p>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    content.innerHTML = `
+        <div class="drawer-info-list">
+            <div>
+                <strong>Saved Conversations</strong>
+                <p>${data.chat_count}</p>
+            </div>
+
+            <div>
+                <strong>Messages Saved</strong>
+                <p>${data.message_count}</p>
+            </div>
+
+            <div>
+                <strong>Custom Prompts</strong>
+                <p>${data.custom_prompt_count}</p>
+            </div>
+
+            <div>
+                <strong>Devices Monitored</strong>
+                <p>${data.device_count}</p>
+            </div>
+        </div>
+    `;
 }

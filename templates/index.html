@@ -222,27 +222,11 @@
                             </thead>
 
                             <tbody id="deviceTableBody">
-                            {% for device in devices %}
-                            <tr>
-                                <td>{{ device.device_id }}</td>
-                                <td><span class="status-pill {{ device.status }}">{{ device.status }}</span></td>
-                                <td>{{ device.cpu_usage }}%</td>
-                                <td>{{ device.memory_usage }}%</td>
-                                <td>{{ device.heartbeat_delay }}s ago</td>
-                                <td>-</td>
-                                <td>
-                                    <button onclick="diagnoseDevice('{{ device.device_id }}')">
-                                        Diagnose
-                                    </button>
-                                </td>
-
-                                <td>
-                                    <button onclick="showDeviceHistory('{{ device.device_id }}')">
-                                        History
-                                    </button>
-                                </td>
-                            </tr>
-                            {% endfor %}
+                                <tr id="devicesLoadingRow">
+                                    <td colspan="8">
+                                        Loading realtime device telemetry...
+                                    </td>
+                                </tr>
                             </tbody>
                         </table>
 
@@ -620,6 +604,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=2"></script>
+<script src="/static/script.js?v=5"></script>
 </body>
 </html>

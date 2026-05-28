@@ -753,6 +753,17 @@ function renderDeviceTable() {
         return;
     }
 
+    if (!allDevices || allDevices.length === 0) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="8">
+                    Waiting for realtime telemetry...
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
     const searchValue = document.getElementById("deviceSearch")?.value.toLowerCase() || "";
     const statusValue = document.getElementById("statusFilter")?.value || "all";
     const sortValue = document.getElementById("sortSelect")?.value || "priority";

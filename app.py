@@ -33,7 +33,11 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="gevent"
+)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 week1_agent = Week1Agent(client)
@@ -464,5 +468,6 @@ if __name__ == "__main__":
         app,
         host="0.0.0.0",
         port=port,
-        debug=False
+        debug=False,
+        allow_unsafe_werkzeug=True
     )

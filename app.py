@@ -9,6 +9,7 @@ import threading
 from flask import session, redirect, url_for
 from prompts import CHAT_TITLE_PROMPT
 from simulator import DEVICES, generate_telemetry
+from datetime import datetime
 
 from agents.week1_agent import Week1Agent
 from agents.week2_agent import Week2Agent
@@ -130,11 +131,34 @@ def device_broadcast_loop():
             if device["status"] == "warning"
         ])
 
+        latest_timestamp = None
+
+        for device in devices:
+            device_timestamp = datetime.fromisoformat(device["timestamp"])
+
+            if latest_timestamp is None or device_timestamp > latest_timestamp:
+                latest_timestamp = device_timestamp
+
+        telemetry_age_seconds = None
+
+        if latest_timestamp:
+            telemetry_age_seconds = (
+                    datetime.now() - latest_timestamp
+            ).total_seconds()
+
+        telemetry_stream_status = (
+            "connected"
+            if telemetry_age_seconds is not None and telemetry_age_seconds < 90
+            else "disconnected"
+        )
+
         socketio.emit("device_update", {
             "devices": devices,
             "alerts": {
                 "critical_count": critical_count,
-                "warning_count": warning_count
+                "warning_count": warning_count,
+                "telemetry_stream_status": telemetry_stream_status,
+                "telemetry_age_seconds": telemetry_age_seconds
             }
         })
 

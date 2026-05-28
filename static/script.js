@@ -5,12 +5,16 @@ socket.on("connect", () => {
 });
 
 socket.on("device_update", (data) => {
+    lastRealtimeUpdate = Date.now();
+
     allDevices = data.devices;
     currentAlerts = data.alerts;
 
     renderDeviceTable();
     renderAlertCenter();
     renderCharts();
+    updateRealtimeStatusDisplay();
+    updateDevicesMonitoredDisplay();
 });
 
 let currentMode = "week2";
@@ -36,6 +40,8 @@ let alertStates = {};
 let promptsData = [];
 let pendingDeletePromptId = null;
 let pendingPasswordChange = null;
+let lastRealtimeUpdate = 0;
+let realtimeStatusInterval = null;
 
 const prompts = [
     "/overview system health",
@@ -1837,17 +1843,10 @@ function openProfileDrawer(type) {
             allDevices.length || 0;
 
         const hasRecentTelemetry =
-            allDevices.some(device => {
-                const timestamp =
-                    new Date(device.timestamp).getTime();
-
-                const now = Date.now();
-
-                return (now - timestamp) < 90000;
-            });
+            (Date.now() - lastRealtimeUpdate) < 90000;
 
         const realtimeStatus =
-            hasRecentTelemetry
+            currentAlerts.telemetry_stream_status === "connected"
                 ? '<span class="status-online">Connected</span>'
                 : '<span class="status-offline">Disconnected</span>';
 
@@ -1866,12 +1865,18 @@ function openProfileDrawer(type) {
 
                 <div>
                     <strong>Realtime Stream</strong>
-                    <p>${realtimeStatus}</p>
+                    <p id="realtimeStatusValue">
+                        ${
+                            currentAlerts.telemetry_stream_status === "connected"
+                                ? '<span class="status-online">Connected</span>'
+                                : '<span class="status-offline">Disconnected</span>'
+                        }
+                    </p>
                 </div>
 
                 <div>
                     <strong>Devices Monitored</strong>
-                    <p>${deviceCount}</p>
+                    <p id="devicesMonitoredValue">${allDevices.length || 0}</p>
                 </div>
 
                 <div>
@@ -1885,6 +1890,12 @@ function openProfileDrawer(type) {
                 </div>
             </div>
         `;
+
+        if (realtimeStatusInterval) {
+            clearInterval(realtimeStatusInterval);
+        }
+
+        realtimeStatusInterval = setInterval(updateRealtimeStatusDisplay, 5000);
     }
 
     if (type === "notifications") {
@@ -1988,6 +1999,11 @@ function closeProfileDrawer() {
 
     if (profileTab) {
         profileTab.classList.remove("drawer-open");
+    }
+
+    if (realtimeStatusInterval) {
+        clearInterval(realtimeStatusInterval);
+        realtimeStatusInterval = null;
     }
 }
 
@@ -2278,4 +2294,41 @@ async function loadUsageStats(content) {
             </div>
         </div>
     `;
+}
+
+function getRealtimeStatusHtml() {
+    const isConnected =
+        lastRealtimeUpdate > 0 &&
+        Date.now() - lastRealtimeUpdate < 90000;
+
+    return isConnected
+        ? '<span class="status-online">Connected</span>'
+        : '<span class="status-offline">Disconnected</span>';
+}
+
+function updateRealtimeStatusDisplay() {
+
+    const element =
+        document.getElementById("realtimeStatusValue");
+
+    if (!element) {
+        return;
+    }
+
+    const isConnected =
+        currentAlerts.telemetry_stream_status === "connected";
+
+    element.innerHTML = isConnected
+        ? '<span class="status-online">Connected</span>'
+        : '<span class="status-offline">Disconnected</span>';
+}
+
+function updateDevicesMonitoredDisplay() {
+    const element = document.getElementById("devicesMonitoredValue");
+
+    if (!element) {
+        return;
+    }
+
+    element.textContent = allDevices.length || 0;
 }

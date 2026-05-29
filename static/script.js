@@ -442,7 +442,8 @@ async function sendMessage() {
         if (
             currentMode === "ioa_v2_custom" ||
             currentMode === "ioa_v2_langchain" ||
-            currentMode === "ioa_v2_langgraph"
+            currentMode === "ioa_v2_langgraph" ||
+            currentMode === "ioa_v2_n8n"
         ) {
         loading.innerHTML = `
             <span>Agent is thinking...</span>
@@ -474,7 +475,8 @@ async function sendMessage() {
         if (
             currentMode === "ioa_v2_custom" ||
             currentMode === "ioa_v2_langchain" ||
-            currentMode === "ioa_v2_langgraph"
+            currentMode === "ioa_v2_langgraph" ||
+            currentMode === "ioa_v2_n8n"
         ) {
             finalAnswer = await sendStreamMessage(message);
         } else {
@@ -1868,6 +1870,10 @@ function openProfileDrawer(type) {
 
         if (selectedMode === "ioa_v2_langgraph") {
             modeLabel = "IOA v2 · LangGraph Agent";
+        }
+
+        if (selectedMode === "ioa_v2_n8n") {
+            modeLabel = "IOA v2 · n8n Workflow Agent";
         }
 
         const deviceCount =

@@ -29,6 +29,7 @@ Create a `.env` file in the project root:
 OPENAI_API_KEY=your_openai_api_key_here
 FLASK_SECRET_KEY=your_flask_secret_key_here
 ACCESS_CODE=your_access_code_here
+N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 ```
 
 ### Generate a Flask Secret Key
@@ -44,6 +45,7 @@ Environment variables are required for:
 * OpenAI API access
 * session management
 * protected account registration
+* optional n8n runtime testing through the UI
 
 ---
 

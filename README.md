@@ -151,6 +151,7 @@ Create a `.env` file:
 OPENAI_API_KEY=your_openai_api_key
 FLASK_SECRET_KEY=your_secret_key
 ACCESS_CODE=please_contact_project_owner
+N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 ```
 
 ---
@@ -190,6 +191,8 @@ http://127.0.0.1:5001
 The application is currently structured for Render deployment.
 
 Environment variables should be configured through the deployment provider instead of committing secrets directly into the repository.
+
+`N8N_WEBHOOK_URL` is optional and only required when testing the `IOA v2 · n8n` runtime mode in the UI.
 
 ---
 

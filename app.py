@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import os
 import json
+import requests
 from flask_socketio import SocketIO
 import time
 import threading
@@ -61,6 +62,145 @@ init_db()
 if len(get_all_latest_devices()) == 0:
     for device_id in DEVICES:
         generate_telemetry(device_id)
+
+def call_n8n_agent(user_input):
+    webhook_url = (
+        os.getenv("N8N_WEBHOOK_URL")
+        or os.getenv("EVAL_N8N_WEBHOOK_URL")
+    )
+
+    if not webhook_url:
+        raise RuntimeError(
+            "N8N_WEBHOOK_URL is not configured. "
+            "Set it to your local n8n webhook URL."
+        )
+
+    response = requests.post(
+        webhook_url,
+        json={
+            "message": user_input,
+            "prompt": user_input,
+            "source": "iot-ops-agent-ui"
+        },
+        timeout=90
+    )
+    response.raise_for_status()
+
+    content_type = response.headers.get("content-type", "")
+
+    if "application/json" not in content_type:
+        return {
+            "final_answer": response.text.strip(),
+            "steps": []
+        }
+
+    data = response.json()
+
+    if isinstance(data, list) and data:
+        data = data[0]
+
+    if not isinstance(data, dict):
+        return {
+            "final_answer": json.dumps(data, indent=2),
+            "steps": []
+        }
+
+    final_answer = (
+        data.get("response")
+        or data.get("answer")
+        or data.get("text")
+        or data.get("output")
+        or data.get("message")
+        or json.dumps(data, indent=2)
+    )
+
+    return {
+        "final_answer": final_answer,
+        "steps": data.get("steps", [])
+    }
+
+def normalize_n8n_steps(result):
+    raw_steps = result.get("steps", [])
+
+    steps = [
+        {
+            "iteration": 1,
+            "thought": "The request should be delegated to n8n for workflow-based orchestration.",
+            "action": "call_n8n_webhook",
+            "output": {
+                "framework": "n8n",
+                "runtime_type": "external workflow runtime",
+                "response_received": True
+            }
+        }
+    ]
+
+    if isinstance(raw_steps, list):
+        for index, step in enumerate(raw_steps, start=2):
+            if isinstance(step, dict):
+                steps.append({
+                    "iteration": index,
+                    "thought": (
+                        step.get("thought")
+                        or step.get("description")
+                        or step.get("node")
+                        or "n8n returned a workflow execution step."
+                    ),
+                    "action": (
+                        step.get("action")
+                        or step.get("tool")
+                        or step.get("node")
+                        or "n8n_workflow_step"
+                    ),
+                    "output": (
+                        step.get("output")
+                        if "output" in step
+                        else step
+                    )
+                })
+            else:
+                steps.append({
+                    "iteration": index,
+                    "thought": "n8n returned a workflow execution step.",
+                    "action": "n8n_workflow_step",
+                    "output": step
+                })
+
+    if len(steps) == 1:
+        steps.append({
+            "iteration": 2,
+            "thought": "n8n completed execution and returned a final response.",
+            "action": "format_n8n_response",
+            "output": {
+                "answer_preview": result.get("final_answer", "")[:300]
+            }
+        })
+
+    return steps
+
+def log_n8n_benchmark(user_input, latency_seconds, status, step_count, error=None):
+    notes = (
+        f"Automatic benchmark capture from UI execution through n8n webhook. "
+        f"status={status}; step_count={step_count}"
+    )
+
+    if error:
+        notes = f"{notes}; error={error[:300]}"
+
+    log_benchmark_result(
+        mode="IOA v2 · n8n",
+        prompt=user_input,
+        latency_seconds=latency_seconds,
+        accuracy_score=0,
+        tool_usage_score=0,
+        reasoning_clarity_score=0,
+        observability_score=0,
+        development_complexity_score=4,
+        integration_speed_score=5,
+        ecosystem_score=4,
+        maintainability_score=4,
+        notes=notes
+    )
 
 @app.route("/")
 def home():
@@ -164,6 +304,39 @@ def diagnose():
             return jsonify({
                 "response": result["final_answer"],
                 "steps": result["steps"]
+            })
+
+        if mode == "ioa_v2_n8n":
+            try:
+                result = call_n8n_agent(user_input)
+                steps = normalize_n8n_steps(result)
+                latency_seconds = round(
+                    time.time() - start_time,
+                    2
+                )
+                log_n8n_benchmark(
+                    user_input=user_input,
+                    latency_seconds=latency_seconds,
+                    status="success",
+                    step_count=len(steps)
+                )
+            except Exception as e:
+                latency_seconds = round(
+                    time.time() - start_time,
+                    2
+                )
+                log_n8n_benchmark(
+                    user_input=user_input,
+                    latency_seconds=latency_seconds,
+                    status="error",
+                    step_count=0,
+                    error=str(e)
+                )
+                raise
+
+            return jsonify({
+                "response": result["final_answer"],
+                "steps": steps
             })
 
         result = ioa_v2_agent.run(user_input)
@@ -289,6 +462,87 @@ def diagnose_stream():
                     'type': 'final',
                     'final_answer': result['final_answer']
                 })}\n\n"
+
+                return
+
+            if mode == "ioa_v2_n8n":
+                try:
+                    yield f"data: {json.dumps({
+                        'type': 'thought',
+                        'iteration': 1,
+                        'thought': 'The request should be delegated to n8n for workflow-based orchestration.',
+                        'action': 'call_n8n_webhook'
+                    })}\n\n"
+
+                    result = call_n8n_agent(user_input)
+                    steps = normalize_n8n_steps(result)
+
+                    latency_seconds = round(time.time() - start_time, 2)
+
+                    log_n8n_benchmark(
+                        user_input=user_input,
+                        latency_seconds=latency_seconds,
+                        status="success",
+                        step_count=len(steps)
+                    )
+
+                    first_step = steps[0]
+
+                    yield f"data: {json.dumps({
+                        'type': 'observation',
+                        'iteration': first_step['iteration'],
+                        'observation': {
+                            'output': first_step['output']
+                        }
+                    })}\n\n"
+
+                    for step in steps[1:]:
+                        yield f"data: {json.dumps({
+                            'type': 'thought',
+                            'iteration': step['iteration'],
+                            'thought': step['thought'],
+                            'action': step['action']
+                        })}\n\n"
+
+                        yield f"data: {json.dumps({
+                            'type': 'observation',
+                            'iteration': step['iteration'],
+                            'observation': {
+                                'output': step['output']
+                            }
+                        })}\n\n"
+
+                    yield f"data: {json.dumps({
+                        'type': 'final',
+                        'final_answer': result['final_answer']
+                    })}\n\n"
+                except Exception as e:
+                    latency_seconds = round(time.time() - start_time, 2)
+
+                    log_n8n_benchmark(
+                        user_input=user_input,
+                        latency_seconds=latency_seconds,
+                        status="error",
+                        step_count=0,
+                        error=str(e)
+                    )
+
+                    yield f"data: {json.dumps({
+                        'type': 'observation',
+                        'iteration': 1,
+                        'observation': {
+                            'output': {
+                                'framework': 'n8n',
+                                'status': 'error',
+                                'error': str(e)
+                            }
+                        }
+                    })}\n\n"
+
+                    yield f"data: {json.dumps({
+                        'type': 'error',
+                        'error': str(e)
+                    })}\n\n"
 
                 return
 

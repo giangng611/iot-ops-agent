@@ -8,7 +8,7 @@ from flask_socketio import SocketIO
 import time
 import threading
 from flask import session, redirect, url_for
-from prompts import CHAT_TITLE_PROMPT
+from prompts import CHAT_TITLE_PROMPT, DIAGNOSIS_OUTPUT_FORMAT
 from simulator import DEVICES, generate_telemetry
 from datetime import datetime
 import time
@@ -21,6 +21,7 @@ from database import (
     init_db,
     get_all_latest_devices,
     get_device_telemetry_history,
+    get_latest_status,
     create_chat,
     get_chats,
     add_message,
@@ -39,6 +40,7 @@ from database import (
     get_user_by_username,
     get_user_usage_stats
 )
+from tools import check_system_overview, check_system_alarms
 from benchmark_logger import log_benchmark_result
 
 load_dotenv()
@@ -63,6 +65,95 @@ if len(get_all_latest_devices()) == 0:
     for device_id in DEVICES:
         generate_telemetry(device_id)
 
+def extract_device_id_from_text(text):
+    known_devices = [
+        device["device_id"]
+        for device in get_all_latest_devices()
+    ]
+
+    normalized_text = text.replace(",", " ").replace(".", " ")
+
+    for token in normalized_text.split():
+        cleaned_token = token.strip()
+
+        if cleaned_token in known_devices:
+            return cleaned_token
+
+    return None
+
+def build_n8n_payload(user_input):
+    target_device = extract_device_id_from_text(user_input)
+
+    operational_context = {
+        "latest_devices": get_all_latest_devices(),
+        "system_overview": check_system_overview(),
+        "system_alarms": check_system_alarms(),
+        "target_device": target_device,
+        "target_device_status": None,
+        "target_device_history": []
+    }
+
+    if target_device:
+        operational_context["target_device_status"] = get_latest_status(
+            target_device
+        )
+        operational_context["target_device_history"] = (
+            get_device_telemetry_history(target_device)
+        )
+
+    system_prompt = (
+        "You are an IoT operations assistant. Use only the telemetry "
+        "and operational context provided in this payload. Do not invent "
+        "device IDs, telemetry values, alarms, or logs. Heartbeat delay "
+        "values are measured in seconds."
+    )
+
+    llm_prompt = f"""
+{system_prompt}
+
+User request:
+{user_input}
+
+Required final answer format:
+{DIAGNOSIS_OUTPUT_FORMAT}
+
+Operational context JSON:
+{json.dumps(operational_context, indent=2)}
+
+Return a valid JSON object only:
+{{
+  "response": "final answer using the required format",
+  "steps": [
+    {{
+      "thought": "what information you inspected",
+      "action": "which n8n node or context field you used",
+      "output": "short evidence from the operational context"
+    }}
+  ]
+}}
+""".strip()
+
+    return {
+        "message": user_input,
+        "prompt": user_input,
+        "source": "iot-ops-agent-ui",
+        "runtime": "n8n",
+        "system_prompt": system_prompt,
+        "n8n_llm_prompt": llm_prompt,
+        "diagnosis_output_format": DIAGNOSIS_OUTPUT_FORMAT,
+        "operational_context": operational_context,
+        "response_contract": {
+            "response": "Final answer formatted exactly with DIAGNOSIS_OUTPUT_FORMAT.",
+            "steps": [
+                {
+                    "thought": "Short operational reasoning step.",
+                    "action": "Workflow node, tool, or data source used.",
+                    "output": "Useful evidence or result from that step."
+                }
+            ]
+        }
+    }
+
 def call_n8n_agent(user_input):
     webhook_url = (
         os.getenv("N8N_WEBHOOK_URL")
@@ -77,11 +168,7 @@ def call_n8n_agent(user_input):
 
     response = requests.post(
         webhook_url,
-        json={
-            "message": user_input,
-            "prompt": user_input,
-            "source": "iot-ops-agent-ui"
-        },
+        json=build_n8n_payload(user_input),
         timeout=90
     )
     response.raise_for_status()
@@ -94,7 +181,21 @@ def call_n8n_agent(user_input):
             "steps": []
         }
 
-    data = response.json()
+    response_body = response.text.strip()
+
+    if not response_body:
+        raise RuntimeError(
+            "n8n returned an empty response body. Check that the Webhook "
+            "node uses 'Respond to Webhook' and the Respond node returns JSON."
+        )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            "n8n returned invalid JSON. Raw response: "
+            f"{response_body[:500]}"
+        ) from exc
 
     if isinstance(data, list) and data:
         data = data[0]

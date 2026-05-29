@@ -3,6 +3,7 @@ import json
 from tools import TOOLS
 from prompts import IOA_V2_AGENT_PROMPT
 from database import get_all_latest_devices
+from prompts import DIAGNOSIS_OUTPUT_FORMAT
 
 
 SYSTEM_LEVEL_TOOLS = [
@@ -315,6 +316,9 @@ class IOAV2Agent:
     If enough information is available, respond in this exact format:
     FINAL ANSWER: your final diagnosis
     
+    The final diagnosis must follow the shared Operational Diagnosis format:
+    Summary, Evidence, Likely Cause, Suggested Next Action.
+    
     Maximum reasoning guideline:
     - Fleet-level diagnosis usually requires only 1-2 system-level tools.
     - Avoid device-specific tools during fleet-wide investigations.
@@ -372,18 +376,16 @@ class IOAV2Agent:
     def generate_final_answer(self, user_input, observations):
         prompt = f"""
     You are an IoT operations AI agent.
-    
+
+    {DIAGNOSIS_OUTPUT_FORMAT}
+
     User request:
     {user_input}
-    
+
     Collected observations:
     {json.dumps(observations, indent=2)}
-    
-    Based only on the observations, provide:
-    1. Summary
-    2. Evidence
-    3. Likely cause
-    4. Suggested next action
+
+    Base your answer only on the collected observations.
     """
 
         response = self.client.chat.completions.create(

@@ -1,6 +1,7 @@
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
+from prompts import DIAGNOSIS_OUTPUT_FORMAT
 
 from database import (
     get_all_latest_devices,
@@ -48,17 +49,13 @@ class LangChainAgent:
                 get_device_status,
                 get_device_history
             ],
-            system_prompt="""
+            system_prompt=f"""
 You are an IoT operations assistant.
 
-Use the available tools to inspect device telemetry, fleet health,
-device history, and operational alerts.
+{DIAGNOSIS_OUTPUT_FORMAT}
 
-Give concise operational diagnoses with:
-- affected devices
-- likely cause
-- severity
-- recommended next actions
+Use the available tools to inspect fleet telemetry, device status,
+and device telemetry history before producing the final answer.
 """
         )
 

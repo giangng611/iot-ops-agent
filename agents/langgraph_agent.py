@@ -2,6 +2,7 @@ from typing import TypedDict, List, Dict, Any
 
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
+from prompts import DIAGNOSIS_OUTPUT_FORMAT
 
 from database import (
     get_all_latest_devices,
@@ -92,30 +93,27 @@ class LangGraphAgent:
 
     def generate_answer_node(self, state):
         prompt = f"""
-You are an IoT operations assistant.
+    You are an IoT operations assistant.
 
-User request:
-{state["user_input"]}
+    {DIAGNOSIS_OUTPUT_FORMAT}
 
-Telemetry/tool result:
-{state["tool_output"]}
+    User request:
+    {state["user_input"]}
 
-Write a concise operational diagnosis with:
-1. Summary
-2. Evidence
-3. Likely cause
-4. Suggested next action
-"""
+    Telemetry/tool result:
+    {state["tool_output"]}
+    """
 
         response = self.model.invoke(prompt)
 
         steps = state.get("steps", [])
         steps.append({
             "iteration": 3,
-            "thought": "LangGraph generated the final operational diagnosis from the tool result.",
+            "thought": "LangGraph generated the final operational diagnosis using the shared diagnosis output format.",
             "action": "generate_answer",
             "output": {
                 "framework": "LangGraph",
+                "output_format": "Operational Diagnosis: Summary, Evidence, Likely Cause, Suggested Next Action",
                 "graph_nodes": [
                     "select_tool",
                     "run_tool",

@@ -74,3 +74,24 @@ Title: Check heartbeat delays
 User: summarize current fleet risk
 Title: Summarize fleet risk
 """
+
+DIAGNOSIS_OUTPUT_FORMAT = """
+Always format the final answer exactly as:
+
+### Operational Diagnosis
+
+#### 1. Summary
+Provide a concise operational summary.
+
+#### 2. Evidence
+List affected devices, telemetry values, alarms, and observations.
+
+#### 3. Likely Cause
+Explain the most likely root cause.
+
+#### 4. Suggested Next Action
+Provide actionable remediation recommendations.
+
+Do not skip sections.
+Do not rename section titles.
+"""

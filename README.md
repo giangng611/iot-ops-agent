@@ -36,6 +36,7 @@ The project currently supports multiple orchestration runtimes:
 * **IOA v2 · Custom Python** — multi-step ReAct-style reasoning runtime
 * **IOA v2 · LangChain** — framework-managed orchestration runtime
 * **IOA v2 · LangGraph** — graph-based orchestration runtime
+* **IOA v2 · n8n** — local webhook-driven workflow runtime
 
 ---
 
@@ -96,6 +97,7 @@ Realtime Dashboard UI
 * custom ReAct-style reasoning loops
 * LangChain orchestration runtime
 * LangGraph orchestration runtime
+* n8n local workflow runtime
 * streamed reasoning traces
 * tool-calling agents
 * context-aware diagnostics
@@ -119,6 +121,8 @@ Current benchmark dimensions include:
 * development speed
 
 Benchmark results are automatically logged into CSV execution records for evaluation and aggregation.
+
+Phase 1 currently compares Custom Python, LangChain, LangGraph, and n8n across five shared operational prompts.
 
 See the [Benchmarking Guide](docs/BENCHMARKING.md) for details.
 
@@ -202,6 +206,7 @@ Environment variables should be configured through the deployment provider inste
 * [Architecture](docs/ARCHITECTURE.md)
 * [Features](docs/FEATURES.md)
 * [Benchmarking](docs/BENCHMARKING.md)
+* [n8n UI Integration](docs/N8N_UI_INTEGRATION.md)
 * [Roadmap](docs/ROADMAP.md)
 
 ---

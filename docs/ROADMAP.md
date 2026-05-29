@@ -61,6 +61,24 @@ Future AI improvements may include:
 * automated remediation recommendations
 * contextual incident summarization
 
+### Phase 1 Orchestration Evaluation
+
+Completed local runtime evaluations:
+
+* IOA v2 · Custom Python
+* IOA v2 · LangChain
+* IOA v2 · LangGraph
+* IOA v2 · n8n
+
+The current Phase 1 benchmark compares these runtimes across five shared operational prompts, including fleet overview, unhealthy-device detection, root-cause diagnosis, gateway heartbeat investigation, and active sensor alert correlation.
+
+Next framework candidates:
+
+* Dify
+* Flowise
+* CrewAI
+* local model runtime integration
+
 Potential future agent capabilities:
 
 ```text id="9e2y8z"

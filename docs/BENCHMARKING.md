@@ -36,11 +36,11 @@ This allows fair comparison across multiple orchestration approaches:
 * IOA v2 · Custom Python
 * IOA v2 · LangChain
 * IOA v2 · LangGraph
+* IOA v2 · n8n
 
 Future evaluation phases may include:
 
 * Dify
-* n8n
 * CrewAI
 * AutoGen
 * local model runtimes
@@ -85,7 +85,7 @@ Each row represents one runtime, one prompt, and one execution result.
 
 # Benchmark Prompt Set
 
-Phase 1 uses three shared operational prompts.
+Phase 1 uses five shared operational prompts.
 
 ## 1. Fleet Overview
 
@@ -128,6 +128,36 @@ Evaluates:
 * operational diagnosis
 * remediation recommendations
 * multi-step analysis capability
+
+---
+
+## 4. Gateway Heartbeat Investigation
+
+```text
+Investigate all gateway devices with heartbeat delays above 300 ms, identify recurring operational anomalies, and summarize the highest-risk infrastructure issues.
+```
+
+Evaluates:
+
+* gateway-focused filtering
+* heartbeat-delay interpretation
+* recurring anomaly detection
+* infrastructure risk prioritization
+
+---
+
+## 5. Sensor Alert Correlation
+
+```text
+Review all active sensor alerts and identify potential correlated failure patterns across the fleet.
+```
+
+Evaluates:
+
+* active alert review
+* cross-device correlation
+* failure-pattern recognition
+* fleet-level operational reasoning
 
 ---
 
@@ -334,15 +364,73 @@ runtime structure, and reasoning transparency.
 
 ---
 
+## IOA v2 · n8n
+
+Characteristics:
+
+* local external workflow runtime
+* webhook-based integration from the IoT Ops Agent UI
+* OpenAI Chat Model execution inside the n8n workflow
+* JSON response contract back to Flask
+* UI-visible Thought → Action → Observation trace
+* n8n execution history for workflow-level debugging
+
+Strengths:
+
+* fastest visual workflow integration path
+* strong workflow observability through n8n executions
+* easy to extend toward Telegram, Slack, HTTP APIs, MQTT, and automation workflows
+* separates orchestration workflow design from Flask application code
+
+Tradeoffs:
+
+* telemetry/tool execution is indirect because Flask packages operational context before sending it to n8n
+* response formatting depends on the n8n workflow contract
+* less low-level reasoning-loop control than Custom Python or LangGraph
+
+Best suited for workflow automation, external integrations, and low-code orchestration around the IoT Ops Agent backend.
+
+---
+
 # Phase 1 Benchmark Results
 
-The Phase 1 benchmark tested three shared prompts across three orchestration runtimes.
+The Phase 1 benchmark tested five shared prompts across four orchestration runtimes.
 
 | Runtime                | Avg Accuracy | Avg Tool Usage | Avg Reasoning Clarity | Avg Observability | Avg Latency | Dev Complexity | Integration Speed | Ecosystem | Maintainability |
 | ---------------------- | -----------: | -------------: | --------------------: | ----------------: | ----------: | -------------: | ----------------: | --------: | --------------: |
-| IOA v2 · Custom Python |          5.0 |            5.0 |                   5.0 |               5.0 |      10.04s |            1.0 |               2.0 |       2.0 |             3.0 |
-| IOA v2 · LangChain     |          3.0 |            3.0 |                   4.0 |               2.0 |      11.28s |            5.0 |               5.0 |       5.0 |             4.0 |
-| IOA v2 · LangGraph     |          5.0 |            5.0 |                   5.0 |               4.0 |       6.66s |            4.0 |               4.0 |       4.0 |             4.0 |
+| IOA v2 · Custom Python |          5.0 |            5.0 |                   5.0 |               5.0 |      16.50s |            1.0 |               2.0 |       2.0 |             3.0 |
+| IOA v2 · LangChain     |          3.0 |            3.0 |                   4.0 |               2.0 |      12.85s |            5.0 |               5.0 |       5.0 |             4.0 |
+| IOA v2 · LangGraph     |          5.0 |            5.0 |                   5.0 |               4.0 |       9.50s |            4.0 |               4.0 |       4.0 |             4.0 |
+| IOA v2 · n8n           |          4.2 |            4.0 |                   4.2 |               4.0 |       8.53s |            4.0 |               5.0 |       4.0 |             4.0 |
+
+---
+
+# Phase 1 Detailed Benchmark Rows
+
+Rows are grouped by prompt. Runtime order is Custom Python, LangChain, LangGraph, then n8n.
+
+| Prompt | Runtime | Latency | Accuracy | Tool Usage | Reasoning | Observability | Notes |
+| ------ | ------- | ------: | -------: | ---------: | --------: | ------------: | ----- |
+| `/diagnose system issue` | IOA v2 · Custom Python | 10.73s | 5 | 5 | 5 | 5 | Correctly identified warning-level fleet issue, cited affected devices, alarm types, metrics, likely causes, and concrete next actions. |
+| `/diagnose system issue` | IOA v2 · LangChain | 8.31s | 3 | 3 | 4 | 2 | Faster response and clear structure, but affected device list appears inconsistent with the previous telemetry snapshot and reasoning/tool trace visibility is limited. |
+| `/diagnose system issue` | IOA v2 · LangGraph | 8.24s | 5 | 5 | 5 | 4 | Strong root-cause analysis focused on overloaded gateways, resource exhaustion, and operational remediation. |
+| `/diagnose system issue` | IOA v2 · n8n | 10.76s | 5 | 4 | 5 | 4 | Used latest devices, system alarms, and system overview; returned four Thought-Action-Observation iterations and the required diagnosis format. |
+| `/overview system health` | IOA v2 · Custom Python | 9.97s | 5 | 5 | 5 | 5 | Accurate fleet summary with healthy/warning/critical counts, affected devices, alarm evidence, likely causes, and next actions. |
+| `/overview system health` | IOA v2 · LangChain | 12.45s | 3 | 3 | 4 | 2 | Clear structure, but device status/details appear inconsistent with the previous telemetry snapshot. |
+| `/overview system health` | IOA v2 · LangGraph | 5.79s | 5 | 5 | 5 | 4 | Accurate device grouping, detailed evidence, likely causes, and remediation steps. |
+| `/overview system health` | IOA v2 · n8n | 10.14s | 4 | 4 | 4 | 4 | Generated a system health overview from backend operational context with fleet counts, unhealthy devices, active alarms, likely causes, and next actions. |
+| `/check all unhealthy devices` | IOA v2 · Custom Python | 9.41s | 5 | 5 | 5 | 5 | Correctly identified unhealthy devices, separated critical and warning states, cited telemetry evidence, and provided remediation steps. |
+| `/check all unhealthy devices` | IOA v2 · LangChain | 13.09s | 3 | 3 | 4 | 2 | Clear operational format, but device statuses and telemetry details appear inconsistent with the previous custom runtime snapshot. |
+| `/check all unhealthy devices` | IOA v2 · LangGraph | 5.96s | 5 | 5 | 5 | 4 | Accurately identified unhealthy devices, separated critical and warning conditions, cited telemetry metrics, and provided operational guidance. |
+| `/check all unhealthy devices` | IOA v2 · n8n | 7.83s | 4 | 4 | 4 | 4 | Identified unhealthy devices from operational context and returned structured diagnosis with evidence, likely cause, and remediation actions. |
+| Gateway heartbeat investigation | IOA v2 · Custom Python | 35.12s | 5 | 5 | 5 | 5 | Most explicit tool-driven reasoning and observability for complex gateway investigation, but highest latency and implementation complexity. |
+| Gateway heartbeat investigation | IOA v2 · LangChain | 15.15s | 3 | 3 | 4 | 2 | Faster response with usable structure, but operational evidence is less auditable than Custom Python or LangGraph. |
+| Gateway heartbeat investigation | IOA v2 · LangGraph | 14.04s | 5 | 5 | 5 | 4 | Strong structured orchestration for multi-step gateway analysis, with better traceability than LangChain and lower latency than Custom Python. |
+| Gateway heartbeat investigation | IOA v2 · n8n | 7.39s | 4 | 4 | 4 | 4 | Identified gateway heartbeat-delay issues and correlated them with CPU, memory, and alarm context. |
+| Active sensor alert correlation | IOA v2 · Custom Python | 17.25s | 5 | 5 | 5 | 5 | Strongest for detailed alert correlation because it exposes the full reasoning/tool loop and cites operational evidence step by step. |
+| Active sensor alert correlation | IOA v2 · LangChain | 15.25s | 3 | 3 | 4 | 2 | Usable structured response, but traceability is limited and correlation evidence is less transparent. |
+| Active sensor alert correlation | IOA v2 · LangGraph | 13.49s | 5 | 5 | 5 | 4 | Effective for correlated alert analysis because graph node execution improves reasoning structure, auditability, and workflow control. |
+| Active sensor alert correlation | IOA v2 · n8n | 6.55s | 4 | 4 | 4 | 4 | Reviewed active alarm context, identified correlated CPU, memory, and heartbeat-delay patterns, and returned structured recommendations. |
 
 ---
 
@@ -386,6 +474,23 @@ It is the best fit when:
 * framework support is useful
 * reasoning traceability still matters
 * graph-based workflow design fits the application
+
+---
+
+## n8n
+
+n8n was successfully installed and evaluated locally as an external workflow runtime.
+
+It receives the same operational prompts through the IoT Ops Agent UI, calls an OpenAI Chat Model inside the n8n workflow, formats the result with a Code node, and returns JSON through `Respond to Webhook`.
+
+It is the best fit when:
+
+* low-code workflow orchestration is important
+* external integrations such as Telegram, Slack, HTTP APIs, MQTT, or notification channels are needed
+* visual execution logs are useful for debugging
+* fast integration speed matters more than low-level reasoning-loop control
+
+In the Phase 1 benchmark, n8n had the fastest average latency among the evaluated runtimes and the highest integration speed score. Its main limitation is that telemetry and tool execution are indirect: the Flask backend packages the operational context before sending it to the workflow.
 
 ---
 

@@ -12,6 +12,9 @@ Features include:
 
 - IOA v1 single-step diagnosis
 - IOA v2 multi-step reasoning agent
+- LangChain runtime mode
+- LangGraph runtime mode
+- n8n local workflow runtime mode
 - streaming responses
 - live typing effects
 - persistent reasoning traces
@@ -210,6 +213,33 @@ The simulation powers:
 - telemetry charts
 - operational reasoning workflows
 - realtime frontend updates
+
+---
+
+## Runtime Benchmarking
+
+The project includes a benchmark workflow for comparing orchestration runtimes against the same IoT telemetry environment and prompt set.
+
+Currently evaluated runtimes include:
+
+- IOA v2 · Custom Python
+- IOA v2 · LangChain
+- IOA v2 · LangGraph
+- IOA v2 · n8n
+
+Benchmark dimensions include:
+
+- operational accuracy
+- telemetry/tool grounding
+- reasoning clarity
+- runtime observability
+- development complexity
+- integration speed
+- ecosystem maturity
+- maintainability
+- latency
+
+Phase 1 benchmark results are stored in CSV format and summarized in the benchmarking documentation.
 
 ---
 

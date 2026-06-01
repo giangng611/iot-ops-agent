@@ -88,7 +88,7 @@
 
                 <div id="homeHero" class="home-hero">
                     <h1>IoT Ops Agent</h1>
-                    <p>Ask about fleet health, critical devices, alarms, or device diagnosis.</p>
+                    <p id="homeHeroPrompt">Ask about fleet health, critical devices, alarms, or device diagnosis.</p>
                 </div>
 
                 <div id="chatMessages" class="chat-messages"></div>
@@ -102,27 +102,38 @@
 
                     <div id="slashPalette" class="slash-palette hidden"></div>
                     <div class="input-row chat-input-row">
-                        <select id="modeSelect" class="mode-inline" onchange="setMode(this.value)">
-                            <option value="ioa_v1_custom">
-                                IOA v1 · Custom Python
-                            </option>
+                        <div id="modeSelect" class="mode-picker" data-value="ioa_v2_custom">
+                            <button
+                                class="mode-picker-button"
+                                type="button"
+                                onclick="toggleModePicker()"
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                            >
+                                <span id="modePickerLabel">IOA v2 · Custom Python</span>
+                                <svg viewBox="0 0 20 20">
+                                    <path d="M5.5 7.5 10 12l4.5-4.5"></path>
+                                </svg>
+                            </button>
 
-                            <option value="ioa_v2_custom" selected>
-                                IOA v2 · Custom Python
-                            </option>
-
-                            <option value="ioa_v2_langchain">
-                                IOA v2 · LangChain
-                            </option>
-
-                            <option value="ioa_v2_langgraph">
-                                IOA v2 · LangGraph
-                            </option>
-
-                            <option value="ioa_v2_n8n">
-                                IOA v2 · n8n
-                            </option>
-                        </select>
+                            <div id="modePickerMenu" class="mode-picker-menu hidden" role="listbox">
+                                <button type="button" data-mode="ioa_v1_custom" onclick="selectModeOption(this)">
+                                    IOA v1 · Custom Python
+                                </button>
+                                <button type="button" data-mode="ioa_v2_custom" onclick="selectModeOption(this)" class="selected">
+                                    IOA v2 · Custom Python
+                                </button>
+                                <button type="button" data-mode="ioa_v2_langchain" onclick="selectModeOption(this)">
+                                    IOA v2 · LangChain
+                                </button>
+                                <button type="button" data-mode="ioa_v2_langgraph" onclick="selectModeOption(this)">
+                                    IOA v2 · LangGraph
+                                </button>
+                                <button type="button" data-mode="ioa_v2_n8n" onclick="selectModeOption(this)">
+                                    IOA v2 · n8n
+                                </button>
+                            </div>
+                        </div>
 
                         <input
                             id="messageInput"

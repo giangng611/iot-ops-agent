@@ -15,8 +15,34 @@
             <h1>IoT Ops Agent</h1>
             <p>Sign in to your operations workspace</p>
 
-            <input id="loginUsername" type="text" placeholder="Username">
-            <input id="loginPassword" type="password" placeholder="Password">
+            <input
+                id="loginUsername"
+                type="text"
+                placeholder="Username"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
+            >
+
+            <div class="password-field">
+                <input
+                    id="loginPassword"
+                    type="password"
+                    placeholder="Password"
+                    autocomplete="current-password"
+                >
+                <button
+                    class="password-toggle"
+                    type="button"
+                    aria-label="Show password"
+                    onclick="togglePasswordVisibility('loginPassword', this)"
+                >
+                    <svg viewBox="0 0 24 24">
+                        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                </button>
+            </div>
 
             <button onclick="login()">Login</button>
 
@@ -30,9 +56,54 @@
             <h1>Create account</h1>
             <p>Enter the access code to create an account</p>
 
-            <input id="signupUsername" type="text" placeholder="Username">
-            <input id="signupPassword" type="password" placeholder="Password">
-            <input id="accessCode" type="password" placeholder="Access code">
+            <input
+                id="signupUsername"
+                type="text"
+                placeholder="Username"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
+            >
+
+            <div class="password-field">
+                <input
+                    id="signupPassword"
+                    type="password"
+                    placeholder="Password"
+                    autocomplete="new-password"
+                >
+                <button
+                    class="password-toggle"
+                    type="button"
+                    aria-label="Show password"
+                    onclick="togglePasswordVisibility('signupPassword', this)"
+                >
+                    <svg viewBox="0 0 24 24">
+                        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="password-field">
+                <input
+                    id="accessCode"
+                    type="password"
+                    placeholder="Access code"
+                    autocomplete="new-password"
+                >
+                <button
+                    class="password-toggle"
+                    type="button"
+                    aria-label="Show access code"
+                    onclick="togglePasswordVisibility('accessCode', this)"
+                >
+                    <svg viewBox="0 0 24 24">
+                        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                </button>
+            </div>
 
             <button onclick="register()">Create account</button>
 

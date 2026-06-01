@@ -43,6 +43,74 @@ body {
     background: #212121;
     color: #ececec;
     font-size: 15px;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+.auth-card input:hover,
+.auth-card input:focus {
+    outline: none;
+    border-color: #3f3f46;
+    background: #212121;
+    color: #ececec;
+}
+
+.auth-card input:-webkit-autofill,
+.auth-card input:-webkit-autofill:hover,
+.auth-card input:-webkit-autofill:focus,
+.auth-card input:-webkit-autofill:active {
+    -webkit-text-fill-color: #ececec;
+    color: #ececec;
+    caret-color: #ececec;
+    border-color: #3f3f46;
+    box-shadow: 0 0 0 1000px #212121 inset;
+    transition: background-color 9999s ease-in-out 0s;
+}
+
+.auth-card input:-webkit-autofill::first-line {
+    color: #ececec;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 15px;
+}
+
+.password-field {
+    position: relative;
+}
+
+.password-field input {
+    padding-right: 52px;
+}
+
+.auth-card .password-toggle {
+    position: absolute;
+    right: 8px;
+    top: 14px;
+
+    width: 38px;
+    height: 52px;
+    margin-top: 0;
+    padding: 0;
+
+    display: grid;
+    place-items: center;
+
+    background: transparent;
+    color: #a1a1aa;
+    border-radius: 10px;
+}
+
+.auth-card .password-toggle:hover {
+    background: #2f2f2f;
+    color: #ffffff;
+}
+
+.password-toggle svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 .auth-card button {

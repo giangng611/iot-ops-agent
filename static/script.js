@@ -55,9 +55,102 @@ const prompts = [
     "/prioritize devices needing attention"
 ];
 
+const homeHeroPrompts = [
+    "Ask about fleet health, critical devices, alarms, or device diagnosis.",
+    "Try a fleet overview, heartbeat check, or root-cause diagnosis.",
+    "Review alarms, risky gateways, and devices that need attention.",
+    "Ask the agent to summarize current IoT operations risk."
+];
+
 function setMode(mode) {
     currentMode = mode;
 }
+
+function toggleModePicker() {
+    const picker = document.getElementById("modeSelect");
+    const menu = document.getElementById("modePickerMenu");
+    const button = picker?.querySelector(".mode-picker-button");
+
+    if (!picker || !menu || !button) {
+        return;
+    }
+
+    const isOpen = !menu.classList.contains("hidden");
+
+    menu.classList.toggle("hidden", isOpen);
+    picker.classList.toggle("open", !isOpen);
+    button.setAttribute("aria-expanded", String(!isOpen));
+}
+
+function closeModePicker() {
+    const picker = document.getElementById("modeSelect");
+    const menu = document.getElementById("modePickerMenu");
+    const button = picker?.querySelector(".mode-picker-button");
+
+    if (!picker || !menu || !button) {
+        return;
+    }
+
+    menu.classList.add("hidden");
+    picker.classList.remove("open");
+    button.setAttribute("aria-expanded", "false");
+}
+
+function selectModeOption(option) {
+    const picker = document.getElementById("modeSelect");
+    const label = document.getElementById("modePickerLabel");
+    const mode = option.dataset.mode;
+
+    picker.dataset.value = mode;
+    label.textContent = option.textContent.trim();
+
+    document
+        .querySelectorAll(".mode-picker-menu button")
+        .forEach(button => button.classList.remove("selected"));
+
+    option.classList.add("selected");
+    setMode(mode);
+    closeModePicker();
+}
+
+function togglePasswordVisibility(inputId, button) {
+    const input = document.getElementById(inputId);
+    const isHidden = input.type === "password";
+
+    input.type = isHidden ? "text" : "password";
+    button.setAttribute(
+        "aria-label",
+        isHidden ? "Hide password" : "Show password"
+    );
+}
+
+function rotateHomeHeroPrompt() {
+    const prompt = document.getElementById("homeHeroPrompt");
+
+    if (!prompt) {
+        return;
+    }
+
+    const currentIndex = homeHeroPrompts.indexOf(prompt.textContent);
+    const nextIndex = (currentIndex + 1) % homeHeroPrompts.length;
+
+    prompt.style.opacity = "0";
+
+    setTimeout(() => {
+        prompt.textContent = homeHeroPrompts[nextIndex];
+        prompt.style.opacity = "1";
+    }, 200);
+}
+
+setInterval(rotateHomeHeroPrompt, 10000);
+
+document.addEventListener("click", event => {
+    const picker = document.getElementById("modeSelect");
+
+    if (picker && !picker.contains(event.target)) {
+        closeModePicker();
+    }
+});
 
 function showTab(tabName, buttonElement) {
     if (isAgentRunning && tabName !== "home") {
@@ -1753,8 +1846,35 @@ function openProfileDrawer(type) {
                     </button>
 
                     <div id="passwordPanel" class="profile-form hidden">
-                        <input id="currentPassword" type="password" placeholder="Current password">
-                        <input id="newPassword" type="password" placeholder="New password">
+                        <div class="password-field">
+                            <input id="currentPassword" type="password" placeholder="Current password">
+                            <button
+                                class="password-toggle"
+                                type="button"
+                                aria-label="Show password"
+                                onclick="togglePasswordVisibility('currentPassword', this)"
+                            >
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div class="password-field">
+                            <input id="newPassword" type="password" placeholder="New password">
+                            <button
+                                class="password-toggle"
+                                type="button"
+                                aria-label="Show password"
+                                onclick="togglePasswordVisibility('newPassword', this)"
+                            >
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                            </button>
+                        </div>
 
                         <div class="inline-form-actions">
 
@@ -1856,7 +1976,8 @@ function openProfileDrawer(type) {
         subtitle.textContent = "Runtime and workspace status for this session.";
 
         const selectedMode =
-        document.getElementById("modeSelect")?.value || "ioa_v2_custom";
+        document.getElementById("modeSelect")?.dataset.value ||
+        "ioa_v2_custom";
 
         let modeLabel = "IOA v2 · Custom Python ReAct Agent";
 

@@ -19,6 +19,17 @@ function showForgotPassword() {
         "Account access is managed by the system administrator. Please contact the project owner.";
 }
 
+function togglePasswordVisibility(inputId, button) {
+    const input = document.getElementById(inputId);
+    const isHidden = input.type === "password";
+
+    input.type = isHidden ? "text" : "password";
+    button.setAttribute(
+        "aria-label",
+        isHidden ? "Hide password" : "Show password"
+    );
+}
+
 async function login() {
     const username = document.getElementById("loginUsername").value.trim();
     const password = document.getElementById("loginPassword").value.trim();

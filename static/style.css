@@ -307,6 +307,8 @@ body {
 .home-hero p {
     color: #a1a1aa;
     font-size: 20px;
+    min-height: 28px;
+    transition: opacity 0.2s ease;
 }
 
 .chat-messages {
@@ -316,6 +318,7 @@ body {
 }
 
 .chat-input-wrapper {
+    position: relative;
     flex-shrink: 0;
     padding: 16px 60px 10px 60px;
     background: #0f0f0f;
@@ -323,7 +326,7 @@ body {
 
 .input-row {
     display: grid;
-    grid-template-columns: 310px 1fr 110px;
+    grid-template-columns: 240px 1fr 110px;
     gap: 12px;
     margin-bottom: 12px;
 }
@@ -333,19 +336,78 @@ body {
     border-top: none;
 }
 
-.mode-inline {
-    width: 310px;
-    min-width: 310px;
+.mode-picker {
+    position: relative;
+    width: 240px;
+    min-width: 240px;
     height: 64px;
     flex-shrink: 0;
+}
+
+.mode-picker-button {
+    width: 100%;
+    height: 64px;
     padding: 0 48px 0 16px;
-    appearance: none;
-    -webkit-appearance: none;
-    -moz-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='white' viewBox='0 0 20 20'%3E%3Cpath d='M5.5 7.5L10 12l4.5-4.5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 14px center;
-    background-size: 18px;
+
+    display: flex;
+    align-items: center;
+
+    background: #212121;
+    color: #ececec;
+    border: 1px solid #3f3f46;
+    border-radius: 12px;
+    font-size: 15px;
+    text-align: left;
+}
+
+.mode-picker-button:hover {
+    background: #262626;
+}
+
+.mode-picker-button svg {
+    position: absolute;
+    right: 14px;
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.mode-picker-menu {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 8px);
+    z-index: 40;
+
+    width: 290px;
+    padding: 6px;
+
+    background: #171717;
+    border: 1px solid #333333;
+    border-radius: 14px;
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+}
+
+.mode-picker-menu button {
+    width: 100%;
+    min-height: 42px;
+    padding: 10px 12px;
+
+    display: block;
+
+    background: transparent;
+    color: #ececec;
+    border-radius: 9px;
+    text-align: left;
+    font-weight: 700;
+}
+
+.mode-picker-menu button:hover,
+.mode-picker-menu button.selected {
+    background: #262626;
 }
 
 input,
@@ -1178,9 +1240,57 @@ th {
     height: 52px;
 }
 
+.profile-form .password-field {
+    position: relative;
+    height: 52px;
+}
+
+.profile-form .password-field input {
+    padding-right: 50px;
+}
+
+.profile-form .password-toggle {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+
+    width: 38px;
+    height: 52px;
+    padding: 0;
+
+    display: grid;
+    place-items: center;
+
+    background: transparent;
+    color: #a1a1aa;
+}
+
+.profile-form .password-toggle:hover {
+    background: #2f2f2f;
+    color: #ffffff;
+}
+
+.password-toggle svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
 .profile-form button {
     width: fit-content;
     padding: 14px 18px;
+}
+
+.profile-form .password-field .password-toggle {
+    width: 38px;
+    height: 52px;
+    padding: 0;
+    border-radius: 10px;
 }
 
 #profileMessage {
@@ -1303,7 +1413,7 @@ th {
     gap: 14px;
 }
 
-.drawer-info-list div {
+.drawer-info-list > div {
     background: #212121;
     border: 1px solid #333333;
     border-radius: 14px;

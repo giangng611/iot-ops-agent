@@ -8,7 +8,7 @@ This guide explains how to deploy IoT Ops Agent using Render.
 
 Live Demo:
 
-```text id="k2y6q7"
+```text
 https://iot-ops-agent.onrender.com
 ```
 
@@ -26,7 +26,7 @@ Current deployment stack:
 
 Create a GitHub repository and push the project:
 
-```bash id="4e8vra"
+```bash
 git init
 git add .
 git commit -m "Initial commit"
@@ -41,13 +41,13 @@ git push -u origin main
 
 Go to:
 
-```text id="fz2b2d"
+```text
 https://render.com
 ```
 
 Create a new:
 
-```text id="0r6uzg"
+```text
 Web Service
 ```
 
@@ -59,19 +59,19 @@ Connect the GitHub repository.
 
 ### Build Command
 
-```bash id="r7m2vl"
+```bash
 pip install -r requirements.txt
 ```
 
 ### Start Command
 
-```bash id="m8vpx3"
+```bash
 python3 app.py
 ```
 
 ### Runtime
 
-```text id="p88l4u"
+```text
 Python 3
 ```
 
@@ -79,12 +79,20 @@ Python 3
 
 ## 4. Configure Environment Variables
 
-Inside the Render dashboard, add:
+Inside the Render dashboard, add the required variables:
 
-```env id="r2hivk"
+```env
 OPENAI_API_KEY=your_openai_api_key
 FLASK_SECRET_KEY=your_secret_key
 ACCESS_CODE=your_access_code
+```
+
+Add these only if the deployed app should call a reachable Dify instance:
+
+```env
+DIFY_API_URL=http://localhost/v1/chat-messages
+DIFY_API_KEY=your_dify_app_api_key
+DIFY_USER=iot-ops-agent-ui
 ```
 
 These variables are required for:
@@ -92,8 +100,11 @@ These variables are required for:
 * OpenAI API access
 * Flask session security
 * protected account registration
+Optional Dify variables are required only for `IOA v2 · Dify`.
 
 Do not commit secrets into GitHub.
+
+For hosted production deployments, `DIFY_API_URL` should point to a reachable Dify instance. A local URL such as `http://localhost/v1/chat-messages` only works when Dify runs on the same host as Flask.
 
 ---
 
@@ -101,7 +112,7 @@ Do not commit secrets into GitHub.
 
 Click:
 
-```text id="7e6w2y"
+```text
 Deploy Web Service
 ```
 
@@ -124,7 +135,7 @@ You can initialize the database by:
 
 Run locally before deployment:
 
-```bash id="9gg5l7"
+```bash
 python3 init_db.py
 ```
 
@@ -136,7 +147,7 @@ Then commit the generated SQLite database file.
 
 Alternatively, initialize the database automatically inside `app.py`:
 
-```python id="9dtj6t"
+```python
 init_db()
 ```
 
@@ -150,7 +161,7 @@ The simulator continuously generates realtime device telemetry.
 
 Run:
 
-```bash id="n1e2dr"
+```bash
 python3 simulator.py
 ```
 
@@ -199,7 +210,7 @@ SQLite works well for demos and lightweight deployments, but is not ideal for la
 
 Future production deployments should migrate to:
 
-```text id="vxwp6o"
+```text
 PostgreSQL
 ```
 
@@ -219,7 +230,7 @@ This behavior is expected for free-tier deployments.
 
 ## 11. Recommended Future Production Stack
 
-```text id="egwq0j"
+```text
 Flask + Gunicorn
         ↓
 PostgreSQL
@@ -239,7 +250,7 @@ Custom Domain + HTTPS
 
 Verify:
 
-```env id="u8qyrz"
+```env
 OPENAI_API_KEY=...
 ```
 
@@ -251,7 +262,7 @@ inside Render environment variables.
 
 Verify:
 
-```env id="mc0r9l"
+```env
 ACCESS_CODE=...
 ```
 

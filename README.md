@@ -37,7 +37,7 @@ The project currently supports multiple orchestration runtimes:
 * **IOA v2 · LangChain** — framework-managed orchestration runtime
 * **IOA v2 · LangGraph** — graph-based orchestration runtime
 * **IOA v2 · n8n** — local webhook-driven workflow runtime
-* **IOA v2 · Dify** — app API-driven workflow/agent runtime
+* **IOA v2 · Dify** — self-hosted app API-driven chatflow runtime
 
 ---
 
@@ -99,6 +99,7 @@ Realtime Dashboard UI
 * LangChain orchestration runtime
 * LangGraph orchestration runtime
 * n8n local workflow runtime
+* Dify self-hosted chatflow runtime
 * streamed reasoning traces
 * tool-calling agents
 * context-aware diagnostics
@@ -123,7 +124,7 @@ Current benchmark dimensions include:
 
 Benchmark results are automatically logged into CSV execution records for evaluation and aggregation.
 
-Phase 1 currently compares Custom Python, LangChain, LangGraph, and n8n across five shared operational prompts.
+The current benchmark compares Custom Python, LangChain, LangGraph, n8n, and Dify across shared operational prompts.
 
 See the [Benchmarking Guide](docs/BENCHMARKING.md) for details.
 
@@ -202,6 +203,8 @@ Environment variables should be configured through the deployment provider inste
 
 `N8N_WEBHOOK_URL` is optional and only required when testing the `IOA v2 · n8n` runtime mode in the UI.
 
+`DIFY_API_URL`, `DIFY_API_KEY`, and `DIFY_USER` are optional and only required when testing the `IOA v2 · Dify` runtime mode in the UI. For the local self-hosted Dify setup, `DIFY_API_URL` is usually `http://localhost/v1/chat-messages`.
+
 ---
 
 # Documentation
@@ -211,6 +214,7 @@ Environment variables should be configured through the deployment provider inste
 * [Features](docs/FEATURES.md)
 * [Benchmarking](docs/BENCHMARKING.md)
 * [n8n UI Integration](docs/N8N_UI_INTEGRATION.md)
+* [Dify UI Integration](docs/DIFY_UI_INTEGRATION.md)
 * [Roadmap](docs/ROADMAP.md)
 
 ---

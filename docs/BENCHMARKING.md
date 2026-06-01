@@ -37,10 +37,10 @@ This allows fair comparison across multiple orchestration approaches:
 * IOA v2 · LangChain
 * IOA v2 · LangGraph
 * IOA v2 · n8n
+* IOA v2 · Dify
 
-Future evaluation phases may include:
+Future runtime candidates may include:
 
-* Dify
 * CrewAI
 * AutoGen
 * local model runtimes
@@ -85,7 +85,7 @@ Each row represents one runtime, one prompt, and one execution result.
 
 # Benchmark Prompt Set
 
-Phase 1 uses five shared operational prompts.
+The current benchmark uses five shared operational prompts.
 
 ## 1. Fleet Overview
 
@@ -134,7 +134,7 @@ Evaluates:
 ## 4. Gateway Heartbeat Investigation
 
 ```text
-Investigate all gateway devices with heartbeat delays above 300 seconds, identify recurring operational anomalies, and summarize the highest-risk infrastructure issues.
+Investigate gateway devices with elevated heartbeat delays, identify recurring operational anomalies, and summarize the highest-risk infrastructure issues.
 ```
 
 Evaluates:
@@ -348,7 +348,7 @@ Characteristics:
 Strengths:
 
 * strong balance between framework support and observability
-* faster execution in Phase 1 benchmark runs
+* fast execution in benchmark runs
 * clearer runtime structure than standard LangChain
 * better traceability through graph nodes
 * lower implementation burden than fully custom orchestration
@@ -379,7 +379,7 @@ Strengths:
 
 * fastest visual workflow integration path
 * strong workflow observability through n8n executions
-* easy to extend toward Telegram, Slack, HTTP APIs, MQTT, and automation workflows
+* easy to extend toward Slack, HTTP APIs, MQTT, notification channels, and automation workflows
 * separates orchestration workflow design from Flask application code
 
 Tradeoffs:
@@ -392,9 +392,39 @@ Best suited for workflow automation, external integrations, and low-code orchest
 
 ---
 
-# Phase 1 Benchmark Results
+## IOA v2 · Dify
 
-The Phase 1 benchmark tested five shared prompts across four orchestration runtimes.
+Characteristics:
+
+* self-hosted Dify Chatflow runtime
+* Chat Messages API integration from the IoT Ops Agent UI
+* backend-packaged operational context passed into Dify app inputs and prompt text
+* Dify app API key configured through `.env`
+* UI-visible reasoning trace normalized back into Flask SSE events
+* local Dify execution through Docker/Colima or Docker Desktop
+
+Strengths:
+
+* strong chatbot-native workflow for operational diagnosis
+* high integration speed after Dify is running locally
+* less workflow configuration overhead than n8n for text-based chatbot diagnosis
+* good operational answer quality and structured evidence
+* reasoning traces usually contain 3-5 visible investigation steps in local testing
+
+Tradeoffs:
+
+* lower low-level tool-loop control than Custom Python or LangGraph
+* telemetry/tool execution is indirect because Flask packages context before sending it to Dify
+* requires a published Dify app and app API key
+* model/provider cost depends on the LLM configured inside Dify
+
+Best suited for chatbot-native agent testing and fast app-level experimentation with self-hosted framework infrastructure.
+
+---
+
+# Runtime Benchmark Results
+
+The benchmark tested shared prompts across five orchestration runtimes. Dify was added after the initial Custom Python, LangChain, LangGraph, and n8n comparison and was evaluated through the same IoT Ops Agent UI.
 
 | Runtime                | Avg Accuracy | Avg Tool Usage | Avg Reasoning Clarity | Avg Observability | Avg Latency | Dev Complexity | Integration Speed | Ecosystem | Maintainability |
 | ---------------------- | -----------: | -------------: | --------------------: | ----------------: | ----------: | -------------: | ----------------: | --------: | --------------: |
@@ -402,12 +432,13 @@ The Phase 1 benchmark tested five shared prompts across four orchestration runti
 | IOA v2 · LangChain     |          3.0 |            3.0 |                   4.0 |               2.0 |      12.85s |            5.0 |               5.0 |       5.0 |             4.0 |
 | IOA v2 · LangGraph     |          5.0 |            5.0 |                   5.0 |               4.0 |       9.50s |            4.0 |               4.0 |       4.0 |             4.0 |
 | IOA v2 · n8n           |          4.2 |            4.0 |                   4.2 |               4.0 |       8.53s |            4.0 |               5.0 |       4.0 |             4.0 |
+| IOA v2 · Dify          |          4.0 |           4.17 |                   4.0 |              3.83 |       8.06s |            4.0 |               5.0 |       4.0 |             4.0 |
 
 ---
 
-# Phase 1 Detailed Benchmark Rows
+# Detailed Benchmark Rows
 
-Rows are grouped by prompt. Runtime order is Custom Python, LangChain, LangGraph, then n8n.
+Rows are grouped by prompt. Runtime order is Custom Python, LangChain, LangGraph, n8n, then Dify where Dify results are available.
 
 | Prompt | Runtime | Latency | Accuracy | Tool Usage | Reasoning | Observability | Notes |
 | ------ | ------- | ------: | -------: | ---------: | --------: | ------------: | ----- |
@@ -415,22 +446,27 @@ Rows are grouped by prompt. Runtime order is Custom Python, LangChain, LangGraph
 | `/diagnose system issue` | IOA v2 · LangChain | 8.31s | 3 | 3 | 4 | 2 | Faster response and clear structure, but affected device list appears inconsistent with the previous telemetry snapshot and reasoning/tool trace visibility is limited. |
 | `/diagnose system issue` | IOA v2 · LangGraph | 8.24s | 5 | 5 | 5 | 4 | Strong root-cause analysis focused on overloaded gateways, resource exhaustion, and operational remediation. |
 | `/diagnose system issue` | IOA v2 · n8n | 10.76s | 5 | 4 | 5 | 4 | Used latest devices, system alarms, and system overview; returned four Thought-Action-Observation iterations and the required diagnosis format. |
+| `/diagnose system issue` | IOA v2 · Dify | 5.79s | 4 | 4 | 4 | 3 | Diagnosed the main system issues with concise evidence and next actions. Trace was shorter at three steps and less tool-explicit than Custom Python or LangGraph. |
 | `/overview system health` | IOA v2 · Custom Python | 9.97s | 5 | 5 | 5 | 5 | Accurate fleet summary with healthy/warning/critical counts, affected devices, alarm evidence, likely causes, and next actions. |
 | `/overview system health` | IOA v2 · LangChain | 12.45s | 3 | 3 | 4 | 2 | Clear structure, but device status/details appear inconsistent with the previous telemetry snapshot. |
 | `/overview system health` | IOA v2 · LangGraph | 5.79s | 5 | 5 | 5 | 4 | Accurate device grouping, detailed evidence, likely causes, and remediation steps. |
 | `/overview system health` | IOA v2 · n8n | 10.14s | 4 | 4 | 4 | 4 | Generated a system health overview from backend operational context with fleet counts, unhealthy devices, active alarms, likely causes, and next actions. |
+| `/overview system health` | IOA v2 · Dify | 9.09s | 4 | 4 | 4 | 4 | Produced a grounded fleet overview with health counts, affected gateways and sensors, active alarms, and a four-step UI-visible reasoning trace. |
 | `/check all unhealthy devices` | IOA v2 · Custom Python | 9.41s | 5 | 5 | 5 | 5 | Correctly identified unhealthy devices, separated critical and warning states, cited telemetry evidence, and provided remediation steps. |
 | `/check all unhealthy devices` | IOA v2 · LangChain | 13.09s | 3 | 3 | 4 | 2 | Clear operational format, but device statuses and telemetry details appear inconsistent with the previous custom runtime snapshot. |
 | `/check all unhealthy devices` | IOA v2 · LangGraph | 5.96s | 5 | 5 | 5 | 4 | Accurately identified unhealthy devices, separated critical and warning conditions, cited telemetry metrics, and provided operational guidance. |
 | `/check all unhealthy devices` | IOA v2 · n8n | 7.83s | 4 | 4 | 4 | 4 | Identified unhealthy devices from operational context and returned structured diagnosis with evidence, likely cause, and remediation actions. |
+| `/check all unhealthy devices` | IOA v2 · Dify | 5.71s | 4 | 4 | 4 | 4 | Identified unhealthy devices, cited heartbeat, CPU, memory, and alarm evidence, and returned a four-step trace with remediation guidance. |
 | Gateway heartbeat investigation | IOA v2 · Custom Python | 35.12s | 5 | 5 | 5 | 5 | Most explicit tool-driven reasoning and observability for complex gateway investigation, but highest latency and implementation complexity. |
 | Gateway heartbeat investigation | IOA v2 · LangChain | 15.15s | 3 | 3 | 4 | 2 | Faster response with usable structure, but operational evidence is less auditable than Custom Python or LangGraph. |
 | Gateway heartbeat investigation | IOA v2 · LangGraph | 14.04s | 5 | 5 | 5 | 4 | Strong structured orchestration for multi-step gateway analysis, with better traceability than LangChain and lower latency than Custom Python. |
 | Gateway heartbeat investigation | IOA v2 · n8n | 7.39s | 4 | 4 | 4 | 4 | Identified gateway heartbeat-delay issues and correlated them with CPU, memory, and alarm context. |
+| Gateway heartbeat investigation | IOA v2 · Dify | 10.27s | 5 | 5 | 4 | 4 | Correctly identified the gateway crossing the configured heartbeat threshold, distinguished lower-risk devices, and produced a five-step trace. |
 | Active sensor alert correlation | IOA v2 · Custom Python | 17.25s | 5 | 5 | 5 | 5 | Strongest for detailed alert correlation because it exposes the full reasoning/tool loop and cites operational evidence step by step. |
 | Active sensor alert correlation | IOA v2 · LangChain | 15.25s | 3 | 3 | 4 | 2 | Usable structured response, but traceability is limited and correlation evidence is less transparent. |
 | Active sensor alert correlation | IOA v2 · LangGraph | 13.49s | 5 | 5 | 5 | 4 | Effective for correlated alert analysis because graph node execution improves reasoning structure, auditability, and workflow control. |
 | Active sensor alert correlation | IOA v2 · n8n | 6.55s | 4 | 4 | 4 | 4 | Reviewed active alarm context, identified correlated CPU, memory, and heartbeat-delay patterns, and returned structured recommendations. |
+| Active sensor alert correlation | IOA v2 · Dify | 8.98s | 4 | 4 | 4 | 4 | Reviewed active sensor and gateway alarms, identified correlated heartbeat-delay and high-CPU patterns, and returned a five-step trace. |
 
 ---
 
@@ -464,7 +500,7 @@ It is the best fit when:
 
 ## LangGraph
 
-LangGraph offered the strongest balance in Phase 1.
+LangGraph offered the strongest balance among code-native frameworks.
 
 It preserved much of the framework productivity advantage while improving traceability through graph-based node execution.
 
@@ -486,11 +522,28 @@ It receives the same operational prompts through the IoT Ops Agent UI, calls an 
 It is the best fit when:
 
 * low-code workflow orchestration is important
-* external integrations such as Telegram, Slack, HTTP APIs, MQTT, or notification channels are needed
+* external integrations such as Slack, HTTP APIs, MQTT, or notification channels are needed
 * visual execution logs are useful for debugging
 * fast integration speed matters more than low-level reasoning-loop control
 
-In the Phase 1 benchmark, n8n had the fastest average latency among the evaluated runtimes and the highest integration speed score. Its main limitation is that telemetry and tool execution are indirect: the Flask backend packages the operational context before sending it to the workflow.
+In local benchmark runs, n8n had the fastest average latency among the evaluated runtimes and the highest integration speed score. Its main limitation is that telemetry and tool execution are indirect: the Flask backend packages the operational context before sending it to the workflow.
+
+---
+
+## Dify
+
+Dify was successfully installed locally as a self-hosted Chatflow runtime and integrated into the IoT Ops Agent UI/backend.
+
+It receives the same backend-packaged operational context as n8n, but requires less workflow construction for chatbot-style answers. The Dify app is called through `/v1/chat-messages` using an app API key.
+
+It is the best fit when:
+
+* chatbot-native behavior is the priority
+* fast app-level iteration is preferred
+* less manual workflow configuration is desired compared with n8n
+* a self-hosted framework with model/provider configuration is useful
+
+In local benchmark runs, Dify returned thoughtful structured answers with at least three reasoning iterations per run and an average latency of about 8 seconds. Its main limitation is that trace steps are model-generated/app-level reasoning rather than direct low-level tool execution traces.
 
 ---
 

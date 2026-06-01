@@ -15,6 +15,7 @@ Features include:
 - LangChain runtime mode
 - LangGraph runtime mode
 - n8n local workflow runtime mode
+- Dify self-hosted chatflow runtime mode
 - streaming responses
 - live typing effects
 - persistent reasoning traces
@@ -226,6 +227,7 @@ Currently evaluated runtimes include:
 - IOA v2 · LangChain
 - IOA v2 · LangGraph
 - IOA v2 · n8n
+- IOA v2 · Dify
 
 Benchmark dimensions include:
 
@@ -239,7 +241,9 @@ Benchmark dimensions include:
 - maintainability
 - latency
 
-Phase 1 benchmark results are stored in CSV format and summarized in the benchmarking documentation.
+Runtime benchmark results are stored in CSV format and summarized in the benchmarking documentation.
+
+Dify is available as a self-hosted chatflow runtime. It receives the same operational context as n8n, returns structured operational diagnoses through the Dify Chat Messages API, and surfaces UI-visible reasoning traces with at least three intermediate investigation steps in local testing.
 
 ---
 

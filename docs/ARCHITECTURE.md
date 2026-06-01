@@ -6,7 +6,7 @@ IoT Ops Agent is structured as a full-stack AI operations platform that combines
 
 ## High-Level Flow
 
-```text id="4s1l4p"
+```text
 Simulated IoT Devices
           ↓
 Telemetry Simulator
@@ -42,7 +42,7 @@ Operational status is computed from telemetry thresholds.
 
 ### Warning Thresholds
 
-```text id="b89tjk"
+```text
 CPU usage >= 75%
 Memory usage >= 80%
 Heartbeat delay >= 180s
@@ -50,7 +50,7 @@ Heartbeat delay >= 180s
 
 ### Critical Thresholds
 
-```text id="2z59g0"
+```text
 CPU usage >= 90%
 Memory usage >= 90%
 Heartbeat delay >= 600s
@@ -75,7 +75,7 @@ The database stores:
 
 Main tables include:
 
-```text id="qvgj8u"
+```text
 telemetry
 users
 chats
@@ -125,7 +125,7 @@ Flask-SocketIO enables realtime communication between the backend and frontend d
 
 The frontend receives events such as:
 
-```text id="j5gvr0"
+```text
 device_update
 ```
 
@@ -143,7 +143,7 @@ The WebSocket layer allows the dashboard to update without requiring page refres
 
 ## 5. Agent Layer
 
-The platform includes two operational AI modes.
+The platform includes multiple operational AI runtimes behind the same chat UI.
 
 ### IOA v1
 
@@ -151,7 +151,7 @@ Single-step tool-calling assistant.
 
 Flow:
 
-```text id="9v1ql8"
+```text
 User Query
 → Tool Selection
 → Tool Execution
@@ -168,7 +168,7 @@ Multi-step reasoning agent using a ReAct-style workflow.
 
 Flow:
 
-```text id="r5d9oj"
+```text
 User Query
 → Thought
 → Action
@@ -186,6 +186,43 @@ IOA v2 supports:
 * persistent reasoning history
 
 Reasoning events are streamed to the frontend in realtime through the reasoning drawer.
+
+---
+
+### Framework Runtime Modes
+
+The Home workspace can route the same user prompt and telemetry context through several runtime implementations:
+
+* `IOA v2 · Custom Python`
+* `IOA v2 · LangChain`
+* `IOA v2 · LangGraph`
+* `IOA v2 · n8n`
+* `IOA v2 · Dify`
+
+The external runtimes use Flask as the operational context packager. Flask collects:
+
+* latest device telemetry
+* fleet health overview
+* active alarms
+* target device status when applicable
+* target device telemetry history when applicable
+
+n8n receives this context through a webhook payload. Dify receives the same context through the Dify Chat Messages API using app inputs plus a composed LLM prompt.
+
+### Dify Runtime Flow
+
+```text
+User Query
+→ Flask /api/diagnose-stream
+→ Build operational context
+→ Dify Chat Messages API
+→ Dify Chatflow LLM node
+→ Structured response + steps
+→ Flask SSE reasoning events
+→ UI reasoning drawer
+```
+
+Dify is used as a self-hosted app runtime. It provides fast chatflow setup, model/provider configuration, app API keys, and a chatbot-oriented interface while keeping operational telemetry inside the IoT Ops Agent backend.
 
 ---
 
@@ -275,7 +312,7 @@ The AI agent tracks operational context across conversations.
 
 Example:
 
-```text id="jlwm4y"
+```text
 User: diagnose gateway-003
 Agent: diagnoses gateway-003
 
@@ -289,16 +326,8 @@ This allows the assistant to maintain short-term operational context during mult
 
 ## 11. Reasoning Trace Streaming
 
-The backend streams intermediate reasoning events during IOA v2 execution.
+The backend streams intermediate reasoning events during IOA v2 execution and during supported external runtime execution.
 
-Event types include:
-
-```text id="rqz6pl"
-thought
-action
-observation
-final
-error
-```
+The trace stream emits `thought`, `observation`, `final`, and `error` events. Action details are shown inside the trace payload when a runtime exposes them.
 
 The frontend renders these events inside the realtime reasoning drawer, allowing users to inspect intermediate agent behavior during operational diagnosis.

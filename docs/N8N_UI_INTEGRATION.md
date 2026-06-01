@@ -178,7 +178,7 @@ Respond: Using 'Respond to Webhook' Node
 
 If it is left as `Immediately`, Flask may receive an empty response body before the LLM workflow finishes.
 
-## Phase 1 Evaluation Result
+## Local Evaluation Result
 
 n8n was tested locally through the UI with the same five prompts used by the other runtimes:
 
@@ -188,7 +188,7 @@ n8n was tested locally through the UI with the same five prompts used by the oth
 * gateway heartbeat-delay investigation
 * active sensor alert correlation
 
-Average Phase 1 n8n scores:
+Average n8n scores:
 
 | Metric | Score |
 | ------ | ----: |
@@ -202,4 +202,4 @@ Average Phase 1 n8n scores:
 | Maintainability | 4.0 |
 | Avg Latency | 8.53s |
 
-n8n showed the strongest integration speed and workflow-level observability, while Custom Python and LangGraph still provide deeper low-level reasoning-loop control.
+n8n showed strong integration speed and workflow-level observability, while Custom Python and LangGraph still provide deeper low-level reasoning-loop control. After the later Dify integration, n8n remains the stronger visual workflow automation option, while Dify is better suited for chatbot-native operational diagnosis because it requires less manual workflow configuration for text responses.

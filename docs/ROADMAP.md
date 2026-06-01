@@ -19,7 +19,7 @@ Future improvements and long-term direction for IoT Ops Agent.
 
 ### Deployment Evolution
 
-```text id="1c8qlu"
+```text
 Flask Application
         ↓
 Gunicorn / Gevent
@@ -61,7 +61,7 @@ Future AI improvements may include:
 * automated remediation recommendations
 * contextual incident summarization
 
-### Phase 1 Orchestration Evaluation
+### Runtime Evaluation Status
 
 Completed local runtime evaluations:
 
@@ -69,19 +69,27 @@ Completed local runtime evaluations:
 * IOA v2 · LangChain
 * IOA v2 · LangGraph
 * IOA v2 · n8n
+* IOA v2 · Dify
 
-The current Phase 1 benchmark compares these runtimes across five shared operational prompts, including fleet overview, unhealthy-device detection, root-cause diagnosis, gateway heartbeat investigation, and active sensor alert correlation.
+The current benchmark compares these runtimes across shared operational prompts, including fleet overview, unhealthy-device detection, root-cause diagnosis, gateway heartbeat investigation, and active sensor alert correlation.
 
-Next framework candidates:
+Dify was added as a self-hosted Chatflow runtime and tested locally through the IoT Ops Agent UI. It produced structured operational diagnoses with UI-visible reasoning traces, usually 3-5 investigation iterations, and an average latency of about 8 seconds in local runs.
 
-* Dify
+Current runtime evaluation observations:
+
+* Dify is the strongest chatbot-native runtime tested so far because it provides app structure, API access, model/provider configuration, and strong output quality with low workflow configuration overhead.
+* n8n remains a strong workflow automation runtime for visual integrations and external workflow execution.
+* Custom Python and LangGraph remain useful baselines for deeper reasoning-loop control and observability.
+
+Potential future runtime candidates:
+
 * Flowise
 * CrewAI
 * local model runtime integration
 
 Potential future agent capabilities:
 
-```text id="9e2y8z"
+```text
 Telemetry anomaly detected
         ↓
 AI investigation chain

@@ -570,7 +570,8 @@ async function sendMessage() {
             currentMode === "ioa_v2_custom" ||
             currentMode === "ioa_v2_langchain" ||
             currentMode === "ioa_v2_langgraph" ||
-            currentMode === "ioa_v2_n8n"
+            currentMode === "ioa_v2_n8n" ||
+            currentMode === "ioa_v2_dify"
         ) {
             finalAnswer = await sendStreamMessage(message);
         } else {

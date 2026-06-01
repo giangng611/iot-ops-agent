@@ -134,7 +134,7 @@ Evaluates:
 ## 4. Gateway Heartbeat Investigation
 
 ```text
-Investigate all gateway devices with heartbeat delays above 300 ms, identify recurring operational anomalies, and summarize the highest-risk infrastructure issues.
+Investigate all gateway devices with heartbeat delays above 300 seconds, identify recurring operational anomalies, and summarize the highest-risk infrastructure issues.
 ```
 
 Evaluates:

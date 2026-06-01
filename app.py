@@ -105,7 +105,11 @@ def build_n8n_payload(user_input):
         "You are an IoT operations assistant. Use only the telemetry "
         "and operational context provided in this payload. Do not invent "
         "device IDs, telemetry values, alarms, or logs. Heartbeat delay "
-        "values are measured in seconds."
+        "values are measured in seconds. For gateway heartbeat-delay "
+        "investigations, use 300 seconds as the default threshold unless "
+        "the user provides a different threshold in seconds. If a user says "
+        "ms or milliseconds, state that the available telemetry is stored "
+        "in seconds and evaluate the stored second-based values."
     )
 
     llm_prompt = f"""
@@ -407,16 +411,6 @@ def normalize_dify_steps(result):
             "output": {
                 "workflow_run_id": workflow_run_id
             }
-        })
-
-    usage = metadata.get("usage")
-
-    if usage:
-        steps.append({
-            "iteration": len(steps) + 1,
-            "thought": "Dify returned model usage metadata for benchmark accounting.",
-            "action": "record_dify_usage",
-            "output": usage
         })
 
     if len(steps) == 1:

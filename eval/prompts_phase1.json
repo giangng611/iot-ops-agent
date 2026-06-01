@@ -1,0 +1,56 @@
+[
+  {
+    "id": "fleet_overview",
+    "prompt": "/overview system health",
+    "expected_focus": [
+      "fleet summary",
+      "healthy warning critical counts",
+      "unhealthy devices"
+    ]
+  },
+  {
+    "id": "unhealthy_devices",
+    "prompt": "/check all unhealthy devices",
+    "expected_focus": [
+      "warning devices",
+      "critical devices",
+      "operational priority"
+    ]
+  },
+  {
+    "id": "active_alarms",
+    "prompt": "/show devices with alarms",
+    "expected_focus": [
+      "active alarms",
+      "severity",
+      "affected devices"
+    ]
+  },
+  {
+    "id": "system_diagnosis",
+    "prompt": "/diagnose system issue",
+    "expected_focus": [
+      "root cause",
+      "evidence",
+      "next action"
+    ]
+  },
+  {
+    "id": "heartbeat_delays",
+    "prompt": "/check devices with delayed heartbeat",
+    "expected_focus": [
+      "heartbeat delay",
+      "threshold",
+      "risk"
+    ]
+  },
+  {
+    "id": "device_diagnosis",
+    "prompt": "/diagnose gateway-001",
+    "expected_focus": [
+      "gateway-001",
+      "device status",
+      "telemetry evidence"
+    ]
+  }
+]

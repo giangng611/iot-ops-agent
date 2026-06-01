@@ -273,6 +273,24 @@ def get_chats(user_id):
     ]
 
 
+def chat_belongs_to_user(chat_id, user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT 1
+        FROM chats
+        WHERE id = ?
+        AND user_id = ?
+        LIMIT 1
+    """, (chat_id, user_id))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row is not None
+
+
 def add_message(chat_id, role, content, reasoning_steps=None):
     conn = get_connection()
     cursor = conn.cursor()
@@ -379,8 +397,13 @@ def delete_chat(chat_id, user_id):
 
     cursor.execute("""
         DELETE FROM messages
-        WHERE chat_id = ?
-    """, (chat_id,))
+        WHERE chat_id IN (
+            SELECT id
+            FROM chats
+            WHERE id = ?
+            AND user_id = ?
+        )
+    """, (chat_id, user_id))
 
     cursor.execute("""
         DELETE FROM chats
@@ -389,7 +412,10 @@ def delete_chat(chat_id, user_id):
     """, (chat_id, user_id))
 
     conn.commit()
+    deleted = cursor.rowcount
     conn.close()
+
+    return deleted > 0
 
 def toggle_pin_chat(chat_id, user_id):
     conn = get_connection()

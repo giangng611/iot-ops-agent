@@ -12,6 +12,7 @@ from prompts import CHAT_TITLE_PROMPT, DIAGNOSIS_OUTPUT_FORMAT
 from simulator import DEVICES, generate_telemetry
 from datetime import datetime
 import time
+from collections import defaultdict, deque
 
 from agents.ioa_v1_agent import IOAV1Agent
 from agents.ioa_v2_agent import IOAV2Agent
@@ -24,6 +25,7 @@ from database import (
     get_latest_status,
     create_chat,
     get_chats,
+    chat_belongs_to_user,
     add_message,
     get_messages,
     create_user,
@@ -45,11 +47,47 @@ from benchmark_logger import log_benchmark_result
 
 load_dotenv()
 
+def get_positive_int_env(name, default):
+    raw_value = os.getenv(name)
+
+    if raw_value is None:
+        return default
+
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+
+    return value if value > 0 else default
+
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
+flask_secret_key = os.getenv("FLASK_SECRET_KEY")
+socketio_cors_origins = os.getenv("SOCKETIO_CORS_ORIGINS", "").strip()
+MAX_DIAGNOSE_MESSAGE_CHARS = get_positive_int_env(
+    "MAX_DIAGNOSE_MESSAGE_CHARS",
+    2000
+)
+DIAGNOSE_RATE_LIMIT_REQUESTS = get_positive_int_env(
+    "DIAGNOSE_RATE_LIMIT_REQUESTS",
+    10
+)
+DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS = get_positive_int_env(
+    "DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS",
+    60
+)
+diagnose_rate_limit_log = defaultdict(deque)
+
+if not flask_secret_key:
+    raise RuntimeError("FLASK_SECRET_KEY must be configured.")
+
+app.secret_key = flask_secret_key
 socketio = SocketIO(
     app,
-    cors_allowed_origins="*",
+    cors_allowed_origins=(
+        [origin.strip() for origin in socketio_cors_origins.split(",")]
+        if socketio_cors_origins
+        else None
+    ),
     async_mode="gevent"
 )
 
@@ -64,6 +102,67 @@ init_db()
 if len(get_all_latest_devices()) == 0:
     for device_id in DEVICES:
         generate_telemetry(device_id)
+
+def get_rate_limit_key():
+    user_id = session.get("user_id")
+
+    if user_id:
+        return f"user:{user_id}"
+
+    return f"ip:{request.remote_addr or 'unknown'}"
+
+def check_diagnose_rate_limit():
+    now = time.time()
+    key = get_rate_limit_key()
+    request_times = diagnose_rate_limit_log[key]
+    window_start = now - DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS
+
+    while request_times and request_times[0] <= window_start:
+        request_times.popleft()
+
+    if len(request_times) >= DIAGNOSE_RATE_LIMIT_REQUESTS:
+        retry_after = max(
+            1,
+            int(DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS - (now - request_times[0]))
+        )
+        return False, retry_after
+
+    request_times.append(now)
+    return True, None
+
+def validate_diagnose_request():
+    allowed, retry_after = check_diagnose_rate_limit()
+
+    if not allowed:
+        response = jsonify({
+            "error": (
+                "Rate limit exceeded. Please wait before sending another "
+                "diagnosis request."
+            )
+        })
+        response.status_code = 429
+        response.headers["Retry-After"] = str(retry_after)
+        return None, response
+
+    data = request.get_json(silent=True) or {}
+    user_input = data.get("message", "").strip()
+
+    if not user_input:
+        return None, (jsonify({"error": "No message provided"}), 400)
+
+    if len(user_input) > MAX_DIAGNOSE_MESSAGE_CHARS:
+        return None, (
+            jsonify({
+                "error": (
+                    "Message is too long. Please keep diagnosis requests "
+                    f"under {MAX_DIAGNOSE_MESSAGE_CHARS} characters."
+                )
+            }),
+            413
+        )
+
+    data["message"] = user_input
+    return data, None
 
 def extract_device_id_from_text(text):
     known_devices = [
@@ -494,11 +593,15 @@ def home():
 
 @app.route("/api/diagnose", methods=["POST"])
 def diagnose():
-    data = request.get_json()
-    user_input = data.get("message", "")
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
 
-    if not user_input:
-        return jsonify({"error": "No message provided"}), 400
+    data, error_response = validate_diagnose_request()
+
+    if error_response:
+        return error_response
+
+    user_input = data["message"]
 
     try:
         mode = data.get("mode", "ioa_v2_custom")
@@ -688,8 +791,15 @@ def diagnose():
 
 @app.route("/api/diagnose-stream", methods=["POST"])
 def diagnose_stream():
-    data = request.get_json()
-    user_input = data.get("message", "")
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data, error_response = validate_diagnose_request()
+
+    if error_response:
+        return error_response
+
+    user_input = data["message"]
     mode = data.get("mode", "ioa_v2_custom")
     start_time = time.time()
 
@@ -969,6 +1079,9 @@ def diagnose_stream():
 
 @app.route("/api/devices", methods=["GET"])
 def get_devices():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
     devices = get_all_latest_devices()
     return jsonify({
         "devices": devices
@@ -1141,6 +1254,8 @@ def api_delete_prompt(prompt_id):
 
 @app.route("/api/telemetry/<device_id>", methods=["GET"])
 def get_device_history(device_id):
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
 
     history = get_device_telemetry_history(device_id)
 
@@ -1182,10 +1297,13 @@ def api_create_chat():
 
 @app.route("/api/chats/<int:chat_id>/messages", methods=["GET"])
 def api_get_messages(chat_id):
-    messages = get_messages(chat_id)
-
     if not login_required():
         return jsonify({"error": "Unauthorized"}), 401
+
+    if not chat_belongs_to_user(chat_id, session.get("user_id")):
+        return jsonify({"error": "Chat not found"}), 404
+
+    messages = get_messages(chat_id)
 
     return jsonify({
         "chat_id": chat_id,
@@ -1195,14 +1313,17 @@ def api_get_messages(chat_id):
 
 @app.route("/api/chats/<int:chat_id>/messages", methods=["POST"])
 def api_add_message(chat_id):
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if not chat_belongs_to_user(chat_id, session.get("user_id")):
+        return jsonify({"error": "Chat not found"}), 404
+
     data = request.get_json()
 
     role = data.get("role")
     content = data.get("content")
     reasoning_steps = data.get("reasoning_steps")
-
-    if not login_required():
-        return jsonify({"error": "Unauthorized"}), 401
 
     if not role or not content:
         return jsonify({
@@ -1283,7 +1404,10 @@ def api_delete_chat(chat_id):
 
     user_id = session.get("user_id")
 
-    delete_chat(chat_id, user_id)
+    success = delete_chat(chat_id, user_id)
+
+    if not success:
+        return jsonify({"error": "Chat not found"}), 404
 
     return jsonify({
         "status": "deleted"

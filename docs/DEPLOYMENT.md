@@ -84,6 +84,10 @@ Inside the Render dashboard, add the required variables:
 ```env
 OPENAI_API_KEY=your_openai_api_key
 FLASK_SECRET_KEY=your_secret_key
+SOCKETIO_CORS_ORIGINS=https://iot-ops-agent.onrender.com
+MAX_DIAGNOSE_MESSAGE_CHARS=2000
+DIAGNOSE_RATE_LIMIT_REQUESTS=10
+DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
 ACCESS_CODE=your_access_code
 ```
 
@@ -99,6 +103,8 @@ These variables are required for:
 
 * OpenAI API access
 * Flask session security
+* Socket.IO origin checks
+* diagnosis request size and rate limits
 * protected account registration
 Optional Dify variables are required only for `IOA v2 · Dify`.
 

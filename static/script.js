@@ -64,6 +64,21 @@ const homeHeroPrompts = [
     "Ask the agent to summarize current IoT operations risk."
 ];
 
+const MAX_DIAGNOSE_MESSAGE_CHARS = 2000;
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function findPromptById(promptId) {
+    return promptsData.find(prompt => String(prompt.id) === String(promptId));
+}
+
 function setMode(mode) {
     currentMode = mode;
 }
@@ -289,17 +304,27 @@ function handlePromptSuggestions() {
     }
 
     palette.innerHTML = filtered.map(item => `
-        <div class="slash-command" onclick="selectSlashCommand('${item.command}')">
+        <div class="slash-command" onclick="selectSlashCommandById('${escapeHtml(item.id)}')">
             <div>
-                <strong>${item.title}</strong>
-                <p>${item.command}</p>
+                <strong>${escapeHtml(item.title)}</strong>
+                <p>${escapeHtml(item.command)}</p>
             </div>
 
-            <span>${item.category}</span>
+            <span>${escapeHtml(item.category)}</span>
         </div>
     `).join("");
 
     palette.classList.remove("hidden");
+}
+
+function selectSlashCommandById(promptId) {
+    const prompt = findPromptById(promptId);
+
+    if (!prompt) {
+        return;
+    }
+
+    selectSlashCommand(prompt.command);
 }
 
 function selectSlashCommand(command) {
@@ -362,15 +387,15 @@ function renderPromptCards() {
         grid.innerHTML += `
             <div class="prompt-card">
                 <div class="prompt-card-top">
-                    <span class="prompt-category">${prompt.category}</span>
+                    <span class="prompt-category">${escapeHtml(prompt.category)}</span>
                     ${prompt.is_default ? `<span class="prompt-default">Default</span>` : `<span class="prompt-custom">Custom</span>`}
                 </div>
 
-                <h3>${prompt.title}</h3>
-                <p>${prompt.command}</p>
+                <h3>${escapeHtml(prompt.title)}</h3>
+                <p>${escapeHtml(prompt.command)}</p>
 
                 <div class="prompt-card-actions">
-                    <button onclick="usePrompt('${prompt.command}')">
+                    <button onclick="usePromptById('${escapeHtml(prompt.id)}')">
                         Use
                     </button>
 
@@ -399,6 +424,16 @@ function renderPromptCards() {
             </div>
         `;
     });
+}
+
+function usePromptById(promptId) {
+    const prompt = findPromptById(promptId);
+
+    if (!prompt) {
+        return;
+    }
+
+    usePrompt(prompt.command);
 }
 
 function openPromptModal() {
@@ -524,6 +559,16 @@ async function sendMessage() {
         return;
     }
 
+    if (message.length > MAX_DIAGNOSE_MESSAGE_CHARS) {
+        input.setCustomValidity(
+            `Please keep diagnosis requests under ${MAX_DIAGNOSE_MESSAGE_CHARS} characters.`
+        );
+        input.reportValidity();
+        input.setCustomValidity("");
+        isAgentRunning = false;
+        return;
+    }
+
     input.value = "";
     input.disabled = true;
     setAppBusyState(true);
@@ -637,6 +682,11 @@ async function sendStreamMessage(message) {
             mode: currentMode
         })
     });
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Request failed.");
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -795,7 +845,7 @@ function renderChatHistory() {
                 ` : ""}
 
                 <span class="history-text">
-                    ${chat.title}
+                    ${escapeHtml(chat.title)}
                 </span>
             </span>
 
@@ -1047,7 +1097,7 @@ function renderUserMessage(message, timestamp = null) {
                 </div>
 
                 <div class="message-bubble user-bubble">
-                    ${message}
+                    ${escapeHtml(message)}
                 </div>
 
                 <div class="user-actions">
@@ -1093,7 +1143,7 @@ async function renderAssistantMessage(
                 </div>
 
                 <div class="message-bubble assistant-bubble">
-                    <pre class="typing-output">${shouldType ? "" : message}</pre>
+                    <pre class="typing-output">${shouldType ? "" : escapeHtml(message)}</pre>
                 </div>
 
                 <div class="assistant-actions">
@@ -1282,16 +1332,16 @@ function renderReasoningStepsStatic(steps) {
 
                 <p>
                     <strong>Thought:</strong><br>
-                    <span class="reasoning-thought">${step.thought || ""}</span>
+                    <span class="reasoning-thought">${escapeHtml(step.thought || "")}</span>
                 </p>
 
                 <p>
                     <strong>Action:</strong><br>
-                    <span class="reasoning-action">${step.action || ""}</span>
+                    <span class="reasoning-action">${escapeHtml(step.action || "")}</span>
                 </p>
 
                 <p><strong>Observation:</strong></p>
-                <pre class="reasoning-observation">${outputText}</pre>
+                <pre class="reasoning-observation">${escapeHtml(outputText)}</pre>
             </div>
         `;
     });
@@ -1315,16 +1365,16 @@ function renderReasoningSteps(steps, shouldType = false) {
 
                 <p>
                     <strong>Thought:</strong><br>
-                    <span class="reasoning-thought">${shouldType ? "" : step.thought}</span>
+                    <span class="reasoning-thought">${shouldType ? "" : escapeHtml(step.thought)}</span>
                 </p>
 
                 <p>
                     <strong>Action:</strong><br>
-                    <span class="reasoning-action">${shouldType ? "" : step.action}</span>
+                    <span class="reasoning-action">${shouldType ? "" : escapeHtml(step.action)}</span>
                 </p>
 
                 <p><strong>Observation:</strong></p>
-                <pre class="reasoning-observation">${shouldType ? "" : outputText}</pre>
+                <pre class="reasoning-observation">${shouldType ? "" : escapeHtml(outputText)}</pre>
             </div>
         `;
     });

@@ -156,6 +156,10 @@ Create a `.env` file:
 ```env
 OPENAI_API_KEY=your_openai_api_key
 FLASK_SECRET_KEY=your_secret_key
+SOCKETIO_CORS_ORIGINS=
+MAX_DIAGNOSE_MESSAGE_CHARS=2000
+DIAGNOSE_RATE_LIMIT_REQUESTS=10
+DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
 ACCESS_CODE=please_contact_project_owner
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 DIFY_API_URL=http://localhost/v1/chat-messages

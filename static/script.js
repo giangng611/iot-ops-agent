@@ -42,6 +42,8 @@ let pendingDeletePromptId = null;
 let pendingPasswordChange = null;
 let lastRealtimeUpdate = 0;
 let realtimeStatusInterval = null;
+let assistantMessageActionStore = {};
+let userMessageActionStore = {};
 
 const prompts = [
     "/overview system health",
@@ -852,8 +854,11 @@ async function loadChat(chatId) {
             : []
     }));
 
+    let lastUserMessage = null;
+
     chat.messages.forEach(message => {
         if (message.role === "user") {
+            lastUserMessage = message.content;
             renderUserMessage(message.content, message.createdAt);
         } else {
             renderAssistantMessage(
@@ -861,7 +866,8 @@ async function loadChat(chatId) {
                 message.hasReasoning,
                 message.reasoningSteps || [],
                 message.createdAt,
-                false
+                false,
+                lastUserMessage
             );
         }
     });
@@ -1001,6 +1007,9 @@ function addUserMessage(message) {
 
 async function addAssistantMessage(message, hasReasoning) {
     const chat = chats.find(item => item.id === currentChatId);
+    const retryPrompt = chat
+        ? findLatestUserMessage(chat.messages)
+        : null;
 
     if (chat) {
         chat.messages.push({
@@ -1011,11 +1020,23 @@ async function addAssistantMessage(message, hasReasoning) {
         });
     }
 
-    await renderAssistantMessage(message, hasReasoning, latestReasoningSteps, null, true);
+    await renderAssistantMessage(
+        message,
+        hasReasoning,
+        latestReasoningSteps,
+        null,
+        true,
+        retryPrompt
+    );
 }
 
 function renderUserMessage(message, timestamp = null) {
     const chatMessages = document.getElementById("chatMessages");
+    const messageId = `user-message-${Date.now()}-${Math.random()}`;
+
+    userMessageActionStore[messageId] = {
+        content: message
+    };
 
     chatMessages.innerHTML += `
         <div class="message-row user-row">
@@ -1029,6 +1050,16 @@ function renderUserMessage(message, timestamp = null) {
                     ${message}
                 </div>
 
+                <div class="user-actions">
+                    <button class="user-action-link" onclick="copyUserMessage('${messageId}', this)">
+                        Copy
+                    </button>
+
+                    <button class="user-action-link" onclick="editUserMessage('${messageId}')">
+                        Edit
+                    </button>
+                </div>
+
             </div>
         </div>
     `;
@@ -1036,11 +1067,23 @@ function renderUserMessage(message, timestamp = null) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-async function renderAssistantMessage(message, hasReasoning, reasoningSteps = [], timestamp = null, shouldType = false) {
+async function renderAssistantMessage(
+    message,
+    hasReasoning,
+    reasoningSteps = [],
+    timestamp = null,
+    shouldType = false,
+    retryPrompt = null
+) {
     const chatMessages = document.getElementById("chatMessages");
     const reasoningId = `reasoning-${Date.now()}-${Math.random()}`;
+    const messageId = `assistant-message-${Date.now()}-${Math.random()}`;
 
     window[reasoningId] = reasoningSteps;
+    assistantMessageActionStore[messageId] = {
+        answer: message,
+        retryPrompt: retryPrompt
+    };
 
     chatMessages.innerHTML += `
         <div class="message-row assistant-row">
@@ -1050,13 +1093,27 @@ async function renderAssistantMessage(message, hasReasoning, reasoningSteps = []
                 </div>
 
                 <div class="message-bubble assistant-bubble">
+                    <pre class="typing-output">${shouldType ? "" : message}</pre>
+                </div>
+
+                <div class="assistant-actions">
                     ${hasReasoning ? `
-                        <button class="reasoning-toggle" onclick="openReasoningDrawer('${reasoningId}')">
+                        <button class="assistant-action-link" onclick="openReasoningDrawer('${reasoningId}')">
                             Show reasoning trace
                         </button>
                     ` : ""}
 
-                    <pre class="typing-output">${shouldType ? "" : message}</pre>
+                    <button class="assistant-action-link" onclick="copyAssistantMessage('${messageId}', this)">
+                        Copy
+                    </button>
+
+                    <button
+                        class="assistant-action-link"
+                        onclick="tryAssistantMessageAgain('${messageId}')"
+                        ${retryPrompt ? "" : "disabled"}
+                    >
+                        Try again
+                    </button>
                 </div>
             </div>
         </div>
@@ -1070,6 +1127,99 @@ async function renderAssistantMessage(message, hasReasoning, reasoningSteps = []
     }
 
     chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function findLatestUserMessage(messages) {
+    for (let index = messages.length - 1; index >= 0; index--) {
+        if (messages[index].role === "user") {
+            return messages[index].content;
+        }
+    }
+
+    return null;
+}
+
+async function copyUserMessage(messageId, button) {
+    const storedMessage = userMessageActionStore[messageId];
+
+    if (!storedMessage) {
+        return;
+    }
+
+    await copyTextToClipboard(storedMessage.content);
+
+    const originalText = button.textContent;
+    button.textContent = "Copied";
+
+    setTimeout(() => {
+        button.textContent = originalText;
+    }, 1200);
+}
+
+function editUserMessage(messageId) {
+    if (isAgentRunning) {
+        return;
+    }
+
+    const storedMessage = userMessageActionStore[messageId];
+
+    if (!storedMessage) {
+        return;
+    }
+
+    const input = document.getElementById("messageInput");
+    input.value = storedMessage.content;
+    input.disabled = false;
+    input.focus();
+}
+
+async function copyAssistantMessage(messageId, button) {
+    const storedMessage = assistantMessageActionStore[messageId];
+
+    if (!storedMessage) {
+        return;
+    }
+
+    await copyTextToClipboard(storedMessage.answer);
+
+    const originalText = button.textContent;
+    button.textContent = "Copied";
+
+    setTimeout(() => {
+        button.textContent = originalText;
+    }, 1200);
+}
+
+function tryAssistantMessageAgain(messageId) {
+    if (isAgentRunning) {
+        return;
+    }
+
+    const storedMessage = assistantMessageActionStore[messageId];
+
+    if (!storedMessage || !storedMessage.retryPrompt) {
+        return;
+    }
+
+    const input = document.getElementById("messageInput");
+    input.value = storedMessage.retryPrompt;
+    sendMessage();
+}
+
+async function copyTextToClipboard(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch (error) {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.setAttribute("readonly", "");
+        textArea.style.position = "absolute";
+        textArea.style.left = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+    }
 }
 
 function openReasoningDrawer(reasoningId = null) {

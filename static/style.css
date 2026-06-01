@@ -554,6 +554,55 @@ button:hover {
     margin: 0;
 }
 
+.assistant-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 8px;
+    padding-left: 2px;
+}
+
+.assistant-action-link {
+    background: transparent;
+    color: #8a8a8a;
+    padding: 0;
+    border-radius: 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.assistant-action-link:hover {
+    background: transparent;
+    color: #ffffff;
+}
+
+.assistant-action-link:disabled {
+    color: #555555;
+    cursor: not-allowed;
+}
+
+.user-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 8px;
+    padding-right: 2px;
+}
+
+.user-action-link {
+    background: transparent;
+    color: #8a8a8a;
+    padding: 0;
+    border-radius: 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.user-action-link:hover {
+    background: transparent;
+    color: #ffffff;
+}
+
 .reasoning-toggle {
     margin-bottom: 18px;
     background: #2f2f2f;

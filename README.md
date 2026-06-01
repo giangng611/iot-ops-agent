@@ -160,6 +160,8 @@ SOCKETIO_CORS_ORIGINS=
 MAX_DIAGNOSE_MESSAGE_CHARS=2000
 DIAGNOSE_RATE_LIMIT_REQUESTS=10
 DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
+ENABLE_EMBEDDED_TELEMETRY=true
+TELEMETRY_BROADCAST_INTERVAL_SECONDS=30
 ACCESS_CODE=please_contact_project_owner
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 DIFY_API_URL=http://localhost/v1/chat-messages
@@ -220,6 +222,19 @@ Environment variables should be configured through the deployment provider inste
 * [n8n UI Integration](docs/N8N_UI_INTEGRATION.md)
 * [Dify UI Integration](docs/DIFY_UI_INTEGRATION.md)
 * [Roadmap](docs/ROADMAP.md)
+
+---
+
+# Tests
+
+Run the focused backend safety checks:
+
+```bash
+python3 -m unittest tests/test_security_and_realtime.py
+```
+
+The suite covers protected API access, chat ownership, diagnosis request
+limits, and embedded realtime telemetry health.
 
 ---
 

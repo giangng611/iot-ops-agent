@@ -75,6 +75,14 @@ DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS = get_positive_int_env(
     "DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS",
     60
 )
+TELEMETRY_BROADCAST_INTERVAL_SECONDS = get_positive_int_env(
+    "TELEMETRY_BROADCAST_INTERVAL_SECONDS",
+    30
+)
+ENABLE_EMBEDDED_TELEMETRY = (
+    os.getenv("ENABLE_EMBEDDED_TELEMETRY", "true").lower()
+    in {"1", "true", "yes", "on"}
+)
 diagnose_rate_limit_log = defaultdict(deque)
 
 if not flask_secret_key:
@@ -102,6 +110,54 @@ init_db()
 if len(get_all_latest_devices()) == 0:
     for device_id in DEVICES:
         generate_telemetry(device_id)
+
+def generate_telemetry_batch():
+    for device_id in DEVICES:
+        generate_telemetry(device_id)
+
+def build_device_update_payload():
+    devices = get_all_latest_devices()
+
+    critical_count = len([
+        device for device in devices
+        if device["status"] == "critical"
+    ])
+
+    warning_count = len([
+        device for device in devices
+        if device["status"] == "warning"
+    ])
+
+    latest_timestamp = None
+
+    for device in devices:
+        device_timestamp = datetime.fromisoformat(device["timestamp"])
+
+        if latest_timestamp is None or device_timestamp > latest_timestamp:
+            latest_timestamp = device_timestamp
+
+    telemetry_age_seconds = None
+
+    if latest_timestamp:
+        telemetry_age_seconds = (
+                datetime.now() - latest_timestamp
+        ).total_seconds()
+
+    telemetry_stream_status = (
+        "connected"
+        if telemetry_age_seconds is not None and telemetry_age_seconds < 90
+        else "disconnected"
+    )
+
+    return {
+        "devices": devices,
+        "alerts": {
+            "critical_count": critical_count,
+            "warning_count": warning_count,
+            "telemetry_stream_status": telemetry_stream_status,
+            "telemetry_age_seconds": telemetry_age_seconds
+        }
+    }
 
 def get_rate_limit_key():
     user_id = session.get("user_id")
@@ -1088,52 +1144,13 @@ def get_devices():
     })
 
 def device_broadcast_loop():
-    DEVICE_BROADCAST_INTERVAL_SECONDS = 30
     while True:
-        devices = get_all_latest_devices()
+        if ENABLE_EMBEDDED_TELEMETRY:
+            generate_telemetry_batch()
 
-        critical_count = len([
-            device for device in devices
-            if device["status"] == "critical"
-        ])
+        socketio.emit("device_update", build_device_update_payload())
 
-        warning_count = len([
-            device for device in devices
-            if device["status"] == "warning"
-        ])
-
-        latest_timestamp = None
-
-        for device in devices:
-            device_timestamp = datetime.fromisoformat(device["timestamp"])
-
-            if latest_timestamp is None or device_timestamp > latest_timestamp:
-                latest_timestamp = device_timestamp
-
-        telemetry_age_seconds = None
-
-        if latest_timestamp:
-            telemetry_age_seconds = (
-                    datetime.now() - latest_timestamp
-            ).total_seconds()
-
-        telemetry_stream_status = (
-            "connected"
-            if telemetry_age_seconds is not None and telemetry_age_seconds < 90
-            else "disconnected"
-        )
-
-        socketio.emit("device_update", {
-            "devices": devices,
-            "alerts": {
-                "critical_count": critical_count,
-                "warning_count": warning_count,
-                "telemetry_stream_status": telemetry_stream_status,
-                "telemetry_age_seconds": telemetry_age_seconds
-            }
-        })
-
-        time.sleep(DEVICE_BROADCAST_INTERVAL_SECONDS)
+        time.sleep(TELEMETRY_BROADCAST_INTERVAL_SECONDS)
 
 @app.route("/api/prompts", methods=["GET"])
 def api_get_prompts():

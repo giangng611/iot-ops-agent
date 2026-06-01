@@ -32,6 +32,8 @@ SOCKETIO_CORS_ORIGINS=
 MAX_DIAGNOSE_MESSAGE_CHARS=2000
 DIAGNOSE_RATE_LIMIT_REQUESTS=10
 DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
+ENABLE_EMBEDDED_TELEMETRY=true
+TELEMETRY_BROADCAST_INTERVAL_SECONDS=30
 ACCESS_CODE=your_access_code_here
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 DIFY_API_URL=http://localhost/v1/chat-messages
@@ -53,6 +55,7 @@ Environment variables are required for:
 * session management
 * Socket.IO origin checks
 * diagnosis request size and rate limits
+* embedded demo telemetry generation
 * protected account registration
 * optional n8n runtime testing through the UI
 * optional Dify runtime testing through the UI

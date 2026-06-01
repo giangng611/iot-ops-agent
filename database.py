@@ -167,12 +167,12 @@ def get_all_latest_devices():
                t1.heartbeat_delay, t1.status
         FROM telemetry t1
         INNER JOIN (
-            SELECT device_id, MAX(timestamp) AS latest_timestamp
+            SELECT device_id, MAX(id) AS latest_id
             FROM telemetry
             GROUP BY device_id
         ) t2
         ON t1.device_id = t2.device_id
-        AND t1.timestamp = t2.latest_timestamp
+        AND t1.id = t2.latest_id
         ORDER BY t1.device_id
     """)
 

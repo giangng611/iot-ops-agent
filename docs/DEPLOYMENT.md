@@ -88,6 +88,8 @@ SOCKETIO_CORS_ORIGINS=https://iot-ops-agent.onrender.com
 MAX_DIAGNOSE_MESSAGE_CHARS=2000
 DIAGNOSE_RATE_LIMIT_REQUESTS=10
 DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
+ENABLE_EMBEDDED_TELEMETRY=true
+TELEMETRY_BROADCAST_INTERVAL_SECONDS=30
 ACCESS_CODE=your_access_code
 ```
 
@@ -105,6 +107,7 @@ These variables are required for:
 * Flask session security
 * Socket.IO origin checks
 * diagnosis request size and rate limits
+* embedded demo telemetry generation
 * protected account registration
 Optional Dify variables are required only for `IOA v2 · Dify`.
 
@@ -161,11 +164,25 @@ before starting the Flask application.
 
 ---
 
-## 7. Start Telemetry Simulator
+## 7. Realtime Telemetry
 
-The simulator continuously generates realtime device telemetry.
+For the hosted Render demo, keep embedded telemetry enabled:
 
-Run:
+```env
+ENABLE_EMBEDDED_TELEMETRY=true
+TELEMETRY_BROADCAST_INTERVAL_SECONDS=30
+```
+
+This lets the Flask web service generate a fresh telemetry batch before each
+Socket.IO broadcast, so the dashboard remains connected even without a separate
+background worker.
+
+For local development, you can either use embedded telemetry or disable it and
+run the standalone simulator:
+
+```env
+ENABLE_EMBEDDED_TELEMETRY=false
+```
 
 ```bash
 python3 simulator.py

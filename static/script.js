@@ -536,7 +536,8 @@ async function sendMessage() {
             currentMode === "ioa_v2_custom" ||
             currentMode === "ioa_v2_langchain" ||
             currentMode === "ioa_v2_langgraph" ||
-            currentMode === "ioa_v2_n8n"
+            currentMode === "ioa_v2_n8n" ||
+            currentMode === "ioa_v2_dify"
         ) {
         loading.innerHTML = `
             <span>Agent is thinking...</span>
@@ -2039,6 +2040,10 @@ function openProfileDrawer(type) {
 
         if (selectedMode === "ioa_v2_n8n") {
             modeLabel = "IOA v2 · n8n Workflow Agent";
+        }
+
+        if (selectedMode === "ioa_v2_dify") {
+            modeLabel = "IOA v2 · Dify App Agent";
         }
 
         const deviceCount =

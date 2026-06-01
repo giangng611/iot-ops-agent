@@ -37,6 +37,7 @@ The project currently supports multiple orchestration runtimes:
 * **IOA v2 · LangChain** — framework-managed orchestration runtime
 * **IOA v2 · LangGraph** — graph-based orchestration runtime
 * **IOA v2 · n8n** — local webhook-driven workflow runtime
+* **IOA v2 · Dify** — app API-driven workflow/agent runtime
 
 ---
 
@@ -156,6 +157,9 @@ OPENAI_API_KEY=your_openai_api_key
 FLASK_SECRET_KEY=your_secret_key
 ACCESS_CODE=please_contact_project_owner
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
+DIFY_API_URL=http://localhost/v1/chat-messages
+DIFY_API_KEY=your_dify_app_api_key
+DIFY_USER=iot-ops-agent-ui
 ```
 
 ---

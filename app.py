@@ -220,6 +220,81 @@ def call_n8n_agent(user_input):
         "steps": data.get("steps", [])
     }
 
+def build_dify_payload(user_input):
+    n8n_payload = build_n8n_payload(user_input)
+    operational_context = n8n_payload["operational_context"]
+
+    return {
+        "inputs": {
+            "system_prompt": n8n_payload["system_prompt"],
+            "diagnosis_output_format": DIAGNOSIS_OUTPUT_FORMAT,
+            "operational_context": json.dumps(
+                operational_context,
+                indent=2
+            )
+        },
+        "query": n8n_payload["n8n_llm_prompt"],
+        "response_mode": "blocking",
+        "user": os.getenv("DIFY_USER", "iot-ops-agent-ui")
+    }
+
+def call_dify_agent(user_input):
+    api_url = (
+        os.getenv("DIFY_API_URL")
+        or os.getenv("EVAL_DIFY_API_URL")
+        or "http://localhost/v1/chat-messages"
+    )
+    api_key = (
+        os.getenv("DIFY_API_KEY")
+        or os.getenv("EVAL_DIFY_API_KEY")
+    )
+
+    if not api_key:
+        raise RuntimeError(
+            "DIFY_API_KEY is not configured. Set it to your Dify app API key."
+        )
+
+    response = requests.post(
+        api_url,
+        headers={"Authorization": f"Bearer {api_key}"},
+        json=build_dify_payload(user_input),
+        timeout=120
+    )
+    response.raise_for_status()
+
+    data = response.json()
+    answer = (
+        data.get("answer")
+        or data.get("response")
+        or data.get("text")
+        or json.dumps(data, indent=2)
+    )
+    returned_steps = []
+
+    if isinstance(answer, str):
+        try:
+            parsed_answer = json.loads(answer)
+            if isinstance(parsed_answer, dict):
+                returned_steps = parsed_answer.get("steps", [])
+                answer = (
+                    parsed_answer.get("response")
+                    or parsed_answer.get("answer")
+                    or parsed_answer.get("text")
+                    or answer
+                )
+        except ValueError:
+            pass
+
+    metadata = data.get("metadata", {})
+
+    return {
+        "final_answer": answer,
+        "steps": returned_steps,
+        "metadata": metadata,
+        "conversation_id": data.get("conversation_id"),
+        "message_id": data.get("message_id")
+    }
+
 def normalize_n8n_steps(result):
     raw_steps = result.get("steps", [])
 
@@ -279,6 +354,83 @@ def normalize_n8n_steps(result):
 
     return steps
 
+def normalize_dify_steps(result):
+    metadata = result.get("metadata") or {}
+    returned_steps = result.get("steps") or []
+
+    steps = [
+        {
+            "iteration": 1,
+            "thought": "The request should be delegated to Dify for app-based agent orchestration.",
+            "action": "call_dify_chat_messages_api",
+            "output": {
+                "framework": "Dify",
+                "runtime_type": "external app API runtime",
+                "response_received": True,
+                "conversation_id": result.get("conversation_id"),
+                "message_id": result.get("message_id")
+            }
+        }
+    ]
+
+    if isinstance(returned_steps, list):
+        for index, step in enumerate(returned_steps, start=2):
+            if isinstance(step, dict):
+                steps.append({
+                    "iteration": index,
+                    "thought": (
+                        step.get("thought")
+                        or step.get("description")
+                        or step.get("node")
+                        or "Dify returned an app execution step."
+                    ),
+                    "action": (
+                        step.get("action")
+                        or step.get("tool")
+                        or step.get("node")
+                        or "dify_app_step"
+                    ),
+                    "output": (
+                        step.get("output")
+                        if "output" in step
+                        else step
+                    )
+                })
+
+    workflow_run_id = metadata.get("workflow_run_id")
+
+    if workflow_run_id:
+        steps.append({
+            "iteration": len(steps) + 1,
+            "thought": "Dify returned workflow metadata that can be used to inspect the run in Dify logs.",
+            "action": "inspect_dify_workflow_run",
+            "output": {
+                "workflow_run_id": workflow_run_id
+            }
+        })
+
+    usage = metadata.get("usage")
+
+    if usage:
+        steps.append({
+            "iteration": len(steps) + 1,
+            "thought": "Dify returned model usage metadata for benchmark accounting.",
+            "action": "record_dify_usage",
+            "output": usage
+        })
+
+    if len(steps) == 1:
+        steps.append({
+            "iteration": 2,
+            "thought": "Dify completed execution and returned a final response.",
+            "action": "format_dify_response",
+            "output": {
+                "answer_preview": result.get("final_answer", "")[:300]
+            }
+        })
+
+    return steps
+
 def log_n8n_benchmark(user_input, latency_seconds, status, step_count, error=None):
     notes = (
         f"Automatic benchmark capture from UI execution through n8n webhook. "
@@ -298,6 +450,41 @@ def log_n8n_benchmark(user_input, latency_seconds, status, step_count, error=Non
         observability_score=0,
         development_complexity_score=4,
         integration_speed_score=5,
+        ecosystem_score=4,
+        maintainability_score=4,
+        notes=notes
+    )
+
+def log_dify_benchmark(user_input, latency_seconds, status, step_count, error=None):
+    notes = (
+        f"Automatic provisional benchmark capture from UI execution through Dify API. "
+        f"status={status}; step_count={step_count}"
+    )
+
+    if error:
+        notes = f"{notes}; error={error[:300]}"
+
+    if status == "success":
+        accuracy_score = 3
+        tool_usage_score = 3
+        reasoning_clarity_score = 3
+        observability_score = 3
+    else:
+        accuracy_score = 0
+        tool_usage_score = 0
+        reasoning_clarity_score = 0
+        observability_score = 0
+
+    log_benchmark_result(
+        mode="IOA v2 · Dify",
+        prompt=user_input,
+        latency_seconds=latency_seconds,
+        accuracy_score=accuracy_score,
+        tool_usage_score=tool_usage_score,
+        reasoning_clarity_score=reasoning_clarity_score,
+        observability_score=observability_score,
+        development_complexity_score=4,
+        integration_speed_score=4,
         ecosystem_score=4,
         maintainability_score=4,
         notes=notes
@@ -427,6 +614,39 @@ def diagnose():
                     2
                 )
                 log_n8n_benchmark(
+                    user_input=user_input,
+                    latency_seconds=latency_seconds,
+                    status="error",
+                    step_count=0,
+                    error=str(e)
+                )
+                raise
+
+            return jsonify({
+                "response": result["final_answer"],
+                "steps": steps
+            })
+
+        if mode == "ioa_v2_dify":
+            try:
+                result = call_dify_agent(user_input)
+                steps = normalize_dify_steps(result)
+                latency_seconds = round(
+                    time.time() - start_time,
+                    2
+                )
+                log_dify_benchmark(
+                    user_input=user_input,
+                    latency_seconds=latency_seconds,
+                    status="success",
+                    step_count=len(steps)
+                )
+            except Exception as e:
+                latency_seconds = round(
+                    time.time() - start_time,
+                    2
+                )
+                log_dify_benchmark(
                     user_input=user_input,
                     latency_seconds=latency_seconds,
                     status="error",
@@ -634,6 +854,87 @@ def diagnose_stream():
                         'observation': {
                             'output': {
                                 'framework': 'n8n',
+                                'status': 'error',
+                                'error': str(e)
+                            }
+                        }
+                    })}\n\n"
+
+                    yield f"data: {json.dumps({
+                        'type': 'error',
+                        'error': str(e)
+                    })}\n\n"
+
+                return
+
+            if mode == "ioa_v2_dify":
+                try:
+                    yield f"data: {json.dumps({
+                        'type': 'thought',
+                        'iteration': 1,
+                        'thought': 'The request should be delegated to Dify for app-based agent orchestration.',
+                        'action': 'call_dify_chat_messages_api'
+                    })}\n\n"
+
+                    result = call_dify_agent(user_input)
+                    steps = normalize_dify_steps(result)
+
+                    latency_seconds = round(time.time() - start_time, 2)
+
+                    log_dify_benchmark(
+                        user_input=user_input,
+                        latency_seconds=latency_seconds,
+                        status="success",
+                        step_count=len(steps)
+                    )
+
+                    first_step = steps[0]
+
+                    yield f"data: {json.dumps({
+                        'type': 'observation',
+                        'iteration': first_step['iteration'],
+                        'observation': {
+                            'output': first_step['output']
+                        }
+                    })}\n\n"
+
+                    for step in steps[1:]:
+                        yield f"data: {json.dumps({
+                            'type': 'thought',
+                            'iteration': step['iteration'],
+                            'thought': step['thought'],
+                            'action': step['action']
+                        })}\n\n"
+
+                        yield f"data: {json.dumps({
+                            'type': 'observation',
+                            'iteration': step['iteration'],
+                            'observation': {
+                                'output': step['output']
+                            }
+                        })}\n\n"
+
+                    yield f"data: {json.dumps({
+                        'type': 'final',
+                        'final_answer': result['final_answer']
+                    })}\n\n"
+                except Exception as e:
+                    latency_seconds = round(time.time() - start_time, 2)
+
+                    log_dify_benchmark(
+                        user_input=user_input,
+                        latency_seconds=latency_seconds,
+                        status="error",
+                        step_count=0,
+                        error=str(e)
+                    )
+
+                    yield f"data: {json.dumps({
+                        'type': 'observation',
+                        'iteration': 1,
+                        'observation': {
+                            'output': {
+                                'framework': 'Dify',
                                 'status': 'error',
                                 'error': str(e)
                             }

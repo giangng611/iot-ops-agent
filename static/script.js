@@ -602,6 +602,8 @@ async function sendMessage() {
         addAssistantMessage("Request failed: " + error, false);
 
     } finally {
+        await waitForAssistantTypingToFinish();
+
         loading.classList.add("hidden");
 
         runButton.disabled = false;
@@ -636,17 +638,29 @@ async function sendStreamMessage(message) {
     const decoder = new TextDecoder();
 
     let finalAnswer = "";
+    let streamBuffer = "";
+    let receivedTerminalEvent = false;
 
     while (true) {
         const { value, done } = await reader.read();
 
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const events = chunk.split("\n\n").filter(Boolean);
+        streamBuffer += decoder.decode(value, { stream: true });
+        const events = streamBuffer.split("\n\n");
+        streamBuffer = events.pop() || "";
 
         events.forEach(eventText => {
-            const jsonText = eventText.replace("data: ", "");
+            const jsonText = eventText
+                .split("\n")
+                .filter(line => line.startsWith("data: "))
+                .map(line => line.replace("data: ", ""))
+                .join("");
+
+            if (!jsonText) {
+                return;
+            }
+
             const event = JSON.parse(jsonText);
 
             if (event.type === "thought") {
@@ -679,16 +693,46 @@ async function sendStreamMessage(message) {
             if (event.type === "final") {
                 finalAnswer = event.final_answer;
                 pendingFinalAnswer = finalAnswer;
+                receivedTerminalEvent = true;
             }
 
             if (event.type === "error") {
                 finalAnswer = "Error: " + event.error;
                 pendingFinalAnswer = finalAnswer;
+                receivedTerminalEvent = true;
             }
         });
     }
 
+    if (streamBuffer.trim()) {
+        const jsonText = streamBuffer
+            .split("\n")
+            .filter(line => line.startsWith("data: "))
+            .map(line => line.replace("data: ", ""))
+            .join("");
+
+        if (jsonText) {
+            const event = JSON.parse(jsonText);
+
+            if (event.type === "final") {
+                finalAnswer = event.final_answer;
+                pendingFinalAnswer = finalAnswer;
+                receivedTerminalEvent = true;
+            }
+
+            if (event.type === "error") {
+                finalAnswer = "Error: " + event.error;
+                pendingFinalAnswer = finalAnswer;
+                receivedTerminalEvent = true;
+            }
+        }
+    }
+
     await reasoningTypingQueue;
+
+    if (!receivedTerminalEvent) {
+        throw new Error("Stream ended before the agent returned a final answer.");
+    }
 
     return finalAnswer;
 }
@@ -2372,6 +2416,24 @@ function typeTextIntoElementPromise(element, text, speed = 8) {
         }
 
         typeNextCharacter();
+    });
+}
+
+function waitForAssistantTypingToFinish() {
+    return new Promise(resolve => {
+        function checkTypingState() {
+            const activeTyping =
+                document.querySelector(".typing-output.is-typing");
+
+            if (!activeTyping) {
+                resolve();
+                return;
+            }
+
+            setTimeout(checkTypingState, 80);
+        }
+
+        checkTypingState();
     });
 }
 

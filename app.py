@@ -48,8 +48,10 @@ from telemetry_store import (
 from tools import check_system_overview, check_system_alarms
 from benchmark_logger import log_benchmark_result
 from mongo_store import (
+    ensure_telemetry_indexes,
     get_all_latest_devices_from_mongo,
     get_device_telemetry_history_from_mongo,
+    get_telemetry_indexes,
     get_telemetry_health,
 )
 
@@ -1304,6 +1306,22 @@ def get_mongo_telemetry_health():
     except Exception as exc:
         return jsonify({
             "error": "MongoDB telemetry read failed",
+            "details": str(exc)
+        }), 503
+
+@app.route("/api/mongo/telemetry/indexes", methods=["GET", "POST"])
+def mongo_telemetry_indexes():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        if request.method == "POST":
+            ensure_telemetry_indexes()
+
+        return jsonify(get_telemetry_indexes())
+    except Exception as exc:
+        return jsonify({
+            "error": "MongoDB telemetry index check failed",
             "details": str(exc)
         }), 503
 

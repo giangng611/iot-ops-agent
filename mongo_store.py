@@ -57,6 +57,40 @@ def get_telemetry_collection():
     return client[get_mongodb_db()][get_mongodb_telemetry_collection()]
 
 
+def ensure_telemetry_indexes():
+    collection = get_telemetry_collection()
+
+    index_names = [
+        collection.create_index(
+            [("device_id", 1), ("timestamp", -1)],
+            name="device_timestamp_desc",
+        ),
+        collection.create_index(
+            [("timestamp", -1)],
+            name="timestamp_desc",
+        ),
+        collection.create_index(
+            [("status", 1), ("timestamp", -1)],
+            name="status_timestamp_desc",
+        ),
+    ]
+
+    return {
+        "database": get_mongodb_db(),
+        "collection": get_mongodb_telemetry_collection(),
+        "indexes": index_names,
+    }
+
+
+def get_telemetry_indexes():
+    collection = get_telemetry_collection()
+    return {
+        "database": get_mongodb_db(),
+        "collection": get_mongodb_telemetry_collection(),
+        "indexes": list(collection.list_indexes()),
+    }
+
+
 def build_telemetry_document(
     device_id,
     cpu_usage,

@@ -171,6 +171,27 @@ Verify the active read source:
 python3 scripts/check_telemetry_read_source.py
 ```
 
+### Optional: Prepare MongoDB Telemetry Indexes
+
+Phase D adds MongoDB indexes for the telemetry read path.
+
+```bash
+python3 scripts/ensure_mongodb_indexes.py
+```
+
+The script creates or verifies:
+
+* `device_timestamp_desc` for latest status and per-device history
+* `timestamp_desc` for latest telemetry checks
+* `status_timestamp_desc` for status-based alert queries
+
+You can also inspect indexes through the authenticated Flask API:
+
+```text
+GET /api/mongo/telemetry/indexes
+POST /api/mongo/telemetry/indexes
+```
+
 ---
 
 ## 6. Start Flask Application

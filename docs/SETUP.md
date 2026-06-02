@@ -40,6 +40,8 @@ TELEMETRY_WRITE_BACKEND=sqlite
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB=iot_ops_agent
 MONGODB_TELEMETRY_COLLECTION=telemetry
+APP_DB_BACKEND=sqlite
+SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:5432/postgres
 ACCESS_CODE=your_access_code_here
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 DIFY_API_URL=http://localhost/v1/chat-messages
@@ -65,6 +67,7 @@ Environment variables are required for:
 * optional MongoDB telemetry dual-write
 * optional MongoDB telemetry read path
 * telemetry write backend selection
+* optional Supabase/Postgres app-data migration
 * protected account registration
 * optional n8n runtime testing through the UI
 * optional Dify runtime testing through the UI
@@ -241,7 +244,63 @@ migrated SQLite rows.
 
 ---
 
-## 6. Start Flask Application
+## 6. Optional: Migrate App Data to Supabase/Postgres
+
+Telemetry remains in MongoDB. Supabase/Postgres is only for relational app data:
+
+* users
+* chats
+* messages
+* prompts
+
+Create a Supabase project, open **Project Settings -> Database -> Connect**,
+and copy a Postgres connection string. For local backend/server scripts, the
+Session Pooler connection string is usually the simplest starting point.
+
+Add it to `.env`:
+
+```env
+APP_DB_BACKEND=sqlite
+SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:5432/postgres
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Check the connection:
+
+```bash
+python3 scripts/check_supabase_postgres.py
+```
+
+Apply the app-data schema:
+
+```bash
+python3 scripts/apply_supabase_schema.py
+```
+
+Preview SQLite app-data counts:
+
+```bash
+python3 scripts/migrate_sqlite_app_data_to_supabase.py
+```
+
+Run the migration:
+
+```bash
+python3 scripts/migrate_sqlite_app_data_to_supabase.py --apply
+```
+
+This migration preserves integer IDs so existing chat/message/prompt
+relationships remain stable. The Flask app is not switched to Supabase until
+`APP_DB_BACKEND` is changed in a later phase.
+
+---
+
+## 7. Start Flask Application
 
 Open another terminal and run:
 

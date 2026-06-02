@@ -2,7 +2,7 @@ import json
 
 from tools import TOOLS
 from prompts import IOA_V2_AGENT_PROMPT
-from database import get_all_latest_devices
+from telemetry_store import get_all_latest_devices
 from prompts import DIAGNOSIS_OUTPUT_FORMAT
 
 

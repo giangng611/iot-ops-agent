@@ -3,7 +3,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from prompts import DIAGNOSIS_OUTPUT_FORMAT
 
-from database import (
+from telemetry_store import (
     get_all_latest_devices,
     get_latest_status,
     get_device_telemetry_history

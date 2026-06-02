@@ -1,4 +1,4 @@
-from database import get_latest_status, get_all_latest_devices
+from telemetry_store import get_latest_status, get_all_latest_devices
 
 
 def check_device_status(device_id):

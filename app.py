@@ -20,9 +20,6 @@ from agents.langchain_agent import LangChainAgent
 from agents.langgraph_agent import LangGraphAgent
 from database import (
     init_db,
-    get_all_latest_devices,
-    get_device_telemetry_history,
-    get_latest_status,
     create_chat,
     get_chats,
     chat_belongs_to_user,
@@ -41,6 +38,12 @@ from database import (
     delete_user_account,
     get_user_by_username,
     get_user_usage_stats
+)
+from telemetry_store import (
+    get_all_latest_devices,
+    get_device_telemetry_history,
+    get_latest_status,
+    get_telemetry_source
 )
 from tools import check_system_overview, check_system_alarms
 from benchmark_logger import log_benchmark_result
@@ -155,6 +158,7 @@ def build_device_update_payload():
     )
 
     return {
+        "source": get_telemetry_source(),
         "devices": devices,
         "alerts": {
             "critical_count": critical_count,
@@ -245,6 +249,7 @@ def build_n8n_payload(user_input):
     target_device = extract_device_id_from_text(user_input)
 
     operational_context = {
+        "telemetry_source": get_telemetry_source(),
         "latest_devices": get_all_latest_devices(),
         "system_overview": check_system_overview(),
         "system_alarms": check_system_alarms(),
@@ -1145,6 +1150,7 @@ def get_devices():
 
     devices = get_all_latest_devices()
     return jsonify({
+        "source": get_telemetry_source(),
         "devices": devices
     })
 
@@ -1282,6 +1288,7 @@ def get_device_history(device_id):
     history = get_device_telemetry_history(device_id)
 
     return jsonify({
+        "source": get_telemetry_source(),
         "device_id": device_id,
         "history": history
     })

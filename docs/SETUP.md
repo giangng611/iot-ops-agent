@@ -35,6 +35,7 @@ DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
 ENABLE_EMBEDDED_TELEMETRY=true
 TELEMETRY_BROADCAST_INTERVAL_SECONDS=30
 ENABLE_MONGODB=false
+READ_TELEMETRY_FROM_MONGO=false
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB=iot_ops_agent
 MONGODB_TELEMETRY_COLLECTION=telemetry
@@ -61,6 +62,7 @@ Environment variables are required for:
 * diagnosis request size and rate limits
 * embedded demo telemetry generation
 * optional MongoDB telemetry dual-write
+* optional MongoDB telemetry read path
 * protected account registration
 * optional n8n runtime testing through the UI
 * optional Dify runtime testing through the UI
@@ -141,6 +143,33 @@ The script checks:
 
 These endpoints require an authenticated session in the Flask app. The check
 script creates a local test session for verification.
+
+### Optional: Read Telemetry From MongoDB
+
+Phase C allows existing telemetry consumers to read from MongoDB while keeping
+SQLite as the fallback.
+
+```env
+ENABLE_MONGODB=true
+READ_TELEMETRY_FROM_MONGO=true
+```
+
+When enabled, the existing app routes and agent context use MongoDB for:
+
+* latest device list
+* device telemetry history
+* latest device status
+* system overview and alarm tools
+
+SQLite remains the fallback if MongoDB is unavailable or returns no telemetry.
+Existing API responses include a `source` field so the active read source is
+visible during testing.
+
+Verify the active read source:
+
+```bash
+python3 scripts/check_telemetry_read_source.py
+```
 
 ---
 

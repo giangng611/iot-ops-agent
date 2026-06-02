@@ -14,7 +14,8 @@ from agents.ioa_v1_agent import IOAV1Agent
 from agents.ioa_v2_agent import IOAV2Agent
 from agents.langchain_agent import LangChainAgent
 from agents.langgraph_agent import LangGraphAgent
-from database import init_db, get_all_latest_devices
+from database import init_db
+from telemetry_store import get_all_latest_devices
 from simulator import DEVICES, generate_telemetry
 from tools import check_system_overview, check_system_alarms
 from prompts import DIAGNOSIS_OUTPUT_FORMAT

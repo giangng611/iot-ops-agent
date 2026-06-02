@@ -166,6 +166,20 @@ def get_all_latest_devices_from_mongo():
     ]
 
 
+def get_latest_status_from_mongo(device_id):
+    collection = get_telemetry_collection()
+    document = collection.find_one(
+        {"device_id": device_id},
+        {"_id": 0},
+        sort=[("timestamp", -1)],
+    )
+
+    if not document:
+        return None
+
+    return flatten_telemetry_document(document)
+
+
 def get_device_telemetry_history_from_mongo(device_id, limit=30):
     collection = get_telemetry_collection()
     rows = list(

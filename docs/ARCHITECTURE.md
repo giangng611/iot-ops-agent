@@ -151,6 +151,24 @@ The backend also coordinates:
 * telemetry retrieval
 * frontend synchronization
 
+Phase 3 introduces a service and blueprint split for lower-risk route
+maintenance:
+
+* `services/auth_service.py` handles login, registration, password changes,
+  username changes, and account deletion rules.
+* `services/chat_service.py` handles chat creation, chat ownership checks,
+  message persistence, and title generation.
+* `services/prompt_service.py` handles default prompts and prompt CRUD.
+* `services/profile_service.py` handles profile usage stats and storage status
+  composition.
+* `routes/auth_routes.py`, `routes/chat_routes.py`,
+  `routes/prompt_routes.py`, `routes/profile_routes.py`, and
+  `routes/storage_routes.py` expose the corresponding Flask blueprints.
+
+`app.py` still owns the high-coupling runtime surfaces: diagnosis execution,
+streaming responses, telemetry APIs, MongoDB telemetry inspection APIs,
+Socket.IO broadcasting, and application startup.
+
 ---
 
 ## 4. WebSocket Layer

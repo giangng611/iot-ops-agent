@@ -60,6 +60,11 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             ("get", "/api/mongo/devices", {}),
             ("get", "/api/mongo/telemetry/sensor-001", {}),
             ("get", "/api/storage/status", {}),
+            ("get", "/api/chats", {}),
+            ("post", "/api/chats", {"json": {"message": "hello"}}),
+            ("get", "/api/prompts", {}),
+            ("post", "/api/prompts", {"json": {"title": "x", "command": "/x"}}),
+            ("get", "/api/profile/usage-stats", {}),
         ]
 
         for method, path, kwargs in routes:
@@ -158,6 +163,40 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         )
         self.assertFalse("error" in payload["storage"]["app_data"])
         self.assertEqual(payload["storage"]["telemetry"]["source"], "sqlite")
+
+    def test_prompt_crud_routes_use_authenticated_user(self):
+        user = self.create_user_once("prompt-route-user", "prompt-pass")
+        self.login_as(user)
+
+        response = self.client.post(
+            "/api/prompts",
+            json={
+                "title": "Route Prompt",
+                "command": "/route prompt",
+                "category": "Custom",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        prompt_id = response.get_json()["id"]
+
+        response = self.client.get("/api/prompts")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            any(prompt["id"] == prompt_id for prompt in response.get_json()["prompts"])
+        )
+
+        response = self.client.put(
+            f"/api/prompts/{prompt_id}",
+            json={
+                "title": "Route Prompt Updated",
+                "command": "/route prompt updated",
+                "category": "Custom",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+        response = self.client.delete(f"/api/prompts/{prompt_id}")
+        self.assertEqual(response.status_code, 200)
 
     def test_storage_status_api_reports_backend_shape(self):
         user = self.create_user_once("storage-api-user", "storage-pass")

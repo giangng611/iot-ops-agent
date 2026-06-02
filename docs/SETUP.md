@@ -254,14 +254,15 @@ Telemetry remains in MongoDB. Supabase/Postgres is only for relational app data:
 * prompts
 
 Create a Supabase project, open **Project Settings -> Database -> Connect**,
-and copy a Postgres connection string. For local backend/server scripts, the
-Session Pooler connection string is usually the simplest starting point.
+and copy a Postgres connection string. For local backend/server scripts on
+IPv4 networks, the Transaction Pooler connection string is usually the
+simplest starting point.
 
 Add it to `.env`:
 
 ```env
 APP_DB_BACKEND=sqlite
-SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:5432/postgres
+SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:6543/postgres
 ```
 
 Install dependencies:

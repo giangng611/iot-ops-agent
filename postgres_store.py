@@ -36,7 +36,7 @@ def get_postgres_connection():
             "SUPABASE_DB_URL, DATABASE_URL, or POSTGRES_URL is required."
         )
 
-    return psycopg.connect(url, row_factory=dict_row)
+    return psycopg.connect(url, row_factory=dict_row, prepare_threshold=None)
 
 
 def apply_schema(schema_path):

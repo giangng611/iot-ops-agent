@@ -18,6 +18,19 @@ from postgres_store import (  # noqa: E402
 
 
 SCHEMA_PATH = ROOT / "supabase" / "migrations" / "20260602000100_create_app_tables.sql"
+EXCLUDED_USERNAMES = {
+    "security_owner",
+    "security_attacker",
+    "security_owner_2",
+    "security_attacker_2",
+    "limit_tester",
+    "limit_tester_2",
+    "limit-user",
+    "owner",
+    "other",
+    "mongo-checker",
+    "telemetry-source-checker",
+}
 
 
 def fetch_sqlite_rows(table_name):
@@ -163,6 +176,29 @@ def main():
         table_name: fetch_sqlite_rows(table_name)
         for table_name in tables
     }
+
+    excluded_user_ids = {
+        row["id"]
+        for row in sqlite_rows["users"]
+        if row["username"] in EXCLUDED_USERNAMES
+    }
+    sqlite_rows["users"] = [
+        row for row in sqlite_rows["users"]
+        if row["id"] not in excluded_user_ids
+    ]
+    sqlite_rows["chats"] = [
+        row for row in sqlite_rows["chats"]
+        if row.get("user_id") not in excluded_user_ids
+    ]
+    included_chat_ids = {row["id"] for row in sqlite_rows["chats"]}
+    sqlite_rows["messages"] = [
+        row for row in sqlite_rows["messages"]
+        if row["chat_id"] in included_chat_ids
+    ]
+    sqlite_rows["prompts"] = [
+        row for row in sqlite_rows["prompts"]
+        if row["user_id"] not in excluded_user_ids
+    ]
 
     print("SQLite source counts:")
     for table_name in tables:

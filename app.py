@@ -18,7 +18,7 @@ from agents.ioa_v1_agent import IOAV1Agent
 from agents.ioa_v2_agent import IOAV2Agent
 from agents.langchain_agent import LangChainAgent
 from agents.langgraph_agent import LangGraphAgent
-from database import (
+from relational_store import (
     init_db,
     create_chat,
     get_chats,

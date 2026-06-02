@@ -9,13 +9,14 @@ os.environ.setdefault("ENABLE_EMBEDDED_TELEMETRY", "false")
 os.environ.setdefault("ENABLE_MONGODB", "false")
 os.environ.setdefault("READ_TELEMETRY_FROM_MONGO", "false")
 os.environ.setdefault("TELEMETRY_WRITE_BACKEND", "sqlite")
+os.environ["APP_DB_BACKEND"] = "sqlite"
 
 _TEMP_DIR = tempfile.TemporaryDirectory()
 _ORIGINAL_CWD = os.getcwd()
 os.chdir(_TEMP_DIR.name)
 
 import app as app_module  # noqa: E402
-from database import (  # noqa: E402
+from relational_store import (  # noqa: E402
     add_message,
     create_chat,
     create_user,

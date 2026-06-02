@@ -125,6 +125,53 @@ def insert_telemetry(device_id, cpu_usage, memory_usage, heartbeat_delay,
     conn.close()
 
 
+def get_all_telemetry_rows(limit=None, offset=0):
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    query = """
+        SELECT
+            id,
+            device_id,
+            timestamp,
+            cpu_usage,
+            memory_usage,
+            heartbeat_delay,
+            status,
+            log_message,
+            alarm_name,
+            alarm_severity
+        FROM telemetry
+        ORDER BY id ASC
+    """
+    params = []
+
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            "id": row["id"],
+            "device_id": row["device_id"],
+            "timestamp": row["timestamp"],
+            "cpu_usage": row["cpu_usage"],
+            "memory_usage": row["memory_usage"],
+            "heartbeat_delay": row["heartbeat_delay"],
+            "status": row["status"],
+            "log_message": row["log_message"],
+            "alarm_name": row["alarm_name"],
+            "alarm_severity": row["alarm_severity"],
+        }
+        for row in rows
+    ]
+
+
 def get_latest_status(device_id):
     conn = get_connection()
     cursor = conn.cursor()

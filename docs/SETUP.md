@@ -192,6 +192,32 @@ GET /api/mongo/telemetry/indexes
 POST /api/mongo/telemetry/indexes
 ```
 
+### Optional: Backfill SQLite Telemetry to MongoDB
+
+After MongoDB dual-write and read-source checks are working, you can migrate
+existing SQLite telemetry rows into MongoDB.
+
+Preview the number of SQLite telemetry rows:
+
+```bash
+python3 scripts/backfill_sqlite_telemetry_to_mongodb.py --dry-run
+```
+
+Run the backfill:
+
+```bash
+python3 scripts/backfill_sqlite_telemetry_to_mongodb.py --batch-size 500
+```
+
+The backfill is idempotent. It stores migrated rows with:
+
+* `source=sqlite_backfill`
+* `sqlite_id=<original SQLite telemetry id>`
+
+MongoDB also has a partial unique index on `(source, sqlite_id)` for
+`source=sqlite_backfill`, so running the backfill again will not duplicate
+migrated SQLite rows.
+
 ---
 
 ## 6. Start Flask Application

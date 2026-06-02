@@ -73,6 +73,15 @@ def ensure_telemetry_indexes():
             [("status", 1), ("timestamp", -1)],
             name="status_timestamp_desc",
         ),
+        collection.create_index(
+            [("source", 1), ("sqlite_id", 1)],
+            name="source_sqlite_id_unique",
+            unique=True,
+            partialFilterExpression={
+                "source": "sqlite_backfill",
+                "sqlite_id": {"$exists": True},
+            },
+        ),
     ]
 
     return {
@@ -120,6 +129,27 @@ def build_telemetry_document(
     }
 
 
+def build_telemetry_document_from_sqlite_row(row):
+    return {
+        "device_id": row["device_id"],
+        "timestamp": row["timestamp"],
+        "metrics": {
+            "cpu_usage": row["cpu_usage"],
+            "memory_usage": row["memory_usage"],
+            "heartbeat_delay": row["heartbeat_delay"],
+        },
+        "status": row["status"],
+        "log_message": row.get("log_message"),
+        "alarm": {
+            "name": row.get("alarm_name"),
+            "severity": row.get("alarm_severity"),
+            "active": row.get("alarm_name") is not None,
+        },
+        "source": "sqlite_backfill",
+        "sqlite_id": row["id"],
+    }
+
+
 def insert_telemetry_document(document):
     if not mongodb_enabled():
         return False
@@ -127,6 +157,21 @@ def insert_telemetry_document(document):
     collection = get_telemetry_collection()
     collection.insert_one(document)
     return True
+
+
+def upsert_sqlite_telemetry_row(row):
+    collection = get_telemetry_collection()
+    document = build_telemetry_document_from_sqlite_row(row)
+    result = collection.update_one(
+        {"source": "sqlite_backfill", "sqlite_id": row["id"]},
+        {"$setOnInsert": document},
+        upsert=True,
+    )
+
+    return {
+        "matched": result.matched_count,
+        "upserted": result.upserted_id is not None,
+    }
 
 
 def insert_telemetry_if_enabled(**telemetry):

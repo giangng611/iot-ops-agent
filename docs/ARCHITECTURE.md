@@ -104,9 +104,8 @@ The storage layer is split across these modules:
 * `storage/postgres_store.py` manages Supabase/Postgres connections, schema setup, and pooling.
 * `storage/sqlite_store.py` keeps the SQLite legacy/fallback implementation.
 
-Top-level modules such as `database.py`, `mongo_store.py`, `postgres_store.py`,
-`telemetry_store.py`, and `relational_store.py` remain as compatibility
-wrappers during the storage package migration.
+The legacy top-level storage modules were removed after the codebase migrated
+to explicit `storage.*` imports.
 
 `APP_DB_BACKEND=supabase` makes Supabase/Postgres the app-data backend.
 `APP_DB_FALLBACK_ENABLED=false` disables silent SQLite fallback for
@@ -163,14 +162,19 @@ maintenance:
   composition.
 * `services/telemetry_service.py` handles telemetry API payloads and MongoDB
   telemetry inspection payloads.
+* `services/diagnose_service.py` handles n8n/Dify integrations, operational
+  diagnosis context construction, step normalization, and benchmark logging for
+  external diagnosis runtimes.
 * `routes/auth_routes.py`, `routes/chat_routes.py`,
   `routes/prompt_routes.py`, `routes/profile_routes.py`, and
   `routes/storage_routes.py` expose the corresponding Flask blueprints.
 * `routes/telemetry_routes.py` exposes `/api/devices`, `/api/telemetry/*`,
   and `/api/mongo/*` telemetry inspection routes.
+* `routes/diagnose_routes.py` exposes `/api/diagnose` and
+  `/api/diagnose-stream`, including request validation and rate limiting.
 
-`app.py` still owns the high-coupling runtime surfaces: diagnosis execution,
-streaming responses, Socket.IO broadcasting, and application startup.
+`app.py` now owns application wiring, route registration, Socket.IO
+broadcasting, and startup.
 
 ---
 

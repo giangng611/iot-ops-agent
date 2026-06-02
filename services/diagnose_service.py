@@ -1,0 +1,435 @@
+import json
+import os
+
+import requests
+
+from benchmark_logger import log_benchmark_result
+from prompts import DIAGNOSIS_OUTPUT_FORMAT
+from storage.telemetry_store import (
+    get_all_latest_devices,
+    get_device_telemetry_history,
+    get_latest_status,
+    get_telemetry_source,
+)
+from tools import check_system_alarms, check_system_overview
+
+
+def extract_device_id_from_text(text):
+    known_devices = [
+        device["device_id"]
+        for device in get_all_latest_devices()
+    ]
+
+    normalized_text = text.replace(",", " ").replace(".", " ")
+
+    for token in normalized_text.split():
+        cleaned_token = token.strip()
+
+        if cleaned_token in known_devices:
+            return cleaned_token
+
+    return None
+
+def build_n8n_payload(user_input):
+    target_device = extract_device_id_from_text(user_input)
+
+    operational_context = {
+        "telemetry_source": get_telemetry_source(),
+        "latest_devices": get_all_latest_devices(),
+        "system_overview": check_system_overview(),
+        "system_alarms": check_system_alarms(),
+        "target_device": target_device,
+        "target_device_status": None,
+        "target_device_history": []
+    }
+
+    if target_device:
+        operational_context["target_device_status"] = get_latest_status(
+            target_device
+        )
+        operational_context["target_device_history"] = (
+            get_device_telemetry_history(target_device)
+        )
+
+    system_prompt = (
+        "You are an IoT operations assistant. Use only the telemetry "
+        "and operational context provided in this payload. Do not invent "
+        "device IDs, telemetry values, alarms, or logs. Heartbeat delay "
+        "values are measured in seconds. For gateway heartbeat-delay "
+        "investigations, use 300 seconds as the default threshold unless "
+        "the user provides a different threshold in seconds. If a user says "
+        "ms or milliseconds, state that the available telemetry is stored "
+        "in seconds and evaluate the stored second-based values."
+    )
+
+    llm_prompt = f"""
+{system_prompt}
+
+User request:
+{user_input}
+
+Required final answer format:
+{DIAGNOSIS_OUTPUT_FORMAT}
+
+Operational context JSON:
+{json.dumps(operational_context, indent=2)}
+
+Return a valid JSON object only:
+{{
+  "response": "final answer using the required format",
+  "steps": [
+    {{
+      "thought": "what information you inspected",
+      "action": "which n8n node or context field you used",
+      "output": "short evidence from the operational context"
+    }}
+  ]
+}}
+""".strip()
+
+    return {
+        "message": user_input,
+        "prompt": user_input,
+        "source": "iot-ops-agent-ui",
+        "runtime": "n8n",
+        "system_prompt": system_prompt,
+        "n8n_llm_prompt": llm_prompt,
+        "diagnosis_output_format": DIAGNOSIS_OUTPUT_FORMAT,
+        "operational_context": operational_context,
+        "response_contract": {
+            "response": "Final answer formatted exactly with DIAGNOSIS_OUTPUT_FORMAT.",
+            "steps": [
+                {
+                    "thought": "Short operational reasoning step.",
+                    "action": "Workflow node, tool, or data source used.",
+                    "output": "Useful evidence or result from that step."
+                }
+            ]
+        }
+    }
+
+def call_n8n_agent(user_input):
+    webhook_url = (
+        os.getenv("N8N_WEBHOOK_URL")
+        or os.getenv("EVAL_N8N_WEBHOOK_URL")
+    )
+
+    if not webhook_url:
+        raise RuntimeError(
+            "N8N_WEBHOOK_URL is not configured. "
+            "Set it to your local n8n webhook URL."
+        )
+
+    response = requests.post(
+        webhook_url,
+        json=build_n8n_payload(user_input),
+        timeout=90
+    )
+    response.raise_for_status()
+
+    content_type = response.headers.get("content-type", "")
+
+    if "application/json" not in content_type:
+        return {
+            "final_answer": response.text.strip(),
+            "steps": []
+        }
+
+    response_body = response.text.strip()
+
+    if not response_body:
+        raise RuntimeError(
+            "n8n returned an empty response body. Check that the Webhook "
+            "node uses 'Respond to Webhook' and the Respond node returns JSON."
+        )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            "n8n returned invalid JSON. Raw response: "
+            f"{response_body[:500]}"
+        ) from exc
+
+    if isinstance(data, list) and data:
+        data = data[0]
+
+    if not isinstance(data, dict):
+        return {
+            "final_answer": json.dumps(data, indent=2),
+            "steps": []
+        }
+
+    final_answer = (
+        data.get("response")
+        or data.get("answer")
+        or data.get("text")
+        or data.get("output")
+        or data.get("message")
+        or json.dumps(data, indent=2)
+    )
+
+    return {
+        "final_answer": final_answer,
+        "steps": data.get("steps", [])
+    }
+
+def build_dify_payload(user_input):
+    n8n_payload = build_n8n_payload(user_input)
+    operational_context = n8n_payload["operational_context"]
+
+    return {
+        "inputs": {
+            "system_prompt": n8n_payload["system_prompt"],
+            "diagnosis_output_format": DIAGNOSIS_OUTPUT_FORMAT,
+            "operational_context": json.dumps(
+                operational_context,
+                indent=2
+            )
+        },
+        "query": n8n_payload["n8n_llm_prompt"],
+        "response_mode": "blocking",
+        "user": os.getenv("DIFY_USER", "iot-ops-agent-ui")
+    }
+
+def call_dify_agent(user_input):
+    api_url = (
+        os.getenv("DIFY_API_URL")
+        or os.getenv("EVAL_DIFY_API_URL")
+        or "http://localhost/v1/chat-messages"
+    )
+    api_key = (
+        os.getenv("DIFY_API_KEY")
+        or os.getenv("EVAL_DIFY_API_KEY")
+    )
+
+    if not api_key:
+        raise RuntimeError(
+            "DIFY_API_KEY is not configured. Set it to your Dify app API key."
+        )
+
+    response = requests.post(
+        api_url,
+        headers={"Authorization": f"Bearer {api_key}"},
+        json=build_dify_payload(user_input),
+        timeout=120
+    )
+    response.raise_for_status()
+
+    data = response.json()
+    answer = (
+        data.get("answer")
+        or data.get("response")
+        or data.get("text")
+        or json.dumps(data, indent=2)
+    )
+    returned_steps = []
+
+    if isinstance(answer, str):
+        try:
+            parsed_answer = json.loads(answer)
+            if isinstance(parsed_answer, dict):
+                returned_steps = parsed_answer.get("steps", [])
+                answer = (
+                    parsed_answer.get("response")
+                    or parsed_answer.get("answer")
+                    or parsed_answer.get("text")
+                    or answer
+                )
+        except ValueError:
+            pass
+
+    metadata = data.get("metadata", {})
+
+    return {
+        "final_answer": answer,
+        "steps": returned_steps,
+        "metadata": metadata,
+        "conversation_id": data.get("conversation_id"),
+        "message_id": data.get("message_id")
+    }
+
+def normalize_n8n_steps(result):
+    raw_steps = result.get("steps", [])
+
+    steps = [
+        {
+            "iteration": 1,
+            "thought": "The request should be delegated to n8n for workflow-based orchestration.",
+            "action": "call_n8n_webhook",
+            "output": {
+                "framework": "n8n",
+                "runtime_type": "external workflow runtime",
+                "response_received": True
+            }
+        }
+    ]
+
+    if isinstance(raw_steps, list):
+        for index, step in enumerate(raw_steps, start=2):
+            if isinstance(step, dict):
+                steps.append({
+                    "iteration": index,
+                    "thought": (
+                        step.get("thought")
+                        or step.get("description")
+                        or step.get("node")
+                        or "n8n returned a workflow execution step."
+                    ),
+                    "action": (
+                        step.get("action")
+                        or step.get("tool")
+                        or step.get("node")
+                        or "n8n_workflow_step"
+                    ),
+                    "output": (
+                        step.get("output")
+                        if "output" in step
+                        else step
+                    )
+                })
+            else:
+                steps.append({
+                    "iteration": index,
+                    "thought": "n8n returned a workflow execution step.",
+                    "action": "n8n_workflow_step",
+                    "output": step
+                })
+
+    if len(steps) == 1:
+        steps.append({
+            "iteration": 2,
+            "thought": "n8n completed execution and returned a final response.",
+            "action": "format_n8n_response",
+            "output": {
+                "answer_preview": result.get("final_answer", "")[:300]
+            }
+        })
+
+    return steps
+
+def normalize_dify_steps(result):
+    metadata = result.get("metadata") or {}
+    returned_steps = result.get("steps") or []
+
+    steps = [
+        {
+            "iteration": 1,
+            "thought": "The request should be delegated to Dify for app-based agent orchestration.",
+            "action": "call_dify_chat_messages_api",
+            "output": {
+                "framework": "Dify",
+                "runtime_type": "external app API runtime",
+                "response_received": True,
+                "conversation_id": result.get("conversation_id"),
+                "message_id": result.get("message_id")
+            }
+        }
+    ]
+
+    if isinstance(returned_steps, list):
+        for index, step in enumerate(returned_steps, start=2):
+            if isinstance(step, dict):
+                steps.append({
+                    "iteration": index,
+                    "thought": (
+                        step.get("thought")
+                        or step.get("description")
+                        or step.get("node")
+                        or "Dify returned an app execution step."
+                    ),
+                    "action": (
+                        step.get("action")
+                        or step.get("tool")
+                        or step.get("node")
+                        or "dify_app_step"
+                    ),
+                    "output": (
+                        step.get("output")
+                        if "output" in step
+                        else step
+                    )
+                })
+
+    workflow_run_id = metadata.get("workflow_run_id")
+
+    if workflow_run_id:
+        steps.append({
+            "iteration": len(steps) + 1,
+            "thought": "Dify returned workflow metadata that can be used to inspect the run in Dify logs.",
+            "action": "inspect_dify_workflow_run",
+            "output": {
+                "workflow_run_id": workflow_run_id
+            }
+        })
+
+    if len(steps) == 1:
+        steps.append({
+            "iteration": 2,
+            "thought": "Dify completed execution and returned a final response.",
+            "action": "format_dify_response",
+            "output": {
+                "answer_preview": result.get("final_answer", "")[:300]
+            }
+        })
+
+    return steps
+
+def log_n8n_benchmark(user_input, latency_seconds, status, step_count, error=None):
+    notes = (
+        f"Automatic benchmark capture from UI execution through n8n webhook. "
+        f"status={status}; step_count={step_count}"
+    )
+
+    if error:
+        notes = f"{notes}; error={error[:300]}"
+
+    log_benchmark_result(
+        mode="IOA v2 · n8n",
+        prompt=user_input,
+        latency_seconds=latency_seconds,
+        accuracy_score=0,
+        tool_usage_score=0,
+        reasoning_clarity_score=0,
+        observability_score=0,
+        development_complexity_score=4,
+        integration_speed_score=5,
+        ecosystem_score=4,
+        maintainability_score=4,
+        notes=notes
+    )
+
+def log_dify_benchmark(user_input, latency_seconds, status, step_count, error=None):
+    notes = (
+        f"Automatic provisional benchmark capture from UI execution through Dify API. "
+        f"status={status}; step_count={step_count}"
+    )
+
+    if error:
+        notes = f"{notes}; error={error[:300]}"
+
+    if status == "success":
+        accuracy_score = 3
+        tool_usage_score = 3
+        reasoning_clarity_score = 3
+        observability_score = 3
+    else:
+        accuracy_score = 0
+        tool_usage_score = 0
+        reasoning_clarity_score = 0
+        observability_score = 0
+
+    log_benchmark_result(
+        mode="IOA v2 · Dify",
+        prompt=user_input,
+        latency_seconds=latency_seconds,
+        accuracy_score=accuracy_score,
+        tool_usage_score=tool_usage_score,
+        reasoning_clarity_score=reasoning_clarity_score,
+        observability_score=observability_score,
+        development_complexity_score=4,
+        integration_speed_score=4,
+        ecosystem_score=4,
+        maintainability_score=4,
+        notes=notes
+    )

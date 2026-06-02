@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from postgres_store import check_connection  # noqa: E402
+from storage.postgres_store import check_connection  # noqa: E402
 
 
 def main():

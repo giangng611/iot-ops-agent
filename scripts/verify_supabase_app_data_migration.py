@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from postgres_store import get_postgres_connection  # noqa: E402
+from storage.postgres_store import get_postgres_connection  # noqa: E402
 from scripts.migrate_sqlite_app_data_to_supabase import (  # noqa: E402
     EXCLUDED_USERNAMES,
     load_filtered_sqlite_app_rows,

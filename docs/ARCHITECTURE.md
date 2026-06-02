@@ -98,11 +98,15 @@ prompts
 
 The storage layer is split across these modules:
 
-* `telemetry_store.py` routes telemetry reads and writes between MongoDB and SQLite.
-* `mongo_store.py` manages MongoDB telemetry documents and indexes.
-* `relational_store.py` routes app-data reads and writes between Supabase/Postgres and SQLite.
-* `postgres_store.py` manages Supabase/Postgres connections, schema setup, and pooling.
-* `database.py` keeps the SQLite legacy/fallback implementation.
+* `storage/telemetry_store.py` routes telemetry reads and writes between MongoDB and SQLite.
+* `storage/mongo_store.py` manages MongoDB telemetry documents and indexes.
+* `storage/relational_store.py` routes app-data reads and writes between Supabase/Postgres and SQLite.
+* `storage/postgres_store.py` manages Supabase/Postgres connections, schema setup, and pooling.
+* `storage/sqlite_store.py` keeps the SQLite legacy/fallback implementation.
+
+Top-level modules such as `database.py`, `mongo_store.py`, `postgres_store.py`,
+`telemetry_store.py`, and `relational_store.py` remain as compatibility
+wrappers during the storage package migration.
 
 `APP_DB_BACKEND=supabase` makes Supabase/Postgres the app-data backend.
 `APP_DB_FALLBACK_ENABLED=false` disables silent SQLite fallback for

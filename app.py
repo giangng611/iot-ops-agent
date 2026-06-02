@@ -18,7 +18,7 @@ from agents.ioa_v1_agent import IOAV1Agent
 from agents.ioa_v2_agent import IOAV2Agent
 from agents.langchain_agent import LangChainAgent
 from agents.langgraph_agent import LangGraphAgent
-from relational_store import (
+from storage.relational_store import (
     init_db,
     create_chat,
     get_chats,
@@ -40,7 +40,7 @@ from relational_store import (
     get_user_usage_stats,
     get_storage_status
 )
-from telemetry_store import (
+from storage.telemetry_store import (
     get_all_latest_devices,
     get_device_telemetry_history,
     get_latest_status,
@@ -48,7 +48,7 @@ from telemetry_store import (
 )
 from tools import check_system_overview, check_system_alarms
 from benchmark_logger import log_benchmark_result
-from mongo_store import (
+from storage.mongo_store import (
     ensure_telemetry_indexes,
     get_all_latest_devices_from_mongo,
     get_device_telemetry_history_from_mongo,

@@ -3,8 +3,8 @@ import time
 
 from dotenv import load_dotenv
 
-from database import init_db
-from telemetry_store import get_telemetry_write_backend, write_telemetry
+from storage.sqlite_store import init_db
+from storage.telemetry_store import get_telemetry_write_backend, write_telemetry
 
 load_dotenv()
 

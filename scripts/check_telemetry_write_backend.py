@@ -9,10 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from database import DB_NAME, init_db  # noqa: E402
-from mongo_store import get_telemetry_collection  # noqa: E402
+from storage.sqlite_store import DB_NAME, init_db  # noqa: E402
+from storage.mongo_store import get_telemetry_collection  # noqa: E402
 from simulator import DEVICES, generate_telemetry  # noqa: E402
-from telemetry_store import get_telemetry_write_backend  # noqa: E402
+from storage.telemetry_store import get_telemetry_write_backend  # noqa: E402
 
 
 def sqlite_telemetry_count():

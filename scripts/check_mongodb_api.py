@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 import app as app_module  # noqa: E402
-from database import create_user, verify_user  # noqa: E402
+from storage.sqlite_store import create_user, verify_user  # noqa: E402
 
 
 CHECK_USERNAME = "mongo-checker"

@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from postgres_store import apply_schema  # noqa: E402
+from storage.postgres_store import apply_schema  # noqa: E402
 
 
 SCHEMA_PATH = ROOT / "supabase" / "migrations" / "20260602000100_create_app_tables.sql"

@@ -8,8 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from relational_store import get_storage_status  # noqa: E402
-from telemetry_store import get_telemetry_source  # noqa: E402
+from storage.relational_store import get_storage_status  # noqa: E402
+from storage.telemetry_store import get_telemetry_source  # noqa: E402
 
 
 def main():

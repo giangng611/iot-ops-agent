@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from database import DB_NAME  # noqa: E402
-from postgres_store import (  # noqa: E402
+from storage.sqlite_store import DB_NAME  # noqa: E402
+from storage.postgres_store import (  # noqa: E402
     apply_schema,
     get_postgres_connection,
     reset_identity_sequence,

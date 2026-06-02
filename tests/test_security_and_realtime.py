@@ -17,8 +17,8 @@ _ORIGINAL_CWD = os.getcwd()
 os.chdir(_TEMP_DIR.name)
 
 import app as app_module  # noqa: E402
-import relational_store  # noqa: E402
-from relational_store import (  # noqa: E402
+import storage.relational_store as relational_store  # noqa: E402
+from storage.relational_store import (  # noqa: E402
     add_message,
     create_chat,
     create_user,
@@ -180,7 +180,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
         try:
             with patch(
-                "relational_store.get_postgres_connection",
+                "storage.relational_store.get_postgres_connection",
                 side_effect=RuntimeError("simulated supabase outage"),
             ):
                 with self.assertRaises(RuntimeError):
@@ -204,7 +204,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
         try:
             with patch(
-                "relational_store.get_postgres_connection",
+                "storage.relational_store.get_postgres_connection",
                 side_effect=RuntimeError("simulated supabase outage"),
             ):
                 status = relational_store.get_storage_status()

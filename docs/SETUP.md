@@ -34,6 +34,10 @@ DIAGNOSE_RATE_LIMIT_REQUESTS=10
 DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
 ENABLE_EMBEDDED_TELEMETRY=true
 TELEMETRY_BROADCAST_INTERVAL_SECONDS=30
+ENABLE_MONGODB=false
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DB=iot_ops_agent
+MONGODB_TELEMETRY_COLLECTION=telemetry
 ACCESS_CODE=your_access_code_here
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 DIFY_API_URL=http://localhost/v1/chat-messages
@@ -56,6 +60,7 @@ Environment variables are required for:
 * Socket.IO origin checks
 * diagnosis request size and rate limits
 * embedded demo telemetry generation
+* optional MongoDB telemetry dual-write
 * protected account registration
 * optional n8n runtime testing through the UI
 * optional Dify runtime testing through the UI
@@ -97,6 +102,27 @@ Generated telemetry includes:
 * alarms
 * alert severity
 * log messages
+
+### Optional: Enable MongoDB Telemetry Dual-Write
+
+Phase A keeps SQLite as the primary database and writes a copy of each
+generated telemetry record to MongoDB only when MongoDB is enabled.
+
+```env
+ENABLE_MONGODB=true
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DB=iot_ops_agent
+MONGODB_TELEMETRY_COLLECTION=telemetry
+```
+
+After MongoDB is running and the simulator has inserted at least one batch,
+verify the MongoDB copy:
+
+```bash
+python3 scripts/check_mongodb_telemetry.py --limit 5
+```
+
+The output should show a non-zero `count` and recent telemetry documents.
 
 ---
 

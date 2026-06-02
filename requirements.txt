@@ -37,6 +37,7 @@ ormsgpack==1.12.2
 packaging==26.2
 pydantic==2.12.5
 pydantic_core==2.41.5
+pymongo==4.15.5
 pypdf==6.8.0
 python-dotenv==1.2.2
 python-engineio==4.13.2

@@ -1,7 +1,12 @@
 import random
 import time
 
+from dotenv import load_dotenv
+
 from database import init_db, insert_telemetry
+from mongo_store import insert_telemetry_if_enabled, mongodb_enabled
+
+load_dotenv()
 
 DEVICES = [
     "sensor-001",
@@ -114,9 +119,21 @@ def generate_telemetry(device_id):
         alarm_severity=alarm_severity
     )
 
+    insert_telemetry_if_enabled(
+        device_id=device_id,
+        cpu_usage=cpu,
+        memory_usage=memory,
+        heartbeat_delay=heartbeat_delay,
+        status=status,
+        log_message=log_message,
+        alarm_name=alarm_name,
+        alarm_severity=alarm_severity
+    )
+
 
 def main():
     init_db()
+    print(f"MongoDB telemetry dual-write enabled: {mongodb_enabled()}")
 
     while True:
         for device_id in DEVICES:

@@ -149,6 +149,23 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         )
         self.assertLess(payload["alerts"]["telemetry_age_seconds"], 90)
 
+    def test_telemetry_routes_return_source_payloads(self):
+        user = self.create_user_once("telemetry-route-user", "telemetry-pass")
+        self.login_as(user)
+        app_module.generate_telemetry_batch()
+
+        response = self.client.get("/api/devices")
+        self.assertEqual(response.status_code, 200)
+        devices_payload = response.get_json()
+        self.assertEqual(devices_payload["source"], "sqlite")
+        self.assertTrue(devices_payload["devices"])
+
+        response = self.client.get("/api/telemetry/sensor-001")
+        self.assertEqual(response.status_code, 200)
+        history_payload = response.get_json()
+        self.assertEqual(history_payload["source"], "sqlite")
+        self.assertEqual(history_payload["device_id"], "sensor-001")
+
     def test_profile_usage_stats_include_storage_status(self):
         user = self.create_user_once("storage-status-user", "storage-pass")
         self.login_as(user)

@@ -161,13 +161,16 @@ maintenance:
 * `services/prompt_service.py` handles default prompts and prompt CRUD.
 * `services/profile_service.py` handles profile usage stats and storage status
   composition.
+* `services/telemetry_service.py` handles telemetry API payloads and MongoDB
+  telemetry inspection payloads.
 * `routes/auth_routes.py`, `routes/chat_routes.py`,
   `routes/prompt_routes.py`, `routes/profile_routes.py`, and
   `routes/storage_routes.py` expose the corresponding Flask blueprints.
+* `routes/telemetry_routes.py` exposes `/api/devices`, `/api/telemetry/*`,
+  and `/api/mongo/*` telemetry inspection routes.
 
 `app.py` still owns the high-coupling runtime surfaces: diagnosis execution,
-streaming responses, telemetry APIs, MongoDB telemetry inspection APIs,
-Socket.IO broadcasting, and application startup.
+streaming responses, Socket.IO broadcasting, and application startup.
 
 ---
 

@@ -24,22 +24,15 @@ from routes.helpers import login_required
 from routes.profile_routes import profile_bp
 from routes.prompt_routes import prompt_bp
 from routes.storage_routes import storage_bp
+from routes.telemetry_routes import telemetry_bp
 from storage.relational_store import init_db
 from storage.telemetry_store import (
     get_all_latest_devices,
     get_device_telemetry_history,
-    get_latest_status,
     get_telemetry_source
 )
 from tools import check_system_overview, check_system_alarms
 from benchmark_logger import log_benchmark_result
-from storage.mongo_store import (
-    ensure_telemetry_indexes,
-    get_all_latest_devices_from_mongo,
-    get_device_telemetry_history_from_mongo,
-    get_telemetry_indexes,
-    get_telemetry_health,
-)
 
 load_dotenv()
 
@@ -106,6 +99,7 @@ app.register_blueprint(create_chat_blueprint(client))
 app.register_blueprint(prompt_bp)
 app.register_blueprint(profile_bp)
 app.register_blueprint(storage_bp)
+app.register_blueprint(telemetry_bp)
 
 init_db()
 
@@ -1137,17 +1131,6 @@ def diagnose_stream():
 
     return Response(generate(), mimetype="text/event-stream")
 
-@app.route("/api/devices", methods=["GET"])
-def get_devices():
-    if not login_required():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    devices = get_all_latest_devices()
-    return jsonify({
-        "source": get_telemetry_source(),
-        "devices": devices
-    })
-
 def device_broadcast_loop():
     while True:
         if ENABLE_EMBEDDED_TELEMETRY:
@@ -1156,85 +1139,6 @@ def device_broadcast_loop():
         socketio.emit("device_update", build_device_update_payload())
 
         time.sleep(TELEMETRY_BROADCAST_INTERVAL_SECONDS)
-
-@app.route("/api/telemetry/<device_id>", methods=["GET"])
-def get_device_history(device_id):
-    if not login_required():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    history = get_device_telemetry_history(device_id)
-
-    return jsonify({
-        "source": get_telemetry_source(),
-        "device_id": device_id,
-        "history": history
-    })
-
-@app.route("/api/mongo/telemetry/health", methods=["GET"])
-def get_mongo_telemetry_health():
-    if not login_required():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        limit = request.args.get("limit", default=5, type=int)
-        return jsonify(get_telemetry_health(limit=limit))
-    except Exception as exc:
-        return jsonify({
-            "error": "MongoDB telemetry read failed",
-            "details": str(exc)
-        }), 503
-
-@app.route("/api/mongo/telemetry/indexes", methods=["GET", "POST"])
-def mongo_telemetry_indexes():
-    if not login_required():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        if request.method == "POST":
-            ensure_telemetry_indexes()
-
-        return jsonify(get_telemetry_indexes())
-    except Exception as exc:
-        return jsonify({
-            "error": "MongoDB telemetry index check failed",
-            "details": str(exc)
-        }), 503
-
-@app.route("/api/mongo/devices", methods=["GET"])
-def get_mongo_devices():
-    if not login_required():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        devices = get_all_latest_devices_from_mongo()
-        return jsonify({
-            "source": "mongodb",
-            "devices": devices
-        })
-    except Exception as exc:
-        return jsonify({
-            "error": "MongoDB telemetry read failed",
-            "details": str(exc)
-        }), 503
-
-@app.route("/api/mongo/telemetry/<device_id>", methods=["GET"])
-def get_mongo_device_history(device_id):
-    if not login_required():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        limit = request.args.get("limit", default=30, type=int)
-        history = get_device_telemetry_history_from_mongo(device_id, limit=limit)
-        return jsonify({
-            "source": "mongodb",
-            "device_id": device_id,
-            "history": history
-        })
-    except Exception as exc:
-        return jsonify({
-            "error": "MongoDB telemetry read failed",
-            "details": str(exc)
-        }), 503
 
 if __name__ == "__main__":
 

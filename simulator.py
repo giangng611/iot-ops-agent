@@ -3,8 +3,8 @@ import time
 
 from dotenv import load_dotenv
 
-from database import init_db, insert_telemetry
-from mongo_store import insert_telemetry_if_enabled, mongodb_enabled
+from database import init_db
+from telemetry_store import get_telemetry_write_backend, write_telemetry
 
 load_dotenv()
 
@@ -108,18 +108,7 @@ def generate_telemetry(device_id):
         heartbeat_delay
     )
 
-    insert_telemetry(
-        device_id=device_id,
-        cpu_usage=cpu,
-        memory_usage=memory,
-        heartbeat_delay=heartbeat_delay,
-        status=status,
-        log_message=log_message,
-        alarm_name=alarm_name,
-        alarm_severity=alarm_severity
-    )
-
-    insert_telemetry_if_enabled(
+    write_telemetry(
         device_id=device_id,
         cpu_usage=cpu,
         memory_usage=memory,
@@ -133,7 +122,7 @@ def generate_telemetry(device_id):
 
 def main():
     init_db()
-    print(f"MongoDB telemetry dual-write enabled: {mongodb_enabled()}")
+    print(f"Telemetry write backend: {get_telemetry_write_backend()}")
 
     while True:
         for device_id in DEVICES:

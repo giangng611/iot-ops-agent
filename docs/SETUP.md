@@ -36,6 +36,7 @@ ENABLE_EMBEDDED_TELEMETRY=true
 TELEMETRY_BROADCAST_INTERVAL_SECONDS=30
 ENABLE_MONGODB=false
 READ_TELEMETRY_FROM_MONGO=false
+TELEMETRY_WRITE_BACKEND=sqlite
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB=iot_ops_agent
 MONGODB_TELEMETRY_COLLECTION=telemetry
@@ -63,6 +64,7 @@ Environment variables are required for:
 * embedded demo telemetry generation
 * optional MongoDB telemetry dual-write
 * optional MongoDB telemetry read path
+* telemetry write backend selection
 * protected account registration
 * optional n8n runtime testing through the UI
 * optional Dify runtime testing through the UI
@@ -126,6 +128,24 @@ python3 scripts/check_mongodb_telemetry.py --limit 5
 
 The output should show a non-zero `count` and recent telemetry documents.
 
+Telemetry write backend options:
+
+```env
+TELEMETRY_WRITE_BACKEND=sqlite   # legacy/default, write telemetry to SQLite
+TELEMETRY_WRITE_BACKEND=dual     # write telemetry to SQLite and MongoDB
+TELEMETRY_WRITE_BACKEND=mongodb  # write new telemetry only to MongoDB
+```
+
+Verify the active write backend:
+
+```bash
+python3 scripts/check_telemetry_write_backend.py
+```
+
+When `TELEMETRY_WRITE_BACKEND=mongodb`, the SQLite telemetry count should stay
+unchanged and the MongoDB telemetry count should increase by the generated
+batch size.
+
 ### Optional: Check MongoDB Read APIs
 
 Phase B adds read-only MongoDB telemetry APIs while keeping the existing
@@ -152,6 +172,7 @@ SQLite as the fallback.
 ```env
 ENABLE_MONGODB=true
 READ_TELEMETRY_FROM_MONGO=true
+TELEMETRY_WRITE_BACKEND=mongodb
 ```
 
 When enabled, the existing app routes and agent context use MongoDB for:

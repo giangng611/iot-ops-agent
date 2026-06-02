@@ -126,3 +126,58 @@ def get_telemetry_health(limit=5):
         "count": collection.count_documents({}),
         "latest": latest,
     }
+
+
+def flatten_telemetry_document(document):
+    metrics = document.get("metrics") or {}
+    alarm = document.get("alarm") or {}
+
+    return {
+        "device_id": document.get("device_id"),
+        "timestamp": document.get("timestamp"),
+        "cpu_usage": metrics.get("cpu_usage"),
+        "memory_usage": metrics.get("memory_usage"),
+        "heartbeat_delay": metrics.get("heartbeat_delay"),
+        "status": document.get("status"),
+        "log_message": document.get("log_message"),
+        "alarm_name": alarm.get("name"),
+        "alarm_severity": alarm.get("severity"),
+    }
+
+
+def get_all_latest_devices_from_mongo():
+    collection = get_telemetry_collection()
+    rows = collection.aggregate([
+        {"$sort": {"timestamp": -1}},
+        {
+            "$group": {
+                "_id": "$device_id",
+                "document": {"$first": "$$ROOT"},
+            }
+        },
+        {"$replaceRoot": {"newRoot": "$document"}},
+        {"$sort": {"device_id": 1}},
+        {"$project": {"_id": 0}},
+    ])
+
+    return [
+        flatten_telemetry_document(row)
+        for row in rows
+    ]
+
+
+def get_device_telemetry_history_from_mongo(device_id, limit=30):
+    collection = get_telemetry_collection()
+    rows = list(
+        collection.find(
+            {"device_id": device_id},
+            {"_id": 0},
+        )
+        .sort("timestamp", -1)
+        .limit(limit)
+    )
+
+    return [
+        flatten_telemetry_document(row)
+        for row in reversed(rows)
+    ]

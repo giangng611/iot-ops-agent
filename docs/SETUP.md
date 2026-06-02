@@ -124,6 +124,24 @@ python3 scripts/check_mongodb_telemetry.py --limit 5
 
 The output should show a non-zero `count` and recent telemetry documents.
 
+### Optional: Check MongoDB Read APIs
+
+Phase B adds read-only MongoDB telemetry APIs while keeping the existing
+SQLite dashboard and agent context unchanged.
+
+```bash
+python3 scripts/check_mongodb_api.py --device-id sensor-001 --limit 5
+```
+
+The script checks:
+
+* `GET /api/mongo/telemetry/health`
+* `GET /api/mongo/devices`
+* `GET /api/mongo/telemetry/<device_id>`
+
+These endpoints require an authenticated session in the Flask app. The check
+script creates a local test session for verification.
+
 ---
 
 ## 6. Start Flask Application

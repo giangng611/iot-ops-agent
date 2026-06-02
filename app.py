@@ -44,6 +44,11 @@ from database import (
 )
 from tools import check_system_overview, check_system_alarms
 from benchmark_logger import log_benchmark_result
+from mongo_store import (
+    get_all_latest_devices_from_mongo,
+    get_device_telemetry_history_from_mongo,
+    get_telemetry_health,
+)
 
 load_dotenv()
 
@@ -1280,6 +1285,56 @@ def get_device_history(device_id):
         "device_id": device_id,
         "history": history
     })
+
+@app.route("/api/mongo/telemetry/health", methods=["GET"])
+def get_mongo_telemetry_health():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        limit = request.args.get("limit", default=5, type=int)
+        return jsonify(get_telemetry_health(limit=limit))
+    except Exception as exc:
+        return jsonify({
+            "error": "MongoDB telemetry read failed",
+            "details": str(exc)
+        }), 503
+
+@app.route("/api/mongo/devices", methods=["GET"])
+def get_mongo_devices():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        devices = get_all_latest_devices_from_mongo()
+        return jsonify({
+            "source": "mongodb",
+            "devices": devices
+        })
+    except Exception as exc:
+        return jsonify({
+            "error": "MongoDB telemetry read failed",
+            "details": str(exc)
+        }), 503
+
+@app.route("/api/mongo/telemetry/<device_id>", methods=["GET"])
+def get_mongo_device_history(device_id):
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        limit = request.args.get("limit", default=30, type=int)
+        history = get_device_telemetry_history_from_mongo(device_id, limit=limit)
+        return jsonify({
+            "source": "mongodb",
+            "device_id": device_id,
+            "history": history
+        })
+    except Exception as exc:
+        return jsonify({
+            "error": "MongoDB telemetry read failed",
+            "details": str(exc)
+        }), 503
 
 @app.route("/api/chats", methods=["GET"])
 def api_get_chats():

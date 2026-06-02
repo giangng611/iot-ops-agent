@@ -37,7 +37,8 @@ from relational_store import (
     update_username,
     delete_user_account,
     get_user_by_username,
-    get_user_usage_stats
+    get_user_usage_stats,
+    get_storage_status
 )
 from telemetry_store import (
     get_all_latest_devices,
@@ -1637,8 +1638,27 @@ def api_usage_stats():
         return jsonify({"error": "Unauthorized"}), 401
 
     stats = get_user_usage_stats(session.get("user_id"))
+    stats["storage"] = {
+        **get_storage_status(),
+        "telemetry": {
+            "source": get_telemetry_source()
+        }
+    }
 
     return jsonify(stats)
+
+
+@app.route("/api/storage/status", methods=["GET"])
+def api_storage_status():
+    if not login_required():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    return jsonify({
+        **get_storage_status(),
+        "telemetry": {
+            "source": get_telemetry_source()
+        }
+    })
 
 if __name__ == "__main__":
 

@@ -57,6 +57,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             ("post", "/api/mongo/telemetry/indexes", {}),
             ("get", "/api/mongo/devices", {}),
             ("get", "/api/mongo/telemetry/sensor-001", {}),
+            ("get", "/api/storage/status", {}),
         ]
 
         for method, path, kwargs in routes:
@@ -140,6 +141,20 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             "connected",
         )
         self.assertLess(payload["alerts"]["telemetry_age_seconds"], 90)
+
+    def test_profile_usage_stats_include_storage_status(self):
+        user = self.create_user_once("storage-status-user", "storage-pass")
+        self.login_as(user)
+
+        response = self.client.get("/api/profile/usage-stats")
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.get_json()
+        self.assertEqual(
+            payload["storage"]["app_data"]["active_backend"],
+            "sqlite",
+        )
+        self.assertEqual(payload["storage"]["telemetry"]["source"], "sqlite")
 
 
 def tearDownModule():

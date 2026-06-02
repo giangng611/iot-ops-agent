@@ -299,6 +299,17 @@ This migration preserves integer IDs so existing chat/message/prompt
 relationships remain stable. The Flask app is not switched to Supabase until
 `APP_DB_BACKEND` is changed in a later phase.
 
+After switching app data to Supabase/Postgres, verify the active app-data
+backend and telemetry source:
+
+```bash
+python3 scripts/check_app_storage_status.py
+```
+
+When `APP_DB_BACKEND=supabase`, the app writes users, chats, messages, and
+prompts to Supabase/Postgres. SQLite remains the local fallback if the
+Supabase/Postgres connection fails.
+
 ---
 
 ## 7. Start Flask Application

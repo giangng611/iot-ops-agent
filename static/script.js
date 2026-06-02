@@ -2071,7 +2071,7 @@ async function confirmChangePassword() {
     closeChangePasswordConfirmModal();
 }
 
-function openProfileDrawer(type) {
+async function openProfileDrawer(type) {
     const drawer = document.getElementById("profileDrawer");
     const title = document.getElementById("profileDrawerTitle");
     const subtitle = document.getElementById("profileDrawerSubtitle");
@@ -2268,6 +2268,13 @@ function openProfileDrawer(type) {
             window.location.hostname.includes("127.0.0.1")
                 ? "Local development"
                 : "Render deployment";
+        const storageStatus = await fetchStorageStatus();
+        const appDataLabel = storageStatus && storageStatus.app_data
+            ? formatAppDataStatus(storageStatus.app_data)
+            : "Storage status unavailable";
+        const telemetryLabel = storageStatus && storageStatus.telemetry
+            ? formatBackendLabel(storageStatus.telemetry.source)
+            : "Telemetry source unavailable";
 
         content.innerHTML = `
             <div class="drawer-info-list">
@@ -2299,7 +2306,7 @@ function openProfileDrawer(type) {
 
                 <div>
                     <strong>Storage Layer</strong>
-                    <p>Relational app data store with separate telemetry storage.</p>
+                    <p>App data: ${appDataLabel}. Telemetry: ${telemetryLabel}.</p>
                 </div>
             </div>
         `;
@@ -2702,6 +2709,22 @@ async function loadUsageStats(content) {
         return;
     }
 
+    const appDataStatus = data.storage && data.storage.app_data
+        ? data.storage.app_data
+        : null;
+    const telemetryStatus = data.storage && data.storage.telemetry
+        ? data.storage.telemetry
+        : null;
+    const appDataLabel = appDataStatus
+        ? formatAppDataStatus(appDataStatus)
+        : "Unavailable";
+    const telemetryLabel = telemetryStatus
+        ? formatBackendLabel(telemetryStatus.source)
+        : "Unavailable";
+    const fallbackLabel = appDataStatus && appDataStatus.last_fallback
+        ? `${appDataStatus.last_fallback.operation} fell back to ${formatBackendLabel(appDataStatus.last_fallback.fallback_backend)}`
+        : "No fallback recorded";
+
     content.innerHTML = `
         <div class="drawer-info-list">
             <div>
@@ -2723,8 +2746,59 @@ async function loadUsageStats(content) {
                 <strong>Devices Monitored</strong>
                 <p>${data.device_count}</p>
             </div>
+
+            <div>
+                <strong>App Data Backend</strong>
+                <p>${appDataLabel}</p>
+            </div>
+
+            <div>
+                <strong>Fallback State</strong>
+                <p>${fallbackLabel}</p>
+            </div>
+
+            <div>
+                <strong>Telemetry Source</strong>
+                <p>${telemetryLabel}</p>
+            </div>
         </div>
     `;
+}
+
+function formatBackendLabel(value) {
+    const labels = {
+        mongodb: "MongoDB",
+        postgres: "Postgres",
+        supabase: "Supabase/Postgres",
+        sqlite: "SQLite"
+    };
+
+    return labels[value] || value || "Unavailable";
+}
+
+function formatAppDataStatus(status) {
+    const activeBackend = formatBackendLabel(status.active_backend);
+
+    if (status.healthy) {
+        return `${activeBackend} healthy`;
+    }
+
+    return `${activeBackend} fallback active`;
+}
+
+async function fetchStorageStatus() {
+    try {
+        const response = await fetch("/api/storage/status");
+
+        if (!response.ok) {
+            return null;
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error("Failed to load storage status:", error);
+        return null;
+    }
 }
 
 function getRealtimeStatusHtml() {

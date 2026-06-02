@@ -1,3 +1,4 @@
+import atexit
 import os
 
 try:
@@ -6,6 +7,27 @@ try:
 except ImportError:
     psycopg = None
     dict_row = None
+
+try:
+    from psycopg_pool import ConnectionPool
+except ImportError:
+    ConnectionPool = None
+
+_pool = None
+_pool_url = None
+
+
+def close_postgres_pool():
+    global _pool
+    global _pool_url
+
+    if _pool is not None:
+        _pool.close()
+        _pool = None
+        _pool_url = None
+
+
+atexit.register(close_postgres_pool)
 
 
 def get_postgres_url():
@@ -35,6 +57,24 @@ def get_postgres_connection():
         raise RuntimeError(
             "SUPABASE_DB_URL, DATABASE_URL, or POSTGRES_URL is required."
         )
+
+    if ConnectionPool is not None:
+        global _pool
+        global _pool_url
+
+        if _pool is None or _pool_url != url:
+            _pool = ConnectionPool(
+                conninfo=url,
+                kwargs={
+                    "row_factory": dict_row,
+                    "prepare_threshold": None,
+                },
+                min_size=int(os.getenv("POSTGRES_POOL_MIN_SIZE", "1")),
+                max_size=int(os.getenv("POSTGRES_POOL_MAX_SIZE", "5")),
+            )
+            _pool_url = url
+
+        return _pool.connection()
 
     return psycopg.connect(url, row_factory=dict_row, prepare_threshold=None)
 

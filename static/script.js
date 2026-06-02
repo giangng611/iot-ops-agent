@@ -246,6 +246,7 @@ async function createChatIfNeeded(message) {
         id: currentChatId,
         title: data.title,
         isPinned: false,
+        messagesLoaded: true,
         messages: []
     };
 
@@ -891,18 +892,21 @@ async function loadChat(chatId) {
     const chatMessages = document.getElementById("chatMessages");
     chatMessages.innerHTML = "";
 
-    const response = await fetch(`/api/chats/${chatId}/messages`);
-    const data = await response.json();
+    if (!chat.messagesLoaded) {
+        const response = await fetch(`/api/chats/${chatId}/messages`);
+        const data = await response.json();
 
-    chat.messages = data.messages.map(message => ({
-        role: message.role,
-        content: message.content,
-        createdAt: message.created_at,
-        hasReasoning: Boolean(message.reasoning_steps),
-        reasoningSteps: message.reasoning_steps
-            ? JSON.parse(message.reasoning_steps)
-            : []
-    }));
+        chat.messages = data.messages.map(message => ({
+            role: message.role,
+            content: message.content,
+            createdAt: message.created_at,
+            hasReasoning: Boolean(message.reasoning_steps),
+            reasoningSteps: message.reasoning_steps
+                ? JSON.parse(message.reasoning_steps)
+                : []
+        }));
+        chat.messagesLoaded = true;
+    }
 
     let lastUserMessage = null;
 
@@ -1907,6 +1911,7 @@ async function loadChatsFromDatabase() {
         id: chat.id,
         title: chat.title,
         isPinned: chat.is_pinned,
+        messagesLoaded: false,
         messages: []
     }));
 
@@ -2294,7 +2299,7 @@ function openProfileDrawer(type) {
 
                 <div>
                     <strong>Storage Layer</strong>
-                    <p>SQLite demo database for users, chats, messages, prompts, and telemetry.</p>
+                    <p>Relational app data store with separate telemetry storage.</p>
                 </div>
             </div>
         `;

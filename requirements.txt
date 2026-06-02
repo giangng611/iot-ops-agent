@@ -38,6 +38,7 @@ packaging==26.2
 pydantic==2.12.5
 pydantic_core==2.41.5
 psycopg[binary]>=3.2,<4
+psycopg-pool>=3.2,<4
 pymongo==4.15.5
 pypdf==6.8.0
 python-dotenv==1.2.2

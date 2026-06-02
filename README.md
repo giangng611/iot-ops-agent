@@ -65,7 +65,11 @@ Simulated IoT Devices
           ↓
 Telemetry Simulator
           ↓
-SQLite Database
+MongoDB Telemetry Store
+          ↓
+Supabase/Postgres App Data Store
+          ↓
+SQLite Legacy/Fallback Store
           ↓
 Flask + SocketIO Backend
           ↓
@@ -83,7 +87,9 @@ Realtime Dashboard UI
 * Python
 * Flask
 * Flask-SocketIO
-* SQLite
+* MongoDB
+* Supabase/Postgres
+* SQLite legacy/fallback
 * OpenAI API
 
 ## Frontend
@@ -234,15 +240,21 @@ python3 -m unittest tests/test_security_and_realtime.py
 ```
 
 The suite covers protected API access, chat ownership, diagnosis request
-limits, and embedded realtime telemetry health.
+limits, storage status payloads, and embedded realtime telemetry health.
+
+Storage checks:
+
+```bash
+python3 scripts/check_app_storage_status.py
+python3 scripts/verify_supabase_app_data_migration.py
+```
 
 ---
 
 # Future Improvements
 
-* PostgreSQL migration
+* Row Level Security policy design for any future browser-side Supabase access
 * RBAC and admin dashboards
-* persistent cloud storage
 * external notification integrations
 * production-grade authentication
 * local model runtime support

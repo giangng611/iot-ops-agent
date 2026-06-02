@@ -8,14 +8,19 @@ Future improvements and long-term direction for IoT Ops Agent.
 
 ### Planned Improvements
 
-* PostgreSQL migration
-* Supabase integration
+* Row Level Security policy design if browser-side Supabase clients are added
 * Docker containerization
 * production-ready deployment architecture
 * custom domain support
-* persistent cloud storage
 * scalable telemetry workers
 * improved environment configuration
+
+### Completed / In Progress
+
+* MongoDB telemetry storage path
+* Supabase/Postgres app-data migration path
+* SQLite legacy/fallback storage
+* storage status and migration integrity checks
 
 ### Deployment Evolution
 
@@ -24,7 +29,9 @@ Flask Application
         ↓
 Gunicorn / Gevent
         ↓
-PostgreSQL
+Supabase/Postgres app data
+        ↓
+MongoDB telemetry
         ↓
 Cloud Infrastructure
         ↓

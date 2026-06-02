@@ -41,7 +41,10 @@ MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB=iot_ops_agent
 MONGODB_TELEMETRY_COLLECTION=telemetry
 APP_DB_BACKEND=sqlite
-SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:5432/postgres
+APP_DB_FALLBACK_ENABLED=true
+SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:6543/postgres
+POSTGRES_POOL_MIN_SIZE=1
+POSTGRES_POOL_MAX_SIZE=5
 ACCESS_CODE=your_access_code_here
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 DIFY_API_URL=http://localhost/v1/chat-messages
@@ -67,7 +70,7 @@ Environment variables are required for:
 * optional MongoDB telemetry dual-write
 * optional MongoDB telemetry read path
 * telemetry write backend selection
-* optional Supabase/Postgres app-data migration
+* optional Supabase/Postgres app-data migration and fallback policy
 * protected account registration
 * optional n8n runtime testing through the UI
 * optional Dify runtime testing through the UI
@@ -262,7 +265,10 @@ Add it to `.env`:
 
 ```env
 APP_DB_BACKEND=sqlite
+APP_DB_FALLBACK_ENABLED=true
 SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:6543/postgres
+POSTGRES_POOL_MIN_SIZE=1
+POSTGRES_POOL_MAX_SIZE=5
 ```
 
 Install dependencies:
@@ -296,8 +302,11 @@ python3 scripts/migrate_sqlite_app_data_to_supabase.py --apply
 ```
 
 This migration preserves integer IDs so existing chat/message/prompt
-relationships remain stable. The Flask app is not switched to Supabase until
-`APP_DB_BACKEND` is changed in a later phase.
+relationships remain stable. Switch the Flask app-data runtime after migration:
+
+```env
+APP_DB_BACKEND=supabase
+```
 
 After switching app data to Supabase/Postgres, verify the active app-data
 backend and telemetry source:
@@ -315,6 +324,25 @@ python3 scripts/verify_supabase_app_data_migration.py
 When `APP_DB_BACKEND=supabase`, the app writes users, chats, messages, and
 prompts to Supabase/Postgres. SQLite remains the local fallback if the
 Supabase/Postgres connection fails.
+
+For production-like deployments, disable silent SQLite fallback:
+
+```env
+APP_DB_BACKEND=supabase
+APP_DB_FALLBACK_ENABLED=false
+```
+
+With fallback disabled, Supabase/Postgres connection failures return backend
+errors instead of writing new app data to SQLite. This avoids split-brain app
+data when Supabase is expected to be the source of truth.
+
+Supabase may show the app-data tables as unrestricted when Row Level Security
+is disabled. This project currently queries Supabase/Postgres from the Flask
+server through a Postgres connection string, not from browser-side Supabase
+clients. Because publishable/anon keys are not used for direct frontend table
+access, RLS is not a migration blocker in this phase. If the frontend later
+queries Supabase directly, enable RLS and add per-user policies before exposing
+the publishable key.
 
 ---
 
@@ -540,6 +568,8 @@ The current deployment architecture uses:
 
 * Flask
 * Flask-SocketIO
-* SQLite
+* MongoDB for telemetry when enabled
+* Supabase/Postgres for app data when enabled
+* SQLite legacy/fallback storage
 * Render hosting
 * environment-based configuration

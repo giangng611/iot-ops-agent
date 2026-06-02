@@ -16,7 +16,9 @@ Current deployment stack:
 
 * Flask
 * Flask-SocketIO
-* SQLite
+* MongoDB telemetry storage when enabled
+* Supabase/Postgres app-data storage when enabled
+* SQLite legacy/fallback storage
 * Render Web Service
 * environment-variable based configuration
 
@@ -90,6 +92,17 @@ DIAGNOSE_RATE_LIMIT_REQUESTS=10
 DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
 ENABLE_EMBEDDED_TELEMETRY=true
 TELEMETRY_BROADCAST_INTERVAL_SECONDS=30
+ENABLE_MONGODB=true
+READ_TELEMETRY_FROM_MONGO=true
+TELEMETRY_WRITE_BACKEND=mongodb
+MONGODB_URI=your_mongodb_uri
+MONGODB_DB=iot_ops_agent
+MONGODB_TELEMETRY_COLLECTION=telemetry
+APP_DB_BACKEND=supabase
+APP_DB_FALLBACK_ENABLED=false
+SUPABASE_DB_URL=your_supabase_transaction_pooler_url
+POSTGRES_POOL_MIN_SIZE=1
+POSTGRES_POOL_MAX_SIZE=5
 ACCESS_CODE=your_access_code
 ```
 
@@ -108,6 +121,9 @@ These variables are required for:
 * Socket.IO origin checks
 * diagnosis request size and rate limits
 * embedded demo telemetry generation
+* MongoDB telemetry storage
+* Supabase/Postgres app-data storage
+* app-data fallback policy
 * protected account registration
 Optional Dify variables are required only for `IOA v2 · Dify`.
 
@@ -134,33 +150,33 @@ Render will:
 
 ---
 
-## 6. Initialize Database
+## 6. Initialize Storage
 
-On first deployment, the SQLite database must be initialized.
+SQLite fallback tables are initialized automatically by `app.py` through
+`init_db()`. For production-like deployments, initialize external storage before
+switching traffic to it.
 
-You can initialize the database by:
-
-### Option A — Local Initialization
-
-Run locally before deployment:
+Apply Supabase/Postgres app-data schema:
 
 ```bash
-python3 init_db.py
+python3 scripts/apply_supabase_schema.py
 ```
 
-Then commit the generated SQLite database file.
+If you are migrating existing local app data:
 
----
-
-### Option B — Startup Initialization
-
-Alternatively, initialize the database automatically inside `app.py`:
-
-```python
-init_db()
+```bash
+python3 scripts/migrate_sqlite_app_data_to_supabase.py --apply
+python3 scripts/verify_supabase_app_data_migration.py
 ```
 
-before starting the Flask application.
+Prepare MongoDB telemetry indexes:
+
+```bash
+python3 scripts/ensure_mongodb_indexes.py
+```
+
+Do not commit generated local SQLite database files for production
+deployments. Keep `.env`, database files, and secrets out of Git.
 
 ---
 
@@ -227,15 +243,24 @@ Only users with the configured `ACCESS_CODE` can create accounts.
 
 ## 10. Important Deployment Notes
 
-### SQLite Limitation
+### Storage Model
 
-SQLite works well for demos and lightweight deployments, but is not ideal for large-scale production systems.
-
-Future production deployments should migrate to:
+SQLite works well for local fallback and demos, but production-like deployments
+should use external storage:
 
 ```text
-PostgreSQL
+MongoDB for telemetry
+Supabase/Postgres for app data
+SQLite only as local fallback
 ```
+
+Set `APP_DB_FALLBACK_ENABLED=false` when Supabase/Postgres should be the source
+of truth. With fallback disabled, app-data connection failures return backend
+errors instead of silently writing new rows to SQLite.
+
+Supabase RLS warnings are not blockers while the app uses only server-side
+Postgres connections from Flask. If browser-side Supabase clients are added,
+enable RLS and per-user policies before exposing publishable keys.
 
 ---
 
@@ -256,7 +281,9 @@ This behavior is expected for free-tier deployments.
 ```text
 Flask + Gunicorn
         ↓
-PostgreSQL
+Supabase/Postgres app data
+        ↓
+MongoDB telemetry
         ↓
 Redis Queue / Workers
         ↓
@@ -306,7 +333,15 @@ Check:
 
 ### Devices Not Appearing
 
-Verify the telemetry simulator is running and inserting telemetry into the database.
+Verify the telemetry simulator is running and inserting telemetry into the
+configured telemetry backend.
+
+For MongoDB telemetry mode, verify:
+
+```bash
+python3 scripts/check_mongodb_telemetry.py --limit 5
+python3 scripts/check_app_storage_status.py
+```
 
 ---
 
@@ -315,7 +350,6 @@ Verify the telemetry simulator is running and inserting telemetry into the datab
 Potential future deployment improvements:
 
 * Docker containerization
-* Supabase/PostgreSQL migration
 * MQTT ingestion
 * distributed telemetry workers
 * centralized logging

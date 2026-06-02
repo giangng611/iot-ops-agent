@@ -11,7 +11,11 @@ Simulated IoT Devices
           ↓
 Telemetry Simulator
           ↓
-SQLite Database
+MongoDB Telemetry Store
+          ↓
+Supabase/Postgres App Data Store
+          ↓
+SQLite Legacy/Fallback Store
           ↓
 Flask + SocketIO Backend
           ↓
@@ -60,20 +64,29 @@ The simulator continuously inserts telemetry into the database, which powers rea
 
 ---
 
-## 2. SQLite Database
+## 2. Storage Architecture
 
-`database.py` manages persistent application storage.
+The project uses a split storage architecture:
 
-The database stores:
+* MongoDB stores telemetry-oriented operational records.
+* Supabase/Postgres stores relational app data.
+* SQLite remains available as local legacy/fallback storage.
+
+MongoDB stores:
 
 * telemetry records
+* device events
+* operational alerts
+* agent traces and webhook payload snapshots
+
+Supabase/Postgres stores:
+
 * users
 * chats
 * messages
 * prompts
-* reasoning traces
 
-Main tables include:
+SQLite legacy/fallback tables include:
 
 ```text
 telemetry
@@ -83,13 +96,30 @@ messages
 prompts
 ```
 
-The database layer also handles:
+The storage layer is split across these modules:
+
+* `telemetry_store.py` routes telemetry reads and writes between MongoDB and SQLite.
+* `mongo_store.py` manages MongoDB telemetry documents and indexes.
+* `relational_store.py` routes app-data reads and writes between Supabase/Postgres and SQLite.
+* `postgres_store.py` manages Supabase/Postgres connections, schema setup, and pooling.
+* `database.py` keeps the SQLite legacy/fallback implementation.
+
+`APP_DB_BACKEND=supabase` makes Supabase/Postgres the app-data backend.
+`APP_DB_FALLBACK_ENABLED=false` disables silent SQLite fallback for
+production-like deployments.
+
+Supabase/Postgres is accessed from Flask through server-side Postgres
+connections. The browser does not receive Supabase publishable/anon keys and
+does not query tables directly in the current architecture. If that changes,
+Row Level Security policies must be enabled before browser-side access is
+introduced.
+
+The relational storage layer handles:
 
 * authentication
 * password hashing
 * session-linked chat persistence
 * prompt CRUD operations
-* telemetry history queries
 * profile management
 
 ---

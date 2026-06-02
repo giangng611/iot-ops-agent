@@ -2864,7 +2864,8 @@ function formatBackendLabel(value) {
         mongodb: "MongoDB",
         postgres: "Postgres",
         supabase: "Supabase/Postgres",
-        sqlite: "SQLite"
+        sqlite: "SQLite",
+        unavailable: "Unavailable"
     };
 
     return labels[value] || value || "Unavailable";
@@ -2877,7 +2878,11 @@ function formatAppDataStatus(status) {
         return `${activeBackend} healthy`;
     }
 
-    return `${activeBackend} fallback active`;
+    if (status.fallback_enabled) {
+        return `${activeBackend} fallback active`;
+    }
+
+    return `${activeBackend}; fallback disabled`;
 }
 
 async function fetchStorageStatus() {

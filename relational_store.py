@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -16,6 +17,10 @@ def get_app_db_backend():
     return "supabase" if using_postgres() else "sqlite"
 
 
+def app_db_fallback_enabled():
+    return os.getenv("APP_DB_FALLBACK_ENABLED", "true").lower() == "true"
+
+
 def get_last_fallback():
     return _last_fallback
 
@@ -28,6 +33,13 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
         return postgres_operation()
     except Exception as exc:
         global _last_fallback
+
+        if not app_db_fallback_enabled():
+            print(
+                f"Supabase/Postgres app-data {operation_name} failed; "
+                f"SQLite fallback is disabled: {exc}"
+            )
+            raise
 
         _last_fallback = {
             "operation": operation_name,
@@ -47,6 +59,7 @@ def get_storage_status():
             "configured_backend": get_app_db_backend(),
             "active_backend": get_app_db_backend(),
             "fallback_backend": "sqlite",
+            "fallback_enabled": app_db_fallback_enabled(),
             "healthy": True,
             "last_fallback": get_last_fallback(),
         }
@@ -62,15 +75,26 @@ def get_storage_status():
                 cursor.execute("select 1 as ok")
                 cursor.fetchone()
     except Exception as exc:
-        status["app_data"].update({
-            "active_backend": "sqlite",
-            "healthy": False,
-            "message": (
-                "Supabase/Postgres is configured but unavailable; "
-                "SQLite fallback is active."
-            ),
-            "error": str(exc),
-        })
+        if app_db_fallback_enabled():
+            status["app_data"].update({
+                "active_backend": "sqlite",
+                "healthy": False,
+                "message": (
+                    "Supabase/Postgres is configured but unavailable; "
+                    "SQLite fallback is active."
+                ),
+                "error": str(exc),
+            })
+        else:
+            status["app_data"].update({
+                "active_backend": "unavailable",
+                "healthy": False,
+                "message": (
+                    "Supabase/Postgres is configured but unavailable; "
+                    "SQLite fallback is disabled."
+                ),
+                "error": str(exc),
+            })
         return status
 
     status["app_data"]["message"] = "Supabase/Postgres app-data backend is healthy."

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 os.environ.setdefault("FLASK_SECRET_KEY", "test-secret-key")
@@ -16,6 +17,7 @@ _ORIGINAL_CWD = os.getcwd()
 os.chdir(_TEMP_DIR.name)
 
 import app as app_module  # noqa: E402
+import relational_store  # noqa: E402
 from relational_store import (  # noqa: E402
     add_message,
     create_chat,
@@ -154,7 +156,74 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             payload["storage"]["app_data"]["active_backend"],
             "sqlite",
         )
+        self.assertFalse("error" in payload["storage"]["app_data"])
         self.assertEqual(payload["storage"]["telemetry"]["source"], "sqlite")
+
+    def test_storage_status_api_reports_backend_shape(self):
+        user = self.create_user_once("storage-api-user", "storage-pass")
+        self.login_as(user)
+
+        response = self.client.get("/api/storage/status")
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.get_json()
+        self.assertEqual(payload["app_data"]["configured_backend"], "sqlite")
+        self.assertEqual(payload["app_data"]["active_backend"], "sqlite")
+        self.assertTrue(payload["app_data"]["fallback_enabled"])
+        self.assertEqual(payload["telemetry"]["source"], "sqlite")
+
+    def test_supabase_error_raises_when_fallback_disabled(self):
+        original_backend = os.environ.get("APP_DB_BACKEND")
+        original_fallback = os.environ.get("APP_DB_FALLBACK_ENABLED")
+        os.environ["APP_DB_BACKEND"] = "supabase"
+        os.environ["APP_DB_FALLBACK_ENABLED"] = "false"
+
+        try:
+            with patch(
+                "relational_store.get_postgres_connection",
+                side_effect=RuntimeError("simulated supabase outage"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    create_chat(1, "Should not fallback")
+        finally:
+            if original_backend is None:
+                os.environ.pop("APP_DB_BACKEND", None)
+            else:
+                os.environ["APP_DB_BACKEND"] = original_backend
+
+            if original_fallback is None:
+                os.environ.pop("APP_DB_FALLBACK_ENABLED", None)
+            else:
+                os.environ["APP_DB_FALLBACK_ENABLED"] = original_fallback
+
+    def test_storage_status_reports_unavailable_when_fallback_disabled(self):
+        original_backend = os.environ.get("APP_DB_BACKEND")
+        original_fallback = os.environ.get("APP_DB_FALLBACK_ENABLED")
+        os.environ["APP_DB_BACKEND"] = "supabase"
+        os.environ["APP_DB_FALLBACK_ENABLED"] = "false"
+
+        try:
+            with patch(
+                "relational_store.get_postgres_connection",
+                side_effect=RuntimeError("simulated supabase outage"),
+            ):
+                status = relational_store.get_storage_status()
+                self.assertEqual(
+                    status["app_data"]["active_backend"],
+                    "unavailable",
+                )
+                self.assertFalse(status["app_data"]["fallback_enabled"])
+                self.assertFalse(status["app_data"]["healthy"])
+        finally:
+            if original_backend is None:
+                os.environ.pop("APP_DB_BACKEND", None)
+            else:
+                os.environ["APP_DB_BACKEND"] = original_backend
+
+            if original_fallback is None:
+                os.environ.pop("APP_DB_FALLBACK_ENABLED", None)
+            else:
+                os.environ["APP_DB_FALLBACK_ENABLED"] = original_fallback
 
 
 def tearDownModule():

@@ -160,17 +160,7 @@ def count_postgres_rows(conn, table_name):
         return cursor.fetchone()["count"]
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Migrate SQLite app data to Supabase/Postgres."
-    )
-    parser.add_argument(
-        "--apply",
-        action="store_true",
-        help="Actually write to Supabase/Postgres. Default is dry run.",
-    )
-    args = parser.parse_args()
-
+def load_filtered_sqlite_app_rows():
     tables = ["users", "chats", "messages", "prompts"]
     sqlite_rows = {
         table_name: fetch_sqlite_rows(table_name)
@@ -199,6 +189,23 @@ def main():
         row for row in sqlite_rows["prompts"]
         if row["user_id"] not in excluded_user_ids
     ]
+
+    return sqlite_rows
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Migrate SQLite app data to Supabase/Postgres."
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually write to Supabase/Postgres. Default is dry run.",
+    )
+    args = parser.parse_args()
+
+    tables = ["users", "chats", "messages", "prompts"]
+    sqlite_rows = load_filtered_sqlite_app_rows()
 
     print("SQLite source counts:")
     for table_name in tables:

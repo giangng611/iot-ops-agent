@@ -306,6 +306,12 @@ backend and telemetry source:
 python3 scripts/check_app_storage_status.py
 ```
 
+Verify migrated app-data integrity:
+
+```bash
+python3 scripts/verify_supabase_app_data_migration.py
+```
+
 When `APP_DB_BACKEND=supabase`, the app writes users, chats, messages, and
 prompts to Supabase/Postgres. SQLite remains the local fallback if the
 Supabase/Postgres connection fails.

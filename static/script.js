@@ -65,6 +65,7 @@ const homeHeroPrompts = [
 ];
 
 const MAX_DIAGNOSE_MESSAGE_CHARS = 2000;
+const PREFETCH_CHAT_LIMIT = 5;
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -247,6 +248,8 @@ async function createChatIfNeeded(message) {
         title: data.title,
         isPinned: false,
         messagesLoaded: true,
+        messagesLoading: false,
+        messagesLoadPromise: null,
         messages: []
     };
 
@@ -893,19 +896,21 @@ async function loadChat(chatId) {
     chatMessages.innerHTML = "";
 
     if (!chat.messagesLoaded) {
-        const response = await fetch(`/api/chats/${chatId}/messages`);
-        const data = await response.json();
+        renderChatLoadingState();
 
-        chat.messages = data.messages.map(message => ({
-            role: message.role,
-            content: message.content,
-            createdAt: message.created_at,
-            hasReasoning: Boolean(message.reasoning_steps),
-            reasoningSteps: message.reasoning_steps
-                ? JSON.parse(message.reasoning_steps)
-                : []
-        }));
-        chat.messagesLoaded = true;
+        try {
+            await loadChatMessages(chat);
+        } catch (error) {
+            console.error("Failed to load chat messages:", error);
+            renderChatLoadError();
+            return;
+        }
+
+        if (currentChatId !== chatId) {
+            return;
+        }
+
+        chatMessages.innerHTML = "";
     }
 
     let lastUserMessage = null;
@@ -927,6 +932,80 @@ async function loadChat(chatId) {
     });
 
     renderChatHistory();
+}
+
+async function loadChatMessages(chat) {
+    if (chat.messagesLoaded) {
+        return chat.messages;
+    }
+
+    if (chat.messagesLoadPromise) {
+        return chat.messagesLoadPromise;
+    }
+
+    chat.messagesLoading = true;
+    chat.messagesLoadPromise = fetch(`/api/chats/${chat.id}/messages`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            return response.json();
+        })
+        .then(data => {
+            chat.messages = data.messages.map(message => ({
+                role: message.role,
+                content: message.content,
+                createdAt: message.created_at,
+                hasReasoning: Boolean(message.reasoning_steps),
+                reasoningSteps: message.reasoning_steps
+                    ? JSON.parse(message.reasoning_steps)
+                    : []
+            }));
+            chat.messagesLoaded = true;
+            return chat.messages;
+        })
+        .finally(() => {
+            chat.messagesLoading = false;
+            chat.messagesLoadPromise = null;
+        });
+
+    return chat.messagesLoadPromise;
+}
+
+function renderChatLoadingState() {
+    const chatMessages = document.getElementById("chatMessages");
+
+    chatMessages.innerHTML = `
+        <div class="chat-load-state">
+            <span></span>
+            <p>Loading conversation...</p>
+        </div>
+    `;
+}
+
+function renderChatLoadError() {
+    const chatMessages = document.getElementById("chatMessages");
+
+    chatMessages.innerHTML = `
+        <div class="chat-load-state error">
+            <p>Unable to load this conversation.</p>
+        </div>
+    `;
+}
+
+async function prefetchRecentChats(limit = PREFETCH_CHAT_LIMIT) {
+    const recentChats = chats
+        .filter(chat => !chat.messagesLoaded && !chat.messagesLoading)
+        .slice(0, limit);
+
+    for (const chat of recentChats) {
+        try {
+            await loadChatMessages(chat);
+        } catch (error) {
+            console.error(`Failed to prefetch chat ${chat.id}:`, error);
+        }
+    }
 }
 
 async function refreshDevices() {
@@ -1912,10 +1991,13 @@ async function loadChatsFromDatabase() {
         title: chat.title,
         isPinned: chat.is_pinned,
         messagesLoaded: false,
+        messagesLoading: false,
+        messagesLoadPromise: null,
         messages: []
     }));
 
     renderChatHistory();
+    prefetchRecentChats();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -2724,6 +2806,11 @@ async function loadUsageStats(content) {
     const fallbackLabel = appDataStatus && appDataStatus.last_fallback
         ? `${appDataStatus.last_fallback.operation} fell back to ${formatBackendLabel(appDataStatus.last_fallback.fallback_backend)}`
         : "No fallback recorded";
+    const storageWarning = appDataStatus && !appDataStatus.healthy
+        ? appDataStatus.message
+        : appDataStatus && appDataStatus.last_fallback
+            ? "A recent app-data operation used SQLite fallback."
+            : null;
 
     content.innerHTML = `
         <div class="drawer-info-list">
@@ -2761,6 +2848,13 @@ async function loadUsageStats(content) {
                 <strong>Telemetry Source</strong>
                 <p>${telemetryLabel}</p>
             </div>
+
+            ${storageWarning ? `
+                <div class="storage-warning">
+                    <strong>Storage Warning</strong>
+                    <p>${escapeHtml(storageWarning)}</p>
+                </div>
+            ` : ""}
         </div>
     `;
 }

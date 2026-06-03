@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import os
 from flask_socketio import SocketIO
-import time
 from simulator import DEVICES, generate_telemetry
 from datetime import datetime
 from collections import defaultdict, deque
@@ -174,7 +173,7 @@ def device_broadcast_loop():
 
         socketio.emit("device_update", build_device_update_payload())
 
-        time.sleep(TELEMETRY_BROADCAST_INTERVAL_SECONDS)
+        socketio.sleep(TELEMETRY_BROADCAST_INTERVAL_SECONDS)
 
 
 def start_device_broadcast_loop():
@@ -203,5 +202,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         debug=False,
-        allow_unsafe_werkzeug=True
+        allow_unsafe_werkzeug=True,
+        environ={"SERVER_NAME": os.getenv("SERVER_NAME", "localhost")}
     )

@@ -5,6 +5,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from storage import sqlite_store
 from storage.postgres_store import (
+    close_postgres_pool,
     get_postgres_connection,
     postgres_enabled,
     postgres_url_configured,
@@ -41,6 +42,12 @@ def get_last_fallback():
     return _last_fallback
 
 
+def clear_fallback():
+    global _last_fallback
+
+    _last_fallback = None
+
+
 def record_fallback(operation_name, error, fallback_backend="sqlite"):
     global _last_fallback
 
@@ -52,6 +59,30 @@ def record_fallback(operation_name, error, fallback_backend="sqlite"):
     }
 
 
+def _postgres_retry_allowed(operation_name):
+    return (
+        operation_name.startswith("get_")
+        or operation_name in {
+            "chat_belongs_to_user",
+            "health_check",
+        }
+    )
+
+
+def _looks_like_stale_postgres_connection(error):
+    message = str(error).lower()
+    stale_markers = [
+        "connection is closed",
+        "consuming input failed",
+        "could not receive data from server",
+        "operation timed out",
+        "ssl syscall",
+        "[bad]",
+    ]
+
+    return any(marker in message for marker in stale_markers)
+
+
 def _with_fallback(operation_name, postgres_operation, sqlite_operation):
     if not using_postgres():
         return sqlite_operation()
@@ -59,6 +90,16 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
     try:
         return postgres_operation()
     except Exception as exc:
+        if (
+            _postgres_retry_allowed(operation_name)
+            and _looks_like_stale_postgres_connection(exc)
+        ):
+            close_postgres_pool()
+            try:
+                return postgres_operation()
+            except Exception as retry_exc:
+                exc = retry_exc
+
         if not app_db_fallback_enabled():
             print(
                 f"Supabase/Postgres app-data {operation_name} failed; "
@@ -116,6 +157,22 @@ def get_storage_status():
                 cursor.execute("select 1 as ok")
                 cursor.fetchone()
     except Exception as exc:
+        if _looks_like_stale_postgres_connection(exc):
+            close_postgres_pool()
+            try:
+                with get_postgres_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("select 1 as ok")
+                        cursor.fetchone()
+            except Exception as retry_exc:
+                exc = retry_exc
+            else:
+                clear_fallback()
+                status["app_data"]["message"] = (
+                    "Supabase/Postgres app-data backend is healthy."
+                )
+                return status
+
         if app_db_fallback_enabled():
             record_fallback("health_check", exc)
             status["app_data"].update({
@@ -140,6 +197,7 @@ def get_storage_status():
             })
         return status
 
+    clear_fallback()
     status["app_data"]["message"] = "Supabase/Postgres app-data backend is healthy."
     return status
 

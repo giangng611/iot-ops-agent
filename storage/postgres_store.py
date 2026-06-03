@@ -38,8 +38,17 @@ def get_postgres_url():
     )
 
 
+def postgres_url_configured():
+    return bool(get_postgres_url())
+
+
 def postgres_enabled():
-    return os.getenv("APP_DB_BACKEND", "sqlite").lower() in {
+    configured_backend = os.getenv("APP_DB_BACKEND")
+
+    if configured_backend is None:
+        return postgres_url_configured()
+
+    return configured_backend.lower() in {
         "postgres",
         "supabase",
     }

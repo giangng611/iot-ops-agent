@@ -4,7 +4,6 @@ from openai import OpenAI
 import os
 from flask_socketio import SocketIO
 import time
-import threading
 from simulator import DEVICES, generate_telemetry
 from datetime import datetime
 from collections import defaultdict, deque
@@ -66,6 +65,7 @@ ENABLE_EMBEDDED_TELEMETRY = (
     in {"1", "true", "yes", "on"}
 )
 diagnose_rate_limit_log = defaultdict(deque)
+device_broadcast_task = None
 
 if not flask_secret_key:
     raise RuntimeError("FLASK_SECRET_KEY must be configured.")
@@ -176,12 +176,25 @@ def device_broadcast_loop():
 
         time.sleep(TELEMETRY_BROADCAST_INTERVAL_SECONDS)
 
-if __name__ == "__main__":
 
-    threading.Thread(
-        target=device_broadcast_loop,
-        daemon=True
-    ).start()
+def start_device_broadcast_loop():
+    global device_broadcast_task
+
+    if not ENABLE_EMBEDDED_TELEMETRY:
+        return None
+
+    if device_broadcast_task is None:
+        device_broadcast_task = socketio.start_background_task(
+            device_broadcast_loop
+        )
+
+    return device_broadcast_task
+
+
+start_device_broadcast_loop()
+
+
+if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 5001))
 

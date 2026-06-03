@@ -4,13 +4,29 @@ from datetime import datetime
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from storage import sqlite_store
-from storage.postgres_store import get_postgres_connection, postgres_enabled
+from storage.postgres_store import (
+    get_postgres_connection,
+    postgres_enabled,
+    postgres_url_configured,
+)
 
 _last_fallback = None
 
 
 def using_postgres():
     return postgres_enabled()
+
+
+def get_configured_app_db_backend():
+    configured_backend = os.getenv("APP_DB_BACKEND")
+
+    if configured_backend:
+        return configured_backend.lower()
+
+    if postgres_url_configured():
+        return "supabase"
+
+    return "sqlite"
 
 
 def get_app_db_backend():
@@ -25,6 +41,17 @@ def get_last_fallback():
     return _last_fallback
 
 
+def record_fallback(operation_name, error, fallback_backend="sqlite"):
+    global _last_fallback
+
+    _last_fallback = {
+        "operation": operation_name,
+        "error": str(error),
+        "fallback_backend": fallback_backend,
+        "recorded_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
 def _with_fallback(operation_name, postgres_operation, sqlite_operation):
     if not using_postgres():
         return sqlite_operation()
@@ -32,8 +59,6 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
     try:
         return postgres_operation()
     except Exception as exc:
-        global _last_fallback
-
         if not app_db_fallback_enabled():
             print(
                 f"Supabase/Postgres app-data {operation_name} failed; "
@@ -41,11 +66,7 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
             )
             raise
 
-        _last_fallback = {
-            "operation": operation_name,
-            "error": str(exc),
-            "fallback_backend": "sqlite",
-        }
+        record_fallback(operation_name, exc)
         print(
             f"Supabase/Postgres app-data {operation_name} failed; "
             f"falling back to SQLite: {exc}"
@@ -56,7 +77,7 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
 def get_storage_status():
     status = {
         "app_data": {
-            "configured_backend": get_app_db_backend(),
+            "configured_backend": get_configured_app_db_backend(),
             "active_backend": get_app_db_backend(),
             "fallback_backend": "sqlite",
             "fallback_enabled": app_db_fallback_enabled(),
@@ -67,6 +88,26 @@ def get_storage_status():
 
     if not using_postgres():
         status["app_data"]["message"] = "SQLite app-data backend is active."
+
+        if postgres_url_configured():
+            status["app_data"].update({
+                "healthy": False,
+                "message": (
+                    "A Supabase/Postgres URL is configured, but APP_DB_BACKEND "
+                    "is set to SQLite. SQLite app-data backend is active."
+                ),
+                "error": (
+                    "Set APP_DB_BACKEND=supabase to use Supabase/Postgres, "
+                    "or remove SUPABASE_DB_URL/DATABASE_URL/POSTGRES_URL."
+                ),
+            })
+            if get_last_fallback() is None:
+                record_fallback(
+                    "backend_selection",
+                    status["app_data"]["error"],
+                )
+            status["app_data"]["last_fallback"] = get_last_fallback()
+
         return status
 
     try:
@@ -76,6 +117,7 @@ def get_storage_status():
                 cursor.fetchone()
     except Exception as exc:
         if app_db_fallback_enabled():
+            record_fallback("health_check", exc)
             status["app_data"].update({
                 "active_backend": "sqlite",
                 "healthy": False,
@@ -84,6 +126,7 @@ def get_storage_status():
                     "SQLite fallback is active."
                 ),
                 "error": str(exc),
+                "last_fallback": get_last_fallback(),
             })
         else:
             status["app_data"].update({

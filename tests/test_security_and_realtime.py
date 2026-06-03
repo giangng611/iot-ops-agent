@@ -17,6 +17,7 @@ _ORIGINAL_CWD = os.getcwd()
 os.chdir(_TEMP_DIR.name)
 
 import app as app_module  # noqa: E402
+import storage.mongo_store as mongo_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
 from storage.relational_store import (  # noqa: E402
     add_message,
@@ -30,6 +31,9 @@ from storage.relational_store import (  # noqa: E402
 
 class SecurityAndRealtimeTests(unittest.TestCase):
     def setUp(self):
+        relational_store._last_fallback = None
+        for postgres_url_var in ("SUPABASE_DB_URL", "DATABASE_URL", "POSTGRES_URL"):
+            os.environ.pop(postgres_url_var, None)
         init_db()
         app_module.app.config["TESTING"] = True
         app_module.diagnose_rate_limit_log.clear()
@@ -227,6 +231,110 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertEqual(payload["app_data"]["active_backend"], "sqlite")
         self.assertTrue(payload["app_data"]["fallback_enabled"])
         self.assertEqual(payload["telemetry"]["source"], "sqlite")
+
+    def test_supabase_url_enables_postgres_when_backend_flag_is_missing(self):
+        original_backend = os.environ.get("APP_DB_BACKEND")
+        original_supabase_url = os.environ.get("SUPABASE_DB_URL")
+        os.environ.pop("APP_DB_BACKEND", None)
+        os.environ["SUPABASE_DB_URL"] = "postgresql://example"
+
+        try:
+            self.assertTrue(relational_store.using_postgres())
+            self.assertEqual(
+                relational_store.get_configured_app_db_backend(),
+                "supabase",
+            )
+            self.assertEqual(relational_store.get_app_db_backend(), "supabase")
+        finally:
+            if original_backend is None:
+                os.environ.pop("APP_DB_BACKEND", None)
+            else:
+                os.environ["APP_DB_BACKEND"] = original_backend
+
+            if original_supabase_url is None:
+                os.environ.pop("SUPABASE_DB_URL", None)
+            else:
+                os.environ["SUPABASE_DB_URL"] = original_supabase_url
+
+    def test_storage_status_records_sqlite_fallback_when_supabase_fails(self):
+        original_backend = os.environ.get("APP_DB_BACKEND")
+        original_fallback = os.environ.get("APP_DB_FALLBACK_ENABLED")
+        os.environ["APP_DB_BACKEND"] = "supabase"
+        os.environ["APP_DB_FALLBACK_ENABLED"] = "true"
+
+        try:
+            with patch(
+                "storage.relational_store.get_postgres_connection",
+                side_effect=RuntimeError("simulated supabase outage"),
+            ):
+                status = relational_store.get_storage_status()
+                self.assertEqual(status["app_data"]["active_backend"], "sqlite")
+                self.assertFalse(status["app_data"]["healthy"])
+                self.assertEqual(
+                    status["app_data"]["last_fallback"]["operation"],
+                    "health_check",
+                )
+                self.assertEqual(
+                    status["app_data"]["last_fallback"]["fallback_backend"],
+                    "sqlite",
+                )
+        finally:
+            if original_backend is None:
+                os.environ.pop("APP_DB_BACKEND", None)
+            else:
+                os.environ["APP_DB_BACKEND"] = original_backend
+
+            if original_fallback is None:
+                os.environ.pop("APP_DB_FALLBACK_ENABLED", None)
+            else:
+                os.environ["APP_DB_FALLBACK_ENABLED"] = original_fallback
+
+    def test_mongodb_telemetry_write_retries_after_transient_failure(self):
+        original_enable_mongodb = os.environ.get("ENABLE_MONGODB")
+        os.environ["ENABLE_MONGODB"] = "true"
+        mongo_store._warned_unavailable = False
+
+        class FakeCollection:
+            def __init__(self):
+                self.inserted = 0
+
+            def insert_one(self, document):
+                self.inserted += 1
+
+        fake_collection = FakeCollection()
+        collection_results = [
+            RuntimeError("simulated transient mongo outage"),
+            fake_collection,
+        ]
+
+        def get_collection():
+            result = collection_results.pop(0)
+
+            if isinstance(result, Exception):
+                raise result
+
+            return result
+
+        telemetry = {
+            "device_id": "sensor-001",
+            "cpu_usage": 50,
+            "memory_usage": 50,
+            "heartbeat_delay": 20,
+            "status": "healthy",
+            "log_message": "normal telemetry transmission",
+        }
+
+        try:
+            with patch("storage.mongo_store.get_telemetry_collection", get_collection):
+                self.assertFalse(mongo_store.insert_telemetry_if_enabled(**telemetry))
+                self.assertTrue(mongo_store.insert_telemetry_if_enabled(**telemetry))
+
+            self.assertEqual(fake_collection.inserted, 1)
+        finally:
+            if original_enable_mongodb is None:
+                os.environ.pop("ENABLE_MONGODB", None)
+            else:
+                os.environ["ENABLE_MONGODB"] = original_enable_mongodb
 
     def test_supabase_error_raises_when_fallback_disabled(self):
         original_backend = os.environ.get("APP_DB_BACKEND")

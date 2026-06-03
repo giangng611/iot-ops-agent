@@ -12,13 +12,9 @@ except ImportError:
 _client = None
 _client_uri = None
 _warned_unavailable = False
-_disabled_after_failure = False
 
 
 def mongodb_enabled():
-    if _disabled_after_failure:
-        return False
-
     return os.getenv("ENABLE_MONGODB", "false").lower() == "true"
 
 
@@ -175,7 +171,7 @@ def upsert_sqlite_telemetry_row(row):
 
 
 def insert_telemetry_if_enabled(**telemetry):
-    global _warned_unavailable, _disabled_after_failure
+    global _warned_unavailable
 
     if not mongodb_enabled():
         return False
@@ -184,9 +180,8 @@ def insert_telemetry_if_enabled(**telemetry):
         document = build_telemetry_document(**telemetry)
         return insert_telemetry_document(document)
     except (PyMongoError, RuntimeError) as exc:
-        _disabled_after_failure = True
         if not _warned_unavailable:
-            print(f"MongoDB telemetry write disabled for this run: {exc}")
+            print(f"MongoDB telemetry write failed: {exc}")
             _warned_unavailable = True
         return False
 

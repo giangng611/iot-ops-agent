@@ -1,7 +1,7 @@
 import os
-from datetime import datetime
 
 from werkzeug.security import check_password_hash, generate_password_hash
+from services.time_service import now_iso
 
 from storage import sqlite_store
 from storage.postgres_store import (
@@ -55,7 +55,7 @@ def record_fallback(operation_name, error, fallback_backend="sqlite"):
         "operation": operation_name,
         "error": str(error),
         "fallback_backend": fallback_backend,
-        "recorded_at": datetime.now().isoformat(timespec="seconds"),
+        "recorded_at": now_iso(),
     }
 
 
@@ -219,7 +219,7 @@ def create_chat(user_id, title):
                     (
                         user_id,
                         title,
-                        datetime.now().isoformat(timespec="seconds"),
+                        now_iso(),
                     ),
                 )
                 chat_id = cursor.fetchone()["id"]
@@ -308,7 +308,7 @@ def add_message(chat_id, role, content, reasoning_steps=None):
                         role,
                         content,
                         reasoning_steps,
-                        datetime.now().isoformat(timespec="seconds"),
+                        now_iso(),
                     ),
                 )
             conn.commit()
@@ -364,7 +364,7 @@ def create_user(username, password):
                     (
                         username,
                         generate_password_hash(password),
-                        datetime.now().isoformat(timespec="seconds"),
+                        now_iso(),
                     ),
                 )
             conn.commit()

@@ -1,6 +1,6 @@
 import sqlite3
-from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
+from services.time_service import now_iso
 
 DB_NAME = "telemetry.db"
 
@@ -111,7 +111,7 @@ def insert_telemetry(device_id, cpu_usage, memory_usage, heartbeat_delay,
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         device_id,
-        datetime.now().isoformat(timespec="seconds"),
+        now_iso(),
         cpu_usage,
         memory_usage,
         heartbeat_delay,
@@ -284,7 +284,7 @@ def create_chat(user_id, title):
     """, (
         user_id,
         title,
-        datetime.now().isoformat(timespec="seconds")
+        now_iso()
     ))
 
     chat_id = cursor.lastrowid
@@ -356,7 +356,7 @@ def add_message(chat_id, role, content, reasoning_steps=None):
         role,
         content,
         reasoning_steps,
-        datetime.now().isoformat(timespec="seconds")
+        now_iso()
     ))
 
     conn.commit()
@@ -397,7 +397,7 @@ def create_user(username, password):
     """, (
         username,
         generate_password_hash(password),
-        datetime.now().isoformat(timespec="seconds")
+        now_iso()
     ))
 
     conn.commit()

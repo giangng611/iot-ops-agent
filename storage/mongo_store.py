@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from services.time_service import now_iso
 
 try:
     from pymongo import MongoClient
@@ -108,7 +108,7 @@ def build_telemetry_document(
 ):
     return {
         "device_id": device_id,
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "timestamp": now_iso(),
         "metrics": {
             "cpu_usage": cpu_usage,
             "memory_usage": memory_usage,

@@ -4,7 +4,6 @@ from openai import OpenAI
 import os
 from flask_socketio import SocketIO
 from simulator import DEVICES, generate_telemetry
-from datetime import datetime
 from collections import defaultdict, deque
 
 from agents.ioa_v1_agent import IOAV1Agent
@@ -24,6 +23,7 @@ from storage.telemetry_store import (
     get_all_latest_devices,
     get_telemetry_source
 )
+from services.time_service import now, parse_timestamp
 
 load_dotenv()
 
@@ -129,7 +129,7 @@ def build_device_update_payload():
     latest_timestamp = None
 
     for device in devices:
-        device_timestamp = datetime.fromisoformat(device["timestamp"])
+        device_timestamp = parse_timestamp(device["timestamp"])
 
         if latest_timestamp is None or device_timestamp > latest_timestamp:
             latest_timestamp = device_timestamp
@@ -138,7 +138,7 @@ def build_device_update_payload():
 
     if latest_timestamp:
         telemetry_age_seconds = (
-                datetime.now() - latest_timestamp
+                now() - latest_timestamp
         ).total_seconds()
 
     telemetry_stream_status = (

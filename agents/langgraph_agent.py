@@ -54,6 +54,11 @@ class LangGraphAgent:
             "iteration": 1,
             "thought": "LangGraph selected an operational telemetry tool based on the user request.",
             "action": selected_tool,
+            "workflow": {
+                "framework": "LangGraph",
+                "node_id": "select_tool",
+                "node_label": "Select tool"
+            },
             "output": {
                 "selected_tool": selected_tool
             }
@@ -83,6 +88,11 @@ class LangGraphAgent:
             "iteration": 2,
             "thought": "LangGraph executed the selected tool and collected telemetry evidence.",
             "action": selected_tool,
+            "workflow": {
+                "framework": "LangGraph",
+                "node_id": "run_tool",
+                "node_label": "Run tool"
+            },
             "output": tool_output
         })
 
@@ -111,6 +121,11 @@ class LangGraphAgent:
             "iteration": 3,
             "thought": "LangGraph generated the final operational diagnosis using the shared diagnosis output format.",
             "action": "generate_answer",
+            "workflow": {
+                "framework": "LangGraph",
+                "node_id": "generate_answer",
+                "node_label": "Generate answer"
+            },
             "output": {
                 "framework": "LangGraph",
                 "output_format": "Operational Diagnosis: Summary, Evidence, Likely Cause, Suggested Next Action",
@@ -149,7 +164,8 @@ class LangGraphAgent:
                 "type": "thought",
                 "iteration": step["iteration"],
                 "thought": step["thought"],
-                "action": step["action"]
+                "action": step["action"],
+                "workflow": step.get("workflow")
             }
 
             yield {

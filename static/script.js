@@ -726,10 +726,12 @@ async function sendStreamMessage(message) {
                     iteration: event.iteration,
                     thought: event.thought,
                     action: event.action,
+                    workflow: event.workflow || null,
                     output: null
                 };
 
                 latestReasoningSteps.push(step);
+                updateReasoningWorkflowMap(latestReasoningSteps);
 
                 if (reasoningDrawerOpen) {
                     enqueueReasoningThoughtAction(step);
@@ -741,6 +743,7 @@ async function sendStreamMessage(message) {
 
                 if (latestStep) {
                     latestStep.output = event.observation.output;
+                    updateReasoningWorkflowMap(latestReasoningSteps);
 
                     if (reasoningDrawerOpen) {
                         enqueueReasoningObservation(latestStep);
@@ -1429,7 +1432,12 @@ function renderReasoningStepsStatic(steps) {
         `;
     });
 
-    content.innerHTML = html;
+    content.innerHTML = `
+        ${renderWorkflowMap(steps)}
+        <div id="reasoningTraceList" class="reasoning-trace-list">
+            ${html}
+        </div>
+    `;
 }
 
 function renderReasoningSteps(steps, shouldType = false) {
@@ -1498,7 +1506,10 @@ function createReasoningStepElement(step) {
     const content = document.getElementById("reasoningDrawerContent");
 
     if (content.textContent === "No reasoning trace yet.") {
-        content.innerHTML = "";
+        content.innerHTML = `
+            ${renderWorkflowMap(latestReasoningSteps)}
+            <div id="reasoningTraceList" class="reasoning-trace-list"></div>
+        `;
     }
 
     const existing = document.getElementById(`reasoning-step-${step.iteration}`);
@@ -1528,9 +1539,194 @@ function createReasoningStepElement(step) {
         <pre class="reasoning-observation"></pre>
     `;
 
-    content.appendChild(wrapper);
+    const traceList = document.getElementById("reasoningTraceList") || content;
+    traceList.appendChild(wrapper);
+    updateReasoningWorkflowMap(latestReasoningSteps);
 
     return wrapper;
+}
+
+function getRuntimeWorkflowTemplate(runtimeMode, frameworkName = "") {
+    const mode = runtimeMode || currentMode;
+    const framework = String(frameworkName || "").toLowerCase();
+
+    if (mode === "ioa_v2_langgraph" || framework === "langgraph") {
+        return {
+            title: "LangGraph workflow",
+            nodes: [
+                { id: "request", label: "Request" },
+                { id: "select_tool", label: "Select tool" },
+                { id: "run_tool", label: "Run tool" },
+                { id: "generate_answer", label: "Answer" }
+            ]
+        };
+    }
+
+    if (mode === "ioa_v2_langchain" || framework === "langchain") {
+        return {
+            title: "LangChain workflow",
+            nodes: [
+                { id: "request", label: "Request" },
+                { id: "create_agent", label: "Create agent" },
+                { id: "agent_loop", label: "Agent loop" },
+                { id: "final_answer", label: "Answer" }
+            ]
+        };
+    }
+
+    if (mode === "ioa_v2_n8n" || framework === "n8n") {
+        return {
+            title: "n8n workflow",
+            nodes: [
+                { id: "request", label: "Request" },
+                { id: "webhook", label: "Webhook" },
+                { id: "workflow", label: "Workflow" },
+                { id: "final_answer", label: "Answer" }
+            ]
+        };
+    }
+
+    if (mode === "ioa_v2_dify" || framework === "dify") {
+        return {
+            title: "Dify workflow",
+            nodes: [
+                { id: "request", label: "Request" },
+                { id: "chat_api", label: "Chat API" },
+                { id: "app_workflow", label: "App flow" },
+                { id: "final_answer", label: "Answer" }
+            ]
+        };
+    }
+
+    return {
+        title: "Agent workflow",
+        nodes: [
+            { id: "request", label: "Request" },
+            { id: "reason", label: "Reason" },
+            { id: "tool", label: "Tool" },
+            { id: "final_answer", label: "Answer" }
+        ]
+    };
+}
+
+function inferWorkflowFramework(steps) {
+    const workflowFramework = steps
+        .map(step => step.workflow?.framework)
+        .find(Boolean);
+
+    if (workflowFramework) {
+        return workflowFramework;
+    }
+
+    const outputFramework = steps
+        .map(step => step.output?.framework)
+        .find(Boolean);
+
+    return outputFramework || "";
+}
+
+function inferWorkflowNodeId(step) {
+    if (step.workflow?.node_id) {
+        return step.workflow.node_id;
+    }
+
+    const action = String(step.action || "").toLowerCase();
+
+    if (action.includes("select")) return "select_tool";
+    if (action.includes("run") || action.includes("tool") || action.includes("status")) return "run_tool";
+    if (action.includes("generate")) return "generate_answer";
+    if (action.includes("webhook")) return "webhook";
+    if (action.includes("dify") || action.includes("chat_messages")) return "chat_api";
+    if (action.includes("langchain") || action.includes("agent")) return "agent_loop";
+    if (step.iteration === 1) return "reason";
+    if (step.iteration === 2) return "tool";
+
+    return "final_answer";
+}
+
+function buildWorkflowState(steps) {
+    const framework = inferWorkflowFramework(steps);
+    const template = getRuntimeWorkflowTemplate(currentMode, framework);
+    const nodeIndexById = Object.fromEntries(
+        template.nodes.map((node, index) => [node.id, index])
+    );
+    let furthestIndex = steps.length > 0 ? 0 : -1;
+    const explicitNodeStates = {};
+
+    steps.forEach(step => {
+        const nodeId = inferWorkflowNodeId(step);
+        const nodeIndex = nodeIndexById[nodeId];
+
+        if (nodeIndex !== undefined) {
+            furthestIndex = Math.max(furthestIndex, nodeIndex);
+            explicitNodeStates[nodeId] = step.output ? "completed" : "active";
+        }
+    });
+
+    const nodes = template.nodes.map((node, index) => {
+        let status = "pending";
+
+        if (index < furthestIndex) {
+            status = "completed";
+        }
+
+        if (index === furthestIndex && steps.length > 0) {
+            status = "active";
+        }
+
+        if (explicitNodeStates[node.id]) {
+            status = explicitNodeStates[node.id];
+        }
+
+        if (steps.some(step => inferWorkflowNodeId(step) === node.id && step.output)) {
+            status = "completed";
+        }
+
+        return {
+            ...node,
+            status
+        };
+    });
+
+    return {
+        title: template.title,
+        nodes
+    };
+}
+
+function renderWorkflowMap(steps) {
+    const workflow = buildWorkflowState(steps || []);
+
+    const nodesHtml = workflow.nodes.map((node, index) => `
+        <div class="workflow-node ${node.status}">
+            <span class="workflow-node-index">${index + 1}</span>
+            <span class="workflow-node-label">${escapeHtml(node.label)}</span>
+        </div>
+    `).join("");
+
+    return `
+        <section id="reasoningWorkflowMap" class="workflow-map">
+            <div class="workflow-map-header">
+                <span>Workflow</span>
+                <strong>${escapeHtml(workflow.title)}</strong>
+            </div>
+            <div class="workflow-lane">
+                ${nodesHtml}
+            </div>
+        </section>
+    `;
+}
+
+function updateReasoningWorkflowMap(steps) {
+    if (!reasoningDrawerOpen) {
+        return;
+    }
+
+    const existing = document.getElementById("reasoningWorkflowMap");
+
+    if (existing) {
+        existing.outerHTML = renderWorkflowMap(steps);
+    }
 }
 
 function enqueueReasoningThoughtAction(step) {

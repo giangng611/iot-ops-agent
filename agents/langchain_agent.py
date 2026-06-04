@@ -86,6 +86,11 @@ and device telemetry history before producing the final answer.
                     "iteration": 1,
                     "thought": "LangChain agent selected and executed tools using its internal agent loop.",
                     "action": "LangChain create_agent",
+                    "workflow": {
+                        "framework": "LangChain",
+                        "node_id": "agent_loop",
+                        "node_label": "Agent loop"
+                    },
                     "output": {
                         "framework": "LangChain",
                         "messages_count": len(messages)

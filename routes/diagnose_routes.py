@@ -342,7 +342,12 @@ def create_diagnose_blueprint(runtime):
                         'type': 'thought',
                         'iteration': 1,
                         'thought': 'Using LangChain as the orchestration runtime.',
-                        'action': 'Initialize LangChain agent execution'
+                        'action': 'Initialize LangChain agent execution',
+                        'workflow': {
+                            'framework': 'LangChain',
+                            'node_id': 'create_agent',
+                            'node_label': 'Create agent'
+                        }
                     })}\n\n"
 
                     result = langchain_agent.run(user_input)
@@ -380,8 +385,13 @@ def create_diagnose_blueprint(runtime):
                     yield f"data: {json.dumps({
                         'type': 'thought',
                         'iteration': 2,
-                        'thought': 'LangChain returned a final operational diagnosis.',
-                        'action': 'Format final answer for IoT Ops Agent UI'
+                        'thought': 'LangChain executed its framework-managed tool-calling loop.',
+                        'action': 'Run LangChain agent loop',
+                        'workflow': {
+                            'framework': 'LangChain',
+                            'node_id': 'agent_loop',
+                            'node_label': 'Agent loop'
+                        }
                     })}\n\n"
 
                     yield f"data: {json.dumps({
@@ -389,6 +399,29 @@ def create_diagnose_blueprint(runtime):
                         'iteration': 2,
                         'observation': {
                             'output': result['steps'][0]['output']
+                        }
+                    })}\n\n"
+
+                    yield f"data: {json.dumps({
+                        'type': 'thought',
+                        'iteration': 3,
+                        'thought': 'LangChain returned a final operational diagnosis.',
+                        'action': 'Format final answer for IoT Ops Agent UI',
+                        'workflow': {
+                            'framework': 'LangChain',
+                            'node_id': 'final_answer',
+                            'node_label': 'Final answer'
+                        }
+                    })}\n\n"
+
+                    yield f"data: {json.dumps({
+                        'type': 'observation',
+                        'iteration': 3,
+                        'observation': {
+                            'output': {
+                                'framework': 'LangChain',
+                                'status': 'final_answer_ready'
+                            }
                         }
                     })}\n\n"
 
@@ -405,7 +438,12 @@ def create_diagnose_blueprint(runtime):
                             'type': 'thought',
                             'iteration': 1,
                             'thought': 'The request should be delegated to n8n for workflow-based orchestration.',
-                            'action': 'call_n8n_webhook'
+                            'action': 'call_n8n_webhook',
+                            'workflow': {
+                                'framework': 'n8n',
+                                'node_id': 'webhook',
+                                'node_label': 'Webhook'
+                            }
                         })}\n\n"
 
                         result = call_n8n_agent(user_input)
@@ -486,7 +524,12 @@ def create_diagnose_blueprint(runtime):
                             'type': 'thought',
                             'iteration': 1,
                             'thought': 'The request should be delegated to Dify for app-based agent orchestration.',
-                            'action': 'call_dify_chat_messages_api'
+                            'action': 'call_dify_chat_messages_api',
+                            'workflow': {
+                                'framework': 'Dify',
+                                'node_id': 'chat_api',
+                                'node_label': 'Chat API'
+                            }
                         })}\n\n"
 
                         result = call_dify_agent(user_input)

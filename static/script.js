@@ -36,6 +36,7 @@ let metricsChart = null;
 let deviceHistoryChart = null;
 let reasoningTypingQueue = Promise.resolve();
 let pendingFinalAnswer = null;
+let latestTokenUsage = null;
 let reasoningTypingActive = false;
 let pendingDeleteChatId = null;
 let isAgentRunning = false;
@@ -84,6 +85,17 @@ function escapeHtml(value) {
 
 function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function formatTokenUsage(tokenUsage) {
+    if (!tokenUsage || !tokenUsage.total_tokens) {
+        return "";
+    }
+
+    const inputTokens = tokenUsage.input_tokens ?? "?";
+    const outputTokens = tokenUsage.output_tokens ?? "?";
+
+    return `${inputTokens} in / ${outputTokens} out / ${tokenUsage.total_tokens} total`;
 }
 
 function findPromptById(promptId) {
@@ -691,6 +703,7 @@ async function sendStreamMessage(message) {
     workflowNodeStatusMemory = {};
     workflowFinalized = false;
     pendingFinalAnswer = null;
+    latestTokenUsage = null;
     reasoningTypingQueue = Promise.resolve();
 
     const response = await fetch("/api/diagnose-stream", {
@@ -761,6 +774,7 @@ async function sendStreamMessage(message) {
         if (event.type === "final") {
             finalAnswer = event.final_answer;
             pendingFinalAnswer = finalAnswer;
+            latestTokenUsage = event.token_usage || latestTokenUsage;
             receivedTerminalEvent = true;
         }
 
@@ -959,7 +973,8 @@ async function loadChat(chatId) {
                 message.reasoningSteps || [],
                 message.createdAt,
                 false,
-                lastUserMessage
+                lastUserMessage,
+                message.tokenUsage || null
             );
         }
     });
@@ -1171,7 +1186,7 @@ function addUserMessage(message) {
     renderUserMessage(message);
 }
 
-async function addAssistantMessage(message, hasReasoning) {
+async function addAssistantMessage(message, hasReasoning, tokenUsage = latestTokenUsage) {
     const chat = chats.find(item => item.id === currentChatId);
     const retryPrompt = chat
         ? findLatestUserMessage(chat.messages)
@@ -1182,7 +1197,8 @@ async function addAssistantMessage(message, hasReasoning) {
             role: "assistant",
             content: message,
             hasReasoning: hasReasoning,
-            reasoningSteps: [...latestReasoningSteps]
+            reasoningSteps: [...latestReasoningSteps],
+            tokenUsage: tokenUsage
         });
     }
 
@@ -1192,7 +1208,8 @@ async function addAssistantMessage(message, hasReasoning) {
         latestReasoningSteps,
         null,
         true,
-        retryPrompt
+        retryPrompt,
+        tokenUsage
     );
 }
 
@@ -1242,7 +1259,8 @@ async function renderAssistantMessage(
     reasoningSteps = [],
     timestamp = null,
     shouldType = false,
-    retryPrompt = null
+    retryPrompt = null,
+    tokenUsage = null
 ) {
     const chatMessages = document.getElementById("chatMessages");
     const reasoningId = `reasoning-${Date.now()}-${Math.random()}`;
@@ -1254,6 +1272,7 @@ async function renderAssistantMessage(
         answer: message,
         retryPrompt: retryPrompt
     };
+    const tokenUsageLabel = formatTokenUsage(tokenUsage);
 
     chatMessages.innerHTML += `
         <div class="message-row assistant-row">
@@ -1267,6 +1286,12 @@ async function renderAssistantMessage(
                 </div>
 
                 <div class="assistant-actions">
+                    ${tokenUsageLabel ? `
+                        <span class="token-usage-pill" title="Actual model token usage">
+                            Tokens: ${escapeHtml(tokenUsageLabel)}
+                        </span>
+                    ` : ""}
+
                     ${hasReasoning ? `
                         <button class="assistant-action-link" onclick="openReasoningDrawer('${reasoningId}')">
                             Show reasoning trace

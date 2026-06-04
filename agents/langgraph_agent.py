@@ -39,6 +39,39 @@ class LangGraphAgent:
 
         self.graph = graph.compile()
 
+    def extract_token_usage(self, response):
+        usage = getattr(response, "usage_metadata", None) or {}
+        response_metadata = getattr(response, "response_metadata", {}) or {}
+        token_usage = response_metadata.get("token_usage") or {}
+
+        input_tokens = (
+            usage.get("input_tokens")
+            or token_usage.get("prompt_tokens")
+            or token_usage.get("input_tokens")
+        )
+        output_tokens = (
+            usage.get("output_tokens")
+            or token_usage.get("completion_tokens")
+            or token_usage.get("output_tokens")
+        )
+        total_tokens = (
+            usage.get("total_tokens")
+            or token_usage.get("total_tokens")
+        )
+
+        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+            total_tokens = input_tokens + output_tokens
+
+        if total_tokens is None:
+            return None
+
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "source": "openai_response_metadata"
+        }
+
     def select_tool_node(self, state):
         user_input = state["user_input"].lower()
 
@@ -115,6 +148,7 @@ class LangGraphAgent:
     """
 
         response = self.model.invoke(prompt)
+        token_usage = self.extract_token_usage(response)
 
         steps = state.get("steps", [])
         steps.append({
@@ -128,6 +162,7 @@ class LangGraphAgent:
             },
             "output": {
                 "framework": "LangGraph",
+                "token_usage": token_usage,
                 "output_format": "Operational Diagnosis: Summary, Evidence, Likely Cause, Suggested Next Action",
                 "graph_nodes": [
                     "select_tool",
@@ -139,6 +174,7 @@ class LangGraphAgent:
 
         return {
             "final_answer": response.content,
+            "token_usage": token_usage,
             "steps": steps
         }
 
@@ -239,6 +275,7 @@ class LangGraphAgent:
 
         response = self.model.invoke(prompt)
         final_answer = response.content
+        token_usage = self.extract_token_usage(response)
 
         yield {
             "type": "observation",
@@ -247,6 +284,7 @@ class LangGraphAgent:
                 "output": {
                     "framework": "LangGraph",
                     "status": "final_answer_ready",
+                    "token_usage": token_usage,
                     "output_format": (
                         "Operational Diagnosis: Summary, Evidence, "
                         "Likely Cause, Suggested Next Action"
@@ -257,7 +295,8 @@ class LangGraphAgent:
 
         yield {
             "type": "final",
-            "final_answer": final_answer
+            "final_answer": final_answer,
+            "token_usage": token_usage
         }
 
     def extract_device_id(self, text):

@@ -427,7 +427,8 @@ def create_diagnose_blueprint(runtime):
 
                     yield f"data: {json.dumps({
                         'type': 'final',
-                        'final_answer': result['final_answer']
+                        'final_answer': result['final_answer'],
+                        'token_usage': result.get('token_usage')
                     })}\n\n"
 
                     return

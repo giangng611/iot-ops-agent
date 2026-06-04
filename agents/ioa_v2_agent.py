@@ -18,8 +18,46 @@ class IOAV2Agent:
         self.max_iterations = 3
         self.conversation_history = []
         self.last_target = None
+        self.current_token_usage = None
+
+    def reset_token_usage(self):
+        self.current_token_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "source": "openai_chat_completions_usage"
+        }
+
+    def record_token_usage(self, response):
+        usage = getattr(response, "usage", None)
+
+        if not usage:
+            return
+
+        if self.current_token_usage is None:
+            self.reset_token_usage()
+
+        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        output_tokens = getattr(usage, "completion_tokens", 0) or 0
+        total_tokens = getattr(usage, "total_tokens", 0) or (
+            input_tokens + output_tokens
+        )
+
+        self.current_token_usage["input_tokens"] += input_tokens
+        self.current_token_usage["output_tokens"] += output_tokens
+        self.current_token_usage["total_tokens"] += total_tokens
+
+    def get_token_usage(self):
+        if not self.current_token_usage:
+            return None
+
+        if not self.current_token_usage["total_tokens"]:
+            return None
+
+        return dict(self.current_token_usage)
 
     def run(self, user_input):
+        self.reset_token_usage()
         observations = []
         target = self.extract_target(user_input)
         if target != "SYSTEM":
@@ -38,7 +76,8 @@ class IOAV2Agent:
 
                 return {
                     "final_answer": final_answer,
-                    "steps": observations
+                    "steps": observations,
+                    "token_usage": self.get_token_usage()
                 }
 
             thought, action = self.parse_action(model_output)
@@ -53,7 +92,8 @@ class IOAV2Agent:
 
                 return {
                     "final_answer": final_answer,
-                    "steps": observations
+                    "steps": observations,
+                    "token_usage": self.get_token_usage()
                 }
 
             if action not in TOOLS:
@@ -61,7 +101,8 @@ class IOAV2Agent:
 
                 return {
                     "final_answer": final_answer,
-                    "steps": observations
+                    "steps": observations,
+                    "token_usage": self.get_token_usage()
                 }
 
             tool_output = self.execute_tool(
@@ -88,7 +129,8 @@ class IOAV2Agent:
 
                 return {
                     "final_answer": final_answer,
-                    "steps": observations
+                    "steps": observations,
+                    "token_usage": self.get_token_usage()
                 }
 
         final_answer = self.generate_final_answer(
@@ -100,10 +142,12 @@ class IOAV2Agent:
 
         return {
             "final_answer": final_answer,
-            "steps": observations
+            "steps": observations,
+            "token_usage": self.get_token_usage()
         }
 
     def run_stream(self, user_input):
+        self.reset_token_usage()
         observations = []
         target = self.extract_target(user_input)
         if target != "SYSTEM":
@@ -123,7 +167,8 @@ class IOAV2Agent:
 
                 yield {
                     "type": "final",
-                    "final_answer": final_answer
+                    "final_answer": final_answer,
+                    "token_usage": self.get_token_usage()
                 }
 
                 return
@@ -140,7 +185,8 @@ class IOAV2Agent:
 
                 yield {
                     "type": "final",
-                    "final_answer": final_answer
+                    "final_answer": final_answer,
+                    "token_usage": self.get_token_usage()
                 }
 
                 return
@@ -189,7 +235,8 @@ class IOAV2Agent:
 
                 yield {
                     "type": "final",
-                    "final_answer": final_answer
+                    "final_answer": final_answer,
+                    "token_usage": self.get_token_usage()
                 }
 
                 return
@@ -203,7 +250,8 @@ class IOAV2Agent:
 
         yield {
             "type": "final",
-            "final_answer": final_answer
+            "final_answer": final_answer,
+            "token_usage": self.get_token_usage()
         }
 
     def extract_target(self, user_input):
@@ -249,6 +297,7 @@ class IOAV2Agent:
                 }
             ]
         )
+        self.record_token_usage(response)
 
         target = response.choices[0].message.content.strip()
 
@@ -333,6 +382,7 @@ class IOAV2Agent:
                 }
             ]
         )
+        self.record_token_usage(response)
 
         return response.choices[0].message.content.strip()
 
@@ -397,6 +447,7 @@ class IOAV2Agent:
                 }
             ]
         )
+        self.record_token_usage(response)
 
         return response.choices[0].message.content.strip()
 

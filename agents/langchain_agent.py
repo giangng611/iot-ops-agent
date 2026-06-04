@@ -59,6 +59,57 @@ and device telemetry history before producing the final answer.
 """
         )
 
+    def extract_message_token_usage(self, message):
+        usage = getattr(message, "usage_metadata", None) or {}
+        response_metadata = getattr(message, "response_metadata", {}) or {}
+        token_usage = response_metadata.get("token_usage") or {}
+
+        input_tokens = (
+            usage.get("input_tokens")
+            or token_usage.get("prompt_tokens")
+            or token_usage.get("input_tokens")
+            or 0
+        )
+        output_tokens = (
+            usage.get("output_tokens")
+            or token_usage.get("completion_tokens")
+            or token_usage.get("output_tokens")
+            or 0
+        )
+        total_tokens = (
+            usage.get("total_tokens")
+            or token_usage.get("total_tokens")
+            or input_tokens + output_tokens
+        )
+
+        if not total_tokens:
+            return None
+
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens
+        }
+
+    def sum_token_usage(self, messages):
+        usage_items = [
+            usage for usage in (
+                self.extract_message_token_usage(message)
+                for message in messages
+            )
+            if usage
+        ]
+
+        if not usage_items:
+            return None
+
+        return {
+            "input_tokens": sum(item["input_tokens"] for item in usage_items),
+            "output_tokens": sum(item["output_tokens"] for item in usage_items),
+            "total_tokens": sum(item["total_tokens"] for item in usage_items),
+            "source": "langchain_message_metadata"
+        }
+
     def run(self, user_input):
         result = self.agent.invoke({
             "messages": [
@@ -78,9 +129,11 @@ and device telemetry history before producing the final answer.
             }
 
         final_message = messages[-1]
+        token_usage = self.sum_token_usage(messages)
 
         return {
             "final_answer": final_message.content,
+            "token_usage": token_usage,
             "steps": [
                 {
                     "iteration": 1,
@@ -93,7 +146,8 @@ and device telemetry history before producing the final answer.
                     },
                     "output": {
                         "framework": "LangChain",
-                        "messages_count": len(messages)
+                        "messages_count": len(messages),
+                        "token_usage": token_usage
                     }
                 }
             ]

@@ -350,6 +350,31 @@ def create_diagnose_blueprint(runtime):
                         }
                     })}\n\n"
 
+                    yield f"data: {json.dumps({
+                        'type': 'observation',
+                        'iteration': 1,
+                        'observation': {
+                            'output': {
+                                'framework': 'LangChain',
+                                'agent_style': 'Framework-managed tool-calling agent',
+                                'trace_visibility': 'Limited internal reasoning visibility',
+                                'note': 'LangChain create_agent is initialized with IoT telemetry tools.'
+                            }
+                        }
+                    })}\n\n"
+
+                    yield f"data: {json.dumps({
+                        'type': 'thought',
+                        'iteration': 2,
+                        'thought': 'LangChain is running its framework-managed tool-calling loop.',
+                        'action': 'Run LangChain agent loop',
+                        'workflow': {
+                            'framework': 'LangChain',
+                            'node_id': 'agent_loop',
+                            'node_label': 'Agent loop'
+                        }
+                    })}\n\n"
+
                     result = langchain_agent.run(user_input)
 
                     latency_seconds = round(time.time() - start_time, 2)
@@ -368,31 +393,6 @@ def create_diagnose_blueprint(runtime):
                         maintainability_score=4,
                         notes="Automatic benchmark capture from streamed UI execution."
                     )
-
-                    yield f"data: {json.dumps({
-                        'type': 'observation',
-                        'iteration': 1,
-                        'observation': {
-                            'output': {
-                                'framework': 'LangChain',
-                                'agent_style': 'Framework-managed tool-calling agent',
-                                'trace_visibility': 'Limited internal reasoning visibility',
-                                'note': 'LangChain abstracts most internal Thought/Action/Observation steps unless callbacks are added.'
-                            }
-                        }
-                    })}\n\n"
-
-                    yield f"data: {json.dumps({
-                        'type': 'thought',
-                        'iteration': 2,
-                        'thought': 'LangChain executed its framework-managed tool-calling loop.',
-                        'action': 'Run LangChain agent loop',
-                        'workflow': {
-                            'framework': 'LangChain',
-                            'node_id': 'agent_loop',
-                            'node_label': 'Agent loop'
-                        }
-                    })}\n\n"
 
                     yield f"data: {json.dumps({
                         'type': 'observation',
@@ -446,8 +446,32 @@ def create_diagnose_blueprint(runtime):
                             }
                         })}\n\n"
 
+                        yield f"data: {json.dumps({
+                            'type': 'observation',
+                            'iteration': 1,
+                            'observation': {
+                                'output': {
+                                    'framework': 'n8n',
+                                    'status': 'request_dispatched',
+                                    'webhook_url_configured': True
+                                }
+                            }
+                        })}\n\n"
+
+                        yield f"data: {json.dumps({
+                            'type': 'thought',
+                            'iteration': 2,
+                            'thought': 'n8n should now execute the configured workflow and LLM chain.',
+                            'action': 'run_n8n_workflow',
+                            'workflow': {
+                                'framework': 'n8n',
+                                'node_id': 'workflow',
+                                'node_label': 'Basic LLM Chain'
+                            }
+                        })}\n\n"
+
                         result = call_n8n_agent(user_input)
-                        steps = normalize_n8n_steps(result)
+                        normalized_steps = normalize_n8n_steps(result)
 
                         latency_seconds = round(time.time() - start_time, 2)
 
@@ -455,30 +479,45 @@ def create_diagnose_blueprint(runtime):
                             user_input=user_input,
                             latency_seconds=latency_seconds,
                             status="success",
-                            step_count=len(steps)
+                            step_count=len(normalized_steps)
                         )
-
-                        first_step = steps[0]
 
                         yield f"data: {json.dumps({
                             'type': 'observation',
-                            'iteration': first_step['iteration'],
+                            'iteration': 2,
                             'observation': {
-                                'output': first_step['output']
+                                'output': {
+                                    'framework': 'n8n',
+                                    'status': 'workflow_response_received',
+                                    'latency_seconds': latency_seconds,
+                                    'returned_step_count': max(
+                                        len(normalized_steps) - 1,
+                                        0
+                                    ),
+                                    'answer_preview': result['final_answer'][:300]
+                                }
                             }
                         })}\n\n"
 
-                        for step in steps[1:]:
+                        for iteration, step in enumerate(
+                            normalized_steps[1:],
+                            start=3
+                        ):
                             yield f"data: {json.dumps({
                                 'type': 'thought',
-                                'iteration': step['iteration'],
+                                'iteration': iteration,
                                 'thought': step['thought'],
-                                'action': step['action']
+                                'action': step['action'],
+                                'workflow': {
+                                    'framework': 'n8n',
+                                    'node_id': 'code',
+                                    'node_label': 'Code in JavaScript'
+                                }
                             })}\n\n"
 
                             yield f"data: {json.dumps({
                                 'type': 'observation',
-                                'iteration': step['iteration'],
+                                'iteration': iteration,
                                 'observation': {
                                     'output': step['output']
                                 }

@@ -157,28 +157,107 @@ class LangGraphAgent:
         }
 
     def run_stream(self, user_input):
-        result = self.run(user_input)
+        state = {
+            "user_input": user_input,
+            "selected_tool": "",
+            "tool_output": None,
+            "final_answer": "",
+            "steps": []
+        }
 
-        for step in result["steps"]:
-            yield {
-                "type": "thought",
-                "iteration": step["iteration"],
-                "thought": step["thought"],
-                "action": step["action"],
-                "workflow": step.get("workflow")
+        state.update(self.select_tool_node(state))
+        select_step = state["steps"][-1]
+
+        yield {
+            "type": "thought",
+            "iteration": select_step["iteration"],
+            "thought": select_step["thought"],
+            "action": select_step["action"],
+            "workflow": select_step.get("workflow")
+        }
+
+        yield {
+            "type": "observation",
+            "iteration": select_step["iteration"],
+            "observation": {
+                "output": select_step["output"]
             }
+        }
 
-            yield {
-                "type": "observation",
-                "iteration": step["iteration"],
-                "observation": {
-                    "output": step["output"]
+        state.update(self.run_tool_node(state))
+        tool_step = state["steps"][-1]
+
+        yield {
+            "type": "thought",
+            "iteration": tool_step["iteration"],
+            "thought": tool_step["thought"],
+            "action": tool_step["action"],
+            "workflow": tool_step.get("workflow")
+        }
+
+        yield {
+            "type": "observation",
+            "iteration": tool_step["iteration"],
+            "observation": {
+                "output": tool_step["output"]
+            }
+        }
+
+        answer_step = {
+            "iteration": 3,
+            "thought": (
+                "LangGraph is generating the final operational diagnosis "
+                "using the collected telemetry evidence."
+            ),
+            "action": "generate_answer",
+            "workflow": {
+                "framework": "LangGraph",
+                "node_id": "generate_answer",
+                "node_label": "Generate answer"
+            }
+        }
+
+        yield {
+            "type": "thought",
+            "iteration": answer_step["iteration"],
+            "thought": answer_step["thought"],
+            "action": answer_step["action"],
+            "workflow": answer_step.get("workflow")
+        }
+
+        prompt = f"""
+    You are an IoT operations assistant.
+
+    {DIAGNOSIS_OUTPUT_FORMAT}
+
+    User request:
+    {state["user_input"]}
+
+    Telemetry/tool result:
+    {state["tool_output"]}
+    """
+
+        response = self.model.invoke(prompt)
+        final_answer = response.content
+
+        yield {
+            "type": "observation",
+            "iteration": answer_step["iteration"],
+            "observation": {
+                "output": {
+                    "framework": "LangGraph",
+                    "status": "final_answer_ready",
+                    "output_format": (
+                        "Operational Diagnosis: Summary, Evidence, "
+                        "Likely Cause, Suggested Next Action"
+                    )
                 }
             }
+        }
 
         yield {
             "type": "final",
-            "final_answer": result["final_answer"]
+            "final_answer": final_answer
         }
 
     def extract_device_id(self, text):

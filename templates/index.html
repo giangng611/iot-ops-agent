@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 
 <body>
@@ -467,6 +467,38 @@
     </div>
 </div>
 
+<div id="workflowPanelModal" class="modal-overlay hidden">
+    <div class="workflow-panel-modal">
+        <div class="device-history-header">
+            <div>
+                <h2>Agent Workflow</h2>
+                <p>Live node execution map for the selected orchestration runtime.</p>
+            </div>
+
+            <button onclick="closeWorkflowPanel()">
+                Close
+            </button>
+        </div>
+
+        <div id="workflowPanelContent" class="workflow-panel-content">
+            No workflow trace yet.
+        </div>
+    </div>
+</div>
+
+<div id="workflowNodeDetailModal" class="modal-overlay hidden">
+    <div class="confirm-modal workflow-node-modal">
+        <h2 id="workflowNodeDetailTitle">Workflow node</h2>
+        <p id="workflowNodeDetailDescription"></p>
+
+        <div id="workflowNodeDetailContent" class="workflow-node-detail-content"></div>
+
+        <div class="confirm-actions">
+            <button onclick="closeWorkflowNodeDetail()">Close</button>
+        </div>
+    </div>
+</div>
+
 <div id="logoutModal" class="modal-overlay hidden">
     <div class="confirm-modal">
         <h2>Log out?</h2>
@@ -636,6 +668,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=5"></script>
+<script src="/static/script.js?v=8"></script>
 </body>
 </html>

@@ -22,7 +22,11 @@ let allDevices = [];
 let chats = [];
 let currentChatId = null;
 let latestReasoningSteps = [];
+let displayedWorkflowSteps = [];
+let workflowNodeStatusMemory = {};
 let reasoningDrawerOpen = false;
+let workflowPanelOpen = false;
+let workflowFinalized = false;
 let currentAlerts = {
     critical_count: 0,
     warning_count: 0
@@ -44,6 +48,7 @@ let lastRealtimeUpdate = 0;
 let realtimeStatusInterval = null;
 let assistantMessageActionStore = {};
 let userMessageActionStore = {};
+let workflowNodeDetailStore = {};
 
 const prompts = [
     "/overview system health",
@@ -66,6 +71,7 @@ const homeHeroPrompts = [
 
 const MAX_DIAGNOSE_MESSAGE_CHARS = 2000;
 const PREFETCH_CHAT_LIMIT = 5;
+const WORKFLOW_EVENT_DELAY_MS = 900;
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -74,6 +80,10 @@ function escapeHtml(value) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function findPromptById(promptId) {
@@ -209,6 +219,9 @@ function newChat() {
     showTab("home", homeButton);
     currentChatId = null;
     latestReasoningSteps = [];
+    displayedWorkflowSteps = [];
+    workflowNodeStatusMemory = {};
+    workflowFinalized = false;
 
     document.getElementById("messageInput").value = "";
     document.getElementById("chatMessages").innerHTML = "";
@@ -221,6 +234,7 @@ function newChat() {
     suggestions.innerHTML = "";
 
     closeReasoningDrawer();
+    closeWorkflowPanel();
     renderChatHistory();
 }
 
@@ -673,6 +687,9 @@ async function sendMessage() {
 
 async function sendStreamMessage(message) {
     latestReasoningSteps = [];
+    displayedWorkflowSteps = [];
+    workflowNodeStatusMemory = {};
+    workflowFinalized = false;
     pendingFinalAnswer = null;
     reasoningTypingQueue = Promise.resolve();
 
@@ -699,6 +716,61 @@ async function sendStreamMessage(message) {
     let streamBuffer = "";
     let receivedTerminalEvent = false;
 
+    const processStreamEvent = async (event) => {
+        if (event.type === "thought") {
+            const existingStep = latestReasoningSteps.find(step =>
+                step.iteration === event.iteration
+            );
+            const step = {
+                iteration: event.iteration,
+                thought: event.thought,
+                action: event.action,
+                workflow: event.workflow || null,
+                output: existingStep?.output || null
+            };
+
+            if (existingStep) {
+                Object.assign(existingStep, step);
+            } else {
+                latestReasoningSteps.push(step);
+            }
+
+            if (reasoningDrawerOpen) {
+                enqueueReasoningThoughtAction(step);
+            }
+
+            await wait(WORKFLOW_EVENT_DELAY_MS);
+        }
+
+        if (event.type === "observation") {
+            const latestStep = latestReasoningSteps.find(step =>
+                step.iteration === event.iteration
+            ) || latestReasoningSteps[latestReasoningSteps.length - 1];
+
+            if (latestStep) {
+                latestStep.output = event.observation.output;
+
+                if (reasoningDrawerOpen) {
+                    enqueueReasoningObservation(latestStep);
+                }
+            }
+
+            await wait(WORKFLOW_EVENT_DELAY_MS);
+        }
+
+        if (event.type === "final") {
+            finalAnswer = event.final_answer;
+            pendingFinalAnswer = finalAnswer;
+            receivedTerminalEvent = true;
+        }
+
+        if (event.type === "error") {
+            finalAnswer = "Error: " + event.error;
+            pendingFinalAnswer = finalAnswer;
+            receivedTerminalEvent = true;
+        }
+    };
+
     while (true) {
         const { value, done } = await reader.read();
 
@@ -708,7 +780,7 @@ async function sendStreamMessage(message) {
         const events = streamBuffer.split("\n\n");
         streamBuffer = events.pop() || "";
 
-        events.forEach(eventText => {
+        for (const eventText of events) {
             const jsonText = eventText
                 .split("\n")
                 .filter(line => line.startsWith("data: "))
@@ -716,53 +788,12 @@ async function sendStreamMessage(message) {
                 .join("");
 
             if (!jsonText) {
-                return;
+                continue;
             }
 
             const event = JSON.parse(jsonText);
-
-            if (event.type === "thought") {
-                const step = {
-                    iteration: event.iteration,
-                    thought: event.thought,
-                    action: event.action,
-                    workflow: event.workflow || null,
-                    output: null
-                };
-
-                latestReasoningSteps.push(step);
-                updateReasoningWorkflowMap(latestReasoningSteps);
-
-                if (reasoningDrawerOpen) {
-                    enqueueReasoningThoughtAction(step);
-                }
-            }
-
-            if (event.type === "observation") {
-                const latestStep = latestReasoningSteps[latestReasoningSteps.length - 1];
-
-                if (latestStep) {
-                    latestStep.output = event.observation.output;
-                    updateReasoningWorkflowMap(latestReasoningSteps);
-
-                    if (reasoningDrawerOpen) {
-                        enqueueReasoningObservation(latestStep);
-                    }
-                }
-            }
-
-            if (event.type === "final") {
-                finalAnswer = event.final_answer;
-                pendingFinalAnswer = finalAnswer;
-                receivedTerminalEvent = true;
-            }
-
-            if (event.type === "error") {
-                finalAnswer = "Error: " + event.error;
-                pendingFinalAnswer = finalAnswer;
-                receivedTerminalEvent = true;
-            }
-        });
+            await processStreamEvent(event);
+        }
     }
 
     if (streamBuffer.trim()) {
@@ -774,26 +805,25 @@ async function sendStreamMessage(message) {
 
         if (jsonText) {
             const event = JSON.parse(jsonText);
-
-            if (event.type === "final") {
-                finalAnswer = event.final_answer;
-                pendingFinalAnswer = finalAnswer;
-                receivedTerminalEvent = true;
-            }
-
-            if (event.type === "error") {
-                finalAnswer = "Error: " + event.error;
-                pendingFinalAnswer = finalAnswer;
-                receivedTerminalEvent = true;
-            }
+            await processStreamEvent(event);
         }
     }
-
-    await reasoningTypingQueue;
 
     if (!receivedTerminalEvent) {
         throw new Error("Stream ended before the agent returned a final answer.");
     }
+
+    await reasoningTypingQueue;
+    await wait(WORKFLOW_EVENT_DELAY_MS);
+
+    workflowFinalized = true;
+    updateReasoningWorkflowMap(
+        displayedWorkflowSteps.length > 0
+            ? displayedWorkflowSteps
+            : latestReasoningSteps,
+        true
+    );
+    await wait(WORKFLOW_EVENT_DELAY_MS);
 
     return finalAnswer;
 }
@@ -1169,6 +1199,7 @@ async function addAssistantMessage(message, hasReasoning) {
 function renderUserMessage(message, timestamp = null) {
     const chatMessages = document.getElementById("chatMessages");
     const messageId = `user-message-${Date.now()}-${Math.random()}`;
+    const shouldPinScroll = shouldKeepTypingPinnedToBottom(chatMessages);
 
     userMessageActionStore[messageId] = {
         content: message
@@ -1200,7 +1231,9 @@ function renderUserMessage(message, timestamp = null) {
         </div>
     `;
 
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    if (shouldPinScroll) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
 }
 
 async function renderAssistantMessage(
@@ -1214,6 +1247,7 @@ async function renderAssistantMessage(
     const chatMessages = document.getElementById("chatMessages");
     const reasoningId = `reasoning-${Date.now()}-${Math.random()}`;
     const messageId = `assistant-message-${Date.now()}-${Math.random()}`;
+    const shouldPinScroll = shouldKeepTypingPinnedToBottom(chatMessages);
 
     window[reasoningId] = reasoningSteps;
     assistantMessageActionStore[messageId] = {
@@ -1262,7 +1296,9 @@ async function renderAssistantMessage(
         await typeTextIntoElementPromise(latestOutput, message, 8);
     }
 
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    if (shouldPinScroll) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
 }
 
 function findLatestUserMessage(messages) {
@@ -1368,11 +1404,11 @@ function openReasoningDrawer(reasoningId = null) {
 
     if (reasoningId) {
         const steps = window[reasoningId] || [];
-        renderReasoningStepsStatic(steps);
+        renderReasoningStepsStatic(steps, true);
         return;
     }
 
-    renderReasoningStepsStatic(latestReasoningSteps);
+    renderReasoningStepsStatic(latestReasoningSteps, workflowFinalized);
 
     latestReasoningSteps.forEach(step => {
         const stepElement = document.getElementById(`reasoning-step-${step.iteration}`);
@@ -1397,11 +1433,14 @@ function renderReasoningDrawerLive() {
     return;
 }
 
-function renderReasoningStepsStatic(steps) {
+function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     const content = document.getElementById("reasoningDrawerContent");
 
     if (!steps || steps.length === 0) {
-        content.innerHTML = "No reasoning trace yet.";
+        content.innerHTML = `
+            ${renderWorkflowMap([], finalized)}
+            <div class="reasoning-empty-state">No reasoning trace yet.</div>
+        `;
         return;
     }
 
@@ -1433,8 +1472,8 @@ function renderReasoningStepsStatic(steps) {
     });
 
     content.innerHTML = `
-        ${renderWorkflowMap(steps)}
-        <div id="reasoningTraceList" class="reasoning-trace-list">
+        ${renderWorkflowMap(steps, finalized)}
+        <div class="reasoning-trace-list">
             ${html}
         </div>
     `;
@@ -1505,10 +1544,10 @@ function renderReasoningSteps(steps, shouldType = false) {
 function createReasoningStepElement(step) {
     const content = document.getElementById("reasoningDrawerContent");
 
-    if (content.textContent === "No reasoning trace yet.") {
+    if (!content.querySelector(".reasoning-trace-list")) {
         content.innerHTML = `
-            ${renderWorkflowMap(latestReasoningSteps)}
-            <div id="reasoningTraceList" class="reasoning-trace-list"></div>
+            ${renderWorkflowMap(latestReasoningSteps, workflowFinalized)}
+            <div class="reasoning-trace-list"></div>
         `;
     }
 
@@ -1539,72 +1578,187 @@ function createReasoningStepElement(step) {
         <pre class="reasoning-observation"></pre>
     `;
 
-    const traceList = document.getElementById("reasoningTraceList") || content;
+    const traceList = content.querySelector(".reasoning-trace-list") || content;
     traceList.appendChild(wrapper);
-    updateReasoningWorkflowMap(latestReasoningSteps);
 
     return wrapper;
+}
+
+function openWorkflowPanel(reasoningId = null, finalized = false) {
+    if (reasoningId) {
+        openReasoningDrawer(reasoningId);
+        updateReasoningWorkflowMap(window[reasoningId] || [], finalized);
+        return;
+    }
+
+    openReasoningDrawer();
+    updateReasoningWorkflowMap(latestReasoningSteps, workflowFinalized);
+}
+
+function closeWorkflowPanel() {
+    const modal = document.getElementById("workflowPanelModal");
+
+    if (!modal) {
+        return;
+    }
+
+    workflowPanelOpen = false;
+    modal.classList.add("hidden");
+}
+
+function renderWorkflowPanel(steps, finalized = workflowFinalized) {
+    const content = document.getElementById("workflowPanelContent");
+
+    if (!content) {
+        return;
+    }
+
+    content.innerHTML = renderWorkflowMap(steps || [], finalized);
+}
+
+function closeWorkflowNodeDetail() {
+    const modal = document.getElementById("workflowNodeDetailModal");
+
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+}
+
+function openWorkflowNodeDetail(detailId) {
+    const detail = workflowNodeDetailStore[detailId];
+    const modal = document.getElementById("workflowNodeDetailModal");
+    const title = document.getElementById("workflowNodeDetailTitle");
+    const description = document.getElementById("workflowNodeDetailDescription");
+    const content = document.getElementById("workflowNodeDetailContent");
+
+    if (!detail || !modal || !title || !description || !content) {
+        return;
+    }
+
+    title.textContent = detail.label;
+    description.textContent = detail.detail;
+
+    content.innerHTML = `
+        <div>
+            <strong>Status</strong>
+            <span>${escapeHtml(detail.status)}</span>
+        </div>
+        <div>
+            <strong>What happened</strong>
+            <span>${escapeHtml(detail.summary)}</span>
+        </div>
+        <div>
+            <strong>Thought</strong>
+            <span>${escapeHtml(detail.thought || "This node has not executed yet.")}</span>
+        </div>
+        <div>
+            <strong>Action</strong>
+            <span>${escapeHtml(detail.action || "Waiting for this step.")}</span>
+        </div>
+        <div>
+            <strong>Observation</strong>
+            <pre>${escapeHtml(detail.output || "No observation yet.")}</pre>
+        </div>
+    `;
+
+    modal.classList.remove("hidden");
 }
 
 function getRuntimeWorkflowTemplate(runtimeMode, frameworkName = "") {
     const mode = runtimeMode || currentMode;
     const framework = String(frameworkName || "").toLowerCase();
 
-    if (mode === "ioa_v2_langgraph" || framework === "langgraph") {
+    if (framework === "langgraph" || (!framework && mode === "ioa_v2_langgraph")) {
         return {
             title: "LangGraph workflow",
+            viewBox: "0 0 100 100",
             nodes: [
-                { id: "request", label: "Request" },
-                { id: "select_tool", label: "Select tool" },
-                { id: "run_tool", label: "Run tool" },
-                { id: "generate_answer", label: "Answer" }
+                { id: "request", label: "Receive operator request", shortLabel: "Request", detail: "Normalize the operator prompt and start the graph execution.", icon: "IN", x: 12, y: 30, type: "trigger" },
+                { id: "select_tool", label: "Select telemetry tool", shortLabel: "Select tool", detail: "Inspect the request and choose fleet status, device status, or telemetry history.", icon: "?", x: 38, y: 30, type: "agent" },
+                { id: "run_tool", label: "Fetch telemetry evidence", shortLabel: "Run tool", detail: "Execute the selected telemetry lookup and collect operational evidence.", icon: "DB", x: 62, y: 62, type: "tool" },
+                { id: "generate_answer", label: "Generate diagnosis", shortLabel: "Answer", detail: "Use the collected evidence to produce the final operational diagnosis.", icon: "AI", x: 86, y: 30, type: "answer" }
+            ],
+            edges: [
+                { from: "request", to: "select_tool", path: "M18 20 C25 20 30 20 33 20" },
+                { from: "select_tool", to: "run_tool", path: "M44 23 C54 26 55 39 57 43" },
+                { from: "run_tool", to: "generate_answer", path: "M68 43 C73 35 76 23 81 20" }
             ]
         };
     }
 
-    if (mode === "ioa_v2_langchain" || framework === "langchain") {
+    if (framework === "langchain" || (!framework && mode === "ioa_v2_langchain")) {
         return {
             title: "LangChain workflow",
+            viewBox: "0 0 100 100",
             nodes: [
-                { id: "request", label: "Request" },
-                { id: "create_agent", label: "Create agent" },
-                { id: "agent_loop", label: "Agent loop" },
-                { id: "final_answer", label: "Answer" }
+                { id: "request", label: "Receive operator request", shortLabel: "Request", detail: "Pass the user prompt into the LangChain runtime.", icon: "IN", x: 12, y: 30, type: "trigger" },
+                { id: "create_agent", label: "Initialize LangChain agent", shortLabel: "Create agent", detail: "Prepare LangChain create_agent with available IoT telemetry tools.", icon: "+", x: 36, y: 30, type: "agent" },
+                { id: "agent_loop", label: "Run managed tool loop", shortLabel: "Agent loop", detail: "Let LangChain choose tools and route model/tool messages internally.", icon: "AI", x: 62, y: 30, type: "agent" },
+                { id: "model", label: "OpenAI Chat Model", shortLabel: "OpenAI model", detail: "Model used by LangChain during the managed tool-calling loop.", icon: "LLM", x: 48, y: 68, type: "model", helper: true },
+                { id: "final_answer", label: "Format diagnosis response", shortLabel: "Answer", detail: "Return the final diagnosis to the IoT Ops Agent UI.", icon: "OUT", x: 88, y: 30, type: "answer" }
+            ],
+            edges: [
+                { from: "request", to: "create_agent", path: "M18 20 C25 20 29 20 31 20" },
+                { from: "create_agent", to: "agent_loop", path: "M42 20 C49 20 54 20 57 20" },
+                { from: "model", to: "agent_loop", fromPort: "top", toPort: "bottom" },
+                { from: "agent_loop", to: "final_answer", path: "M68 20 C75 20 80 20 83 20" }
             ]
         };
     }
 
-    if (mode === "ioa_v2_n8n" || framework === "n8n") {
+    if (framework === "n8n" || (!framework && mode === "ioa_v2_n8n")) {
         return {
             title: "n8n workflow",
+            viewBox: "0 0 100 100",
             nodes: [
-                { id: "request", label: "Request" },
-                { id: "webhook", label: "Webhook" },
-                { id: "workflow", label: "Workflow" },
-                { id: "final_answer", label: "Answer" }
+                { id: "webhook", label: "Receive n8n webhook payload", shortLabel: "Webhook", detail: "Send the IoT prompt and operational context into the local n8n webhook.", icon: "HTTP", x: 13, y: 30, type: "trigger" },
+                { id: "workflow", label: "Run Basic LLM Chain", shortLabel: "Basic LLM Chain", detail: "Execute the n8n LLM workflow with the packaged diagnosis context.", icon: "AI", x: 43, y: 30, type: "agent" },
+                { id: "model", label: "OpenAI Chat Model", shortLabel: "OpenAI model", detail: "Language model configured inside the n8n workflow.", icon: "LLM", x: 34, y: 70, type: "model", helper: true },
+                { id: "code", label: "Normalize workflow output", shortLabel: "Code in JavaScript", detail: "Shape the workflow output into final answer and visible trace steps.", icon: "{ }", x: 64, y: 70, type: "tool" },
+                { id: "final_answer", label: "Respond to webhook", shortLabel: "Respond", detail: "Return the normalized answer back to the Flask UI stream.", icon: "OUT", x: 86, y: 30, type: "answer" }
+            ],
+            edges: [
+                { from: "webhook", to: "workflow", path: "M19 20 C27 20 33 20 37 20" },
+                { from: "model", to: "workflow", fromPort: "top", toPort: "bottom" },
+                { from: "workflow", to: "code", path: "M49 24 C59 26 60 44 62 50" },
+                { from: "code", to: "final_answer", path: "M69 51 C75 43 76 24 81 20" }
             ]
         };
     }
 
-    if (mode === "ioa_v2_dify" || framework === "dify") {
+    if (framework === "dify" || (!framework && mode === "ioa_v2_dify")) {
         return {
             title: "Dify workflow",
+            viewBox: "0 0 100 100",
             nodes: [
-                { id: "request", label: "Request" },
-                { id: "chat_api", label: "Chat API" },
-                { id: "app_workflow", label: "App flow" },
-                { id: "final_answer", label: "Answer" }
+                { id: "request", label: "Receive operator request", shortLabel: "Request", detail: "Package the diagnosis prompt and current operational context.", icon: "IN", x: 12, y: 30, type: "trigger" },
+                { id: "chat_api", label: "Call Dify Chat API", shortLabel: "Chat API", detail: "Send the request to Dify's chat messages API.", icon: "API", x: 36, y: 30, type: "trigger" },
+                { id: "app_workflow", label: "Run Dify app workflow", shortLabel: "App workflow", detail: "Let Dify orchestrate the app runtime and produce visible steps.", icon: "AI", x: 62, y: 30, type: "agent" },
+                { id: "knowledge", label: "Attach IoT context pack", shortLabel: "Context pack", detail: "Ground the diagnosis in current fleet telemetry and alert context.", icon: "CTX", x: 50, y: 68, type: "tool", helper: true },
+                { id: "final_answer", label: "Return Dify diagnosis", shortLabel: "Answer", detail: "Normalize the Dify response for chat and trace rendering.", icon: "OUT", x: 88, y: 30, type: "answer" }
+            ],
+            edges: [
+                { from: "request", to: "chat_api", path: "M18 20 C25 20 29 20 31 20" },
+                { from: "chat_api", to: "app_workflow", path: "M42 20 C49 20 55 20 57 20" },
+                { from: "knowledge", to: "app_workflow", fromPort: "top", toPort: "bottom" },
+                { from: "app_workflow", to: "final_answer", path: "M68 20 C75 20 80 20 83 20" }
             ]
         };
     }
 
     return {
         title: "Agent workflow",
+        viewBox: "0 0 100 100",
         nodes: [
-            { id: "request", label: "Request" },
-            { id: "reason", label: "Reason" },
-            { id: "tool", label: "Tool" },
-            { id: "final_answer", label: "Answer" }
+            { id: "request", label: "Receive operator request", shortLabel: "Request", detail: "Start the custom IOA reasoning loop with the user prompt.", icon: "IN", x: 12, y: 30, type: "trigger" },
+            { id: "reason", label: "Plan next reasoning step", shortLabel: "Reason", detail: "Decide what evidence or action is needed next.", icon: "AI", x: 38, y: 30, type: "agent" },
+            { id: "tool", label: "Read IoT telemetry", shortLabel: "Tool", detail: "Retrieve fleet/device telemetry used as diagnosis evidence.", icon: "DB", x: 62, y: 62, type: "tool" },
+            { id: "final_answer", label: "Generate final diagnosis", shortLabel: "Answer", detail: "Summarize the diagnosis, evidence, likely cause, and next action.", icon: "OUT", x: 86, y: 30, type: "answer" }
+        ],
+        edges: [
+            { from: "request", to: "reason", path: "M18 20 C25 20 31 20 33 20" },
+            { from: "reason", to: "tool", path: "M44 23 C54 26 55 39 57 43" },
+            { from: "tool", to: "final_answer", path: "M68 43 C73 35 76 23 81 20" }
         ]
     };
 }
@@ -1622,15 +1776,35 @@ function inferWorkflowFramework(steps) {
         .map(step => step.output?.framework)
         .find(Boolean);
 
-    return outputFramework || "";
+    if (outputFramework) {
+        return outputFramework;
+    }
+
+    const searchableText = JSON.stringify(steps || []).toLowerCase();
+
+    if (searchableText.includes("langchain")) return "LangChain";
+    if (searchableText.includes("langgraph")) return "LangGraph";
+    if (searchableText.includes("n8n")) return "n8n";
+    if (searchableText.includes("dify")) return "Dify";
+    if (searchableText.includes("ioa") || searchableText.includes("react")) return "Custom";
+
+    return "";
 }
 
-function inferWorkflowNodeId(step) {
+function inferWorkflowNodeId(step, frameworkName = "") {
     if (step.workflow?.node_id) {
         return step.workflow.node_id;
     }
 
+    const framework = String(frameworkName || "").toLowerCase();
     const action = String(step.action || "").toLowerCase();
+
+    if (framework === "n8n" && step.iteration === 1) return "webhook";
+    if (framework === "n8n" && step.iteration === 2) return "workflow";
+    if (framework === "n8n" && step.iteration >= 3) return "code";
+    if (framework === "dify" && step.iteration === 1) return "chat_api";
+    if (framework === "dify" && step.iteration === 2) return "app_workflow";
+    if (framework === "dify" && step.iteration >= 3) return "final_answer";
 
     if (action.includes("select")) return "select_tool";
     if (action.includes("run") || action.includes("tool") || action.includes("status")) return "run_tool";
@@ -1644,68 +1818,235 @@ function inferWorkflowNodeId(step) {
     return "final_answer";
 }
 
-function buildWorkflowState(steps) {
+function getWorkflowStatusRank(status) {
+    return {
+        pending: 0,
+        available: 1,
+        active: 2,
+        completed: 3
+    }[status] ?? 0;
+}
+
+function keepHighestWorkflowStatus(nodeId, nextStatus) {
+    const previousStatus = workflowNodeStatusMemory[nodeId] || "pending";
+    const previousRank = getWorkflowStatusRank(previousStatus);
+    const nextRank = getWorkflowStatusRank(nextStatus);
+    const status = nextRank >= previousRank ? nextStatus : previousStatus;
+
+    workflowNodeStatusMemory[nodeId] = status;
+    return status;
+}
+
+function buildWorkflowState(steps, finalized = workflowFinalized) {
     const framework = inferWorkflowFramework(steps);
     const template = getRuntimeWorkflowTemplate(currentMode, framework);
     const nodeIndexById = Object.fromEntries(
         template.nodes.map((node, index) => [node.id, index])
     );
-    let furthestIndex = steps.length > 0 ? 0 : -1;
     const explicitNodeStates = {};
 
     steps.forEach(step => {
-        const nodeId = inferWorkflowNodeId(step);
-        const nodeIndex = nodeIndexById[nodeId];
+        const nodeId = inferWorkflowNodeId(step, framework);
 
-        if (nodeIndex !== undefined) {
-            furthestIndex = Math.max(furthestIndex, nodeIndex);
+        if (nodeIndexById[nodeId] !== undefined) {
             explicitNodeStates[nodeId] = step.output ? "completed" : "active";
         }
     });
 
-    const nodes = template.nodes.map((node, index) => {
+    const nodes = template.nodes.map(node => {
         let status = "pending";
-
-        if (index < furthestIndex) {
-            status = "completed";
-        }
-
-        if (index === furthestIndex && steps.length > 0) {
-            status = "active";
-        }
+        const isFinalNode =
+            node.id === "final_answer" ||
+            node.id === "generate_answer";
 
         if (explicitNodeStates[node.id]) {
             status = explicitNodeStates[node.id];
         }
 
-        if (steps.some(step => inferWorkflowNodeId(step) === node.id && step.output)) {
+        if (node.helper && steps.length > 0 && status === "pending") {
+            status = "available";
+        }
+
+        if (node.id === "request" && steps.length > 0 && status === "pending") {
             status = "completed";
         }
+
+        const hasCompletedStep = steps.some(step =>
+            inferWorkflowNodeId(step, framework) === node.id && step.output
+        );
+
+        if (hasCompletedStep && !isFinalNode) {
+            status = "completed";
+        }
+
+        if (isFinalNode && !finalized) {
+            status = "pending";
+        }
+
+        if (
+            finalized &&
+            isFinalNode
+        ) {
+            status = "completed";
+        }
+
+        status = keepHighestWorkflowStatus(node.id, status);
 
         return {
             ...node,
             status
         };
     });
+    const nodeStatusById = Object.fromEntries(
+        nodes.map(node => [node.id, node.status])
+    );
+
+    nodes.forEach(node => {
+        if (!node.helper) {
+            return;
+        }
+
+        const targets = (template.edges || [])
+            .filter(edge => edge.from === node.id)
+            .map(edge => nodeStatusById[edge.to]);
+
+        if (targets.includes("active")) {
+            node.status = "active";
+            return;
+        }
+
+        if (targets.includes("completed")) {
+            node.status = "completed";
+            return;
+        }
+
+        if (steps.length > 0 && node.status === "pending") {
+            node.status = "available";
+        }
+    });
 
     return {
         title: template.title,
-        nodes
+        nodes,
+        edges: template.edges || [],
+        viewBox: template.viewBox
     };
 }
 
-function renderWorkflowMap(steps) {
-    const workflow = buildWorkflowState(steps || []);
+function getWorkflowNodeSize(node) {
+    const compactCanvas = window.matchMedia("(max-width: 760px)").matches;
 
-    const nodesHtml = workflow.nodes.map((node, index) => `
-        <div class="workflow-node ${node.status}">
-            <span class="workflow-node-index">${index + 1}</span>
-            <span class="workflow-node-label">${escapeHtml(node.label)}</span>
+    if (node.type === "model") {
+        return {
+            width: compactCanvas ? 12 : 10,
+            height: 10
+        };
+    }
+
+    return {
+        width: compactCanvas ? 14 : 12,
+        height: 10
+    };
+}
+
+function getWorkflowPortPoint(node, port) {
+    const size = getWorkflowNodeSize(node);
+
+    if (port === "left") {
+        return { x: node.x - size.width / 2, y: node.y };
+    }
+
+    if (port === "top") {
+        return { x: node.x, y: node.y - size.height / 2 };
+    }
+
+    if (port === "bottom") {
+        return { x: node.x, y: node.y + size.height / 2 };
+    }
+
+    return { x: node.x + size.width / 2, y: node.y };
+}
+
+function getWorkflowEdgePath(edge, nodesById) {
+    const fromNode = nodesById[edge.from];
+    const toNode = nodesById[edge.to];
+
+    if (!fromNode || !toNode) {
+        return "";
+    }
+
+    const start = getWorkflowPortPoint(fromNode, edge.fromPort || "right");
+    const end = getWorkflowPortPoint(toNode, edge.toPort || "left");
+    const distanceX = Math.abs(end.x - start.x);
+    const distanceY = Math.abs(end.y - start.y);
+    const bend = Math.max(8, Math.min(20, distanceX * 0.55 + distanceY * 0.16));
+
+    let c1 = { x: start.x + bend, y: start.y };
+    let c2 = { x: end.x - bend, y: end.y };
+
+    if (edge.fromPort === "top") {
+        c1 = { x: start.x, y: start.y - bend };
+    }
+
+    if (edge.fromPort === "bottom") {
+        c1 = { x: start.x, y: start.y + bend };
+    }
+
+    if (edge.toPort === "top") {
+        c2 = { x: end.x, y: end.y - bend };
+    }
+
+    if (edge.toPort === "bottom") {
+        c2 = { x: end.x, y: end.y + bend };
+    }
+
+    return `M${start.x} ${start.y} C${c1.x} ${c1.y} ${c2.x} ${c2.y} ${end.x} ${end.y}`;
+}
+
+function renderWorkflowMap(steps, finalized = workflowFinalized) {
+    const workflow = buildWorkflowState(steps || [], finalized);
+    const framework = inferWorkflowFramework(steps || []);
+    const visibleNodes = workflow.nodes
+        .filter(node => !node.helper)
+        .slice(0, 4);
+
+    workflowNodeDetailStore = {};
+
+    const nodesHtml = visibleNodes.map((node, index) => {
+        const matchingStep = (steps || []).find(step =>
+            inferWorkflowNodeId(step, framework) === node.id
+        );
+        const detailId = `workflow-node-${node.id}`;
+        const output = matchingStep?.output
+            ? JSON.stringify(matchingStep.output, null, 2)
+            : "";
+
+        workflowNodeDetailStore[detailId] = {
+            label: node.label,
+            detail: node.detail || "",
+            status: node.status,
+            summary: getWorkflowNodeSummary(node, matchingStep),
+            thought: matchingStep?.thought || "",
+            action: matchingStep?.action || "",
+            output: output
+        };
+
+        return `
+        <div
+            class="workflow-lane-item ${node.status}"
+            tabindex="0"
+            role="button"
+            onclick="openWorkflowNodeDetail('${detailId}')"
+            onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openWorkflowNodeDetail('${detailId}'); }"
+        >
+            <span class="workflow-lane-index">${index + 1}</span>
+            <span class="workflow-lane-label">${escapeHtml(node.shortLabel || node.label)}</span>
         </div>
-    `).join("");
+    `;
+    }).join("");
 
     return `
-        <section id="reasoningWorkflowMap" class="workflow-map">
+        <section id="reasoningWorkflowMap" class="workflow-lane-map">
             <div class="workflow-map-header">
                 <span>Workflow</span>
                 <strong>${escapeHtml(workflow.title)}</strong>
@@ -1717,7 +2058,39 @@ function renderWorkflowMap(steps) {
     `;
 }
 
-function updateReasoningWorkflowMap(steps) {
+function getWorkflowNodeSummary(node, matchingStep) {
+    if (!matchingStep) {
+        return "This workflow step is waiting for the agent stream to reach it.";
+    }
+
+    if (!matchingStep.output) {
+        return "This workflow step has started and is currently executing.";
+    }
+
+    if (node.id.includes("tool") || node.type === "tool") {
+        return "The agent collected telemetry or runtime evidence for the diagnosis.";
+    }
+
+    if (
+        node.id.includes("answer") ||
+        node.id.includes("generate") ||
+        node.type === "answer"
+    ) {
+        return "The runtime prepared the final response for the chat UI.";
+    }
+
+    if (
+        node.id.includes("agent") ||
+        node.id.includes("loop") ||
+        node.id.includes("workflow")
+    ) {
+        return "The orchestration runtime executed its agent or workflow logic.";
+    }
+
+    return "This workflow step completed and produced the observation shown below.";
+}
+
+function updateReasoningWorkflowMap(steps, finalized = workflowFinalized) {
     if (!reasoningDrawerOpen) {
         return;
     }
@@ -1725,7 +2098,7 @@ function updateReasoningWorkflowMap(steps) {
     const existing = document.getElementById("reasoningWorkflowMap");
 
     if (existing) {
-        existing.outerHTML = renderWorkflowMap(steps);
+        existing.outerHTML = renderWorkflowMap(steps, finalized);
     }
 }
 
@@ -1737,7 +2110,27 @@ function enqueueReasoningThoughtAction(step) {
         const actionElement = stepElement.querySelector(".reasoning-action");
 
         return typeTextIntoElementPromise(thoughtElement, step.thought, 4)
-            .then(() => typeTextIntoElementPromise(actionElement, step.action, 4));
+            .then(() => typeTextIntoElementPromise(actionElement, step.action, 4))
+            .then(() => {
+                const existingIndex = displayedWorkflowSteps.findIndex(item =>
+                    item.iteration === step.iteration
+                );
+                const existingStep = existingIndex >= 0
+                    ? displayedWorkflowSteps[existingIndex]
+                    : null;
+                const displayedStep = {
+                    ...step,
+                    output: existingStep?.output || step.output || null
+                };
+
+                if (existingIndex >= 0) {
+                    displayedWorkflowSteps[existingIndex] = displayedStep;
+                } else {
+                    displayedWorkflowSteps.push(displayedStep);
+                }
+
+                updateReasoningWorkflowMap(displayedWorkflowSteps, false);
+            });
     });
 }
 
@@ -1750,7 +2143,22 @@ function enqueueReasoningObservation(step) {
             ? JSON.stringify(step.output, null, 2)
             : "Waiting for observation...";
 
-        return typeTextIntoElementPromise(observationElement, observationText, 1);
+        return typeTextIntoElementPromise(observationElement, observationText, 1)
+            .then(() => {
+                const existingStep = displayedWorkflowSteps.find(item =>
+                    item.iteration === step.iteration
+                );
+
+                if (existingStep) {
+                    existingStep.output = step.output;
+                } else {
+                    displayedWorkflowSteps.push({
+                        ...step
+                    });
+                }
+
+                updateReasoningWorkflowMap(displayedWorkflowSteps, false);
+            });
     });
 }
 
@@ -2882,12 +3290,41 @@ function typeReasoningStep(thoughtElement, thoughtText, actionElement, actionTex
     });
 }
 
+function getTypingScrollContainer(element) {
+    return element.closest(".drawer-content") ||
+        element.closest(".chat-messages");
+}
+
+function shouldKeepTypingPinnedToBottom(container) {
+    if (!container) {
+        return false;
+    }
+
+    const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+
+    return distanceFromBottom < 48;
+}
+
+function scrollTypingContainerIfPinned(element) {
+    const container = getTypingScrollContainer(element);
+
+    if (!shouldKeepTypingPinnedToBottom(container)) {
+        return;
+    }
+
+    container.scrollTop = container.scrollHeight;
+}
+
 function typeTextIntoElementPromise(element, text, speed = 8) {
     return new Promise(resolve => {
         if (!element) {
             resolve();
             return;
         }
+
+        const scrollContainer = getTypingScrollContainer(element);
+        const shouldPinScroll = shouldKeepTypingPinnedToBottom(scrollContainer);
 
         element.textContent = "";
         element.classList.add("is-typing");
@@ -2899,14 +3336,16 @@ function typeTextIntoElementPromise(element, text, speed = 8) {
                 element.textContent += text.charAt(index);
                 index++;
 
-                element.scrollIntoView({
-                    behavior: "smooth",
-                    block: "nearest"
-                });
+                if (shouldPinScroll && index % 24 === 0) {
+                    scrollTypingContainerIfPinned(element);
+                }
 
                 setTimeout(typeNextCharacter, speed);
             } else {
                 element.classList.remove("is-typing");
+                if (shouldPinScroll) {
+                    scrollTypingContainerIfPinned(element);
+                }
                 resolve();
             }
         }

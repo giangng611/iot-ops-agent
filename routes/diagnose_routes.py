@@ -36,6 +36,42 @@ def create_diagnose_blueprint(runtime):
     )
     diagnose_rate_limit_log = runtime.get("diagnose_rate_limit_log") or defaultdict(deque)
 
+    runtime_metadata = {
+        "ioa_v1_custom": {
+            "runtime_label": "IOA v1 · Custom Python",
+            "model_name": "gpt-4.1-mini",
+        },
+        "ioa_v2_custom": {
+            "runtime_label": "IOA v2 · Custom Python",
+            "model_name": "gpt-4.1-mini",
+        },
+        "ioa_v2_langchain": {
+            "runtime_label": "IOA v2 · LangChain",
+            "model_name": "gpt-4o-mini",
+        },
+        "ioa_v2_langgraph": {
+            "runtime_label": "IOA v2 · LangGraph",
+            "model_name": "gpt-4o-mini",
+        },
+        "ioa_v2_n8n": {
+            "runtime_label": "IOA v2 · n8n",
+            "model_name": "n8n workflow model",
+        },
+        "ioa_v2_dify": {
+            "runtime_label": "IOA v2 · Dify",
+            "model_name": "Dify app model",
+        },
+    }
+
+    def add_runtime_metadata(token_usage, mode):
+        metadata = runtime_metadata.get(mode, runtime_metadata["ioa_v2_custom"])
+        usage = dict(token_usage or {})
+
+        usage["runtime_label"] = metadata["runtime_label"]
+        usage["model_name"] = metadata["model_name"]
+
+        return usage
+
     def get_rate_limit_key():
         user_id = session.get("user_id")
 
@@ -140,8 +176,12 @@ def create_diagnose_blueprint(runtime):
                 )
 
                 return jsonify({
-                    "response": result,
-                    "steps": []
+                    "response": result["final_answer"],
+                    "steps": [],
+                    "token_usage": add_runtime_metadata(
+                        result.get("token_usage"),
+                        mode
+                    )
                 })
 
             if mode == "ioa_v2_langgraph":
@@ -170,7 +210,10 @@ def create_diagnose_blueprint(runtime):
                 return jsonify({
                     "response": result["final_answer"],
                     "steps": result["steps"],
-                    "token_usage": result.get("token_usage")
+                    "token_usage": add_runtime_metadata(
+                        result.get("token_usage"),
+                        mode
+                    )
                 })
 
             if mode == "ioa_v2_langchain":
@@ -199,7 +242,10 @@ def create_diagnose_blueprint(runtime):
                 return jsonify({
                     "response": result["final_answer"],
                     "steps": result["steps"],
-                    "token_usage": result.get("token_usage")
+                    "token_usage": add_runtime_metadata(
+                        result.get("token_usage"),
+                        mode
+                    )
                 })
 
             if mode == "ioa_v2_n8n":
@@ -233,7 +279,10 @@ def create_diagnose_blueprint(runtime):
                 return jsonify({
                     "response": result["final_answer"],
                     "steps": steps,
-                    "token_usage": result.get("token_usage")
+                    "token_usage": add_runtime_metadata(
+                        result.get("token_usage"),
+                        mode
+                    )
                 })
 
             if mode == "ioa_v2_dify":
@@ -267,7 +316,10 @@ def create_diagnose_blueprint(runtime):
                 return jsonify({
                     "response": result["final_answer"],
                     "steps": steps,
-                    "token_usage": result.get("token_usage")
+                    "token_usage": add_runtime_metadata(
+                        result.get("token_usage"),
+                        mode
+                    )
                 })
 
             result = ioa_v2_agent.run(user_input)
@@ -295,7 +347,10 @@ def create_diagnose_blueprint(runtime):
             return jsonify({
                 "response": result["final_answer"],
                 "steps": result["steps"],
-                "token_usage": result.get("token_usage")
+                "token_usage": add_runtime_metadata(
+                    result.get("token_usage"),
+                    mode
+                )
             })
 
         except Exception as e:
@@ -321,6 +376,11 @@ def create_diagnose_blueprint(runtime):
             try:
                 if mode == "ioa_v2_langgraph":
                     for event in langgraph_agent.run_stream(user_input):
+                        if event.get("type") == "final":
+                            event["token_usage"] = add_runtime_metadata(
+                                event.get("token_usage"),
+                                mode
+                            )
                         yield f"data: {json.dumps(event)}\n\n"
 
                     latency_seconds = round(time.time() - start_time, 2)
@@ -433,7 +493,10 @@ def create_diagnose_blueprint(runtime):
                     yield f"data: {json.dumps({
                         'type': 'final',
                         'final_answer': result['final_answer'],
-                        'token_usage': result.get('token_usage')
+                        'token_usage': add_runtime_metadata(
+                            result.get('token_usage'),
+                            mode
+                        )
                     })}\n\n"
 
                     return
@@ -532,7 +595,10 @@ def create_diagnose_blueprint(runtime):
                         yield f"data: {json.dumps({
                             'type': 'final',
                             'final_answer': result['final_answer'],
-                            'token_usage': result.get('token_usage')
+                            'token_usage': add_runtime_metadata(
+                                result.get('token_usage'),
+                                mode
+                            )
                         })}\n\n"
                     except Exception as e:
                         latency_seconds = round(time.time() - start_time, 2)
@@ -619,7 +685,10 @@ def create_diagnose_blueprint(runtime):
                         yield f"data: {json.dumps({
                             'type': 'final',
                             'final_answer': result['final_answer'],
-                            'token_usage': result.get('token_usage')
+                            'token_usage': add_runtime_metadata(
+                                result.get('token_usage'),
+                                mode
+                            )
                         })}\n\n"
                     except Exception as e:
                         latency_seconds = round(time.time() - start_time, 2)
@@ -652,6 +721,11 @@ def create_diagnose_blueprint(runtime):
                     return
 
                 for event in ioa_v2_agent.run_stream(user_input):
+                    if event.get("type") == "final":
+                        event["token_usage"] = add_runtime_metadata(
+                            event.get("token_usage"),
+                            mode
+                        )
                     yield f"data: {json.dumps(event)}\n\n"
 
                 latency_seconds = round(time.time() - start_time, 2)

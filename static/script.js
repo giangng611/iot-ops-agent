@@ -98,6 +98,15 @@ function formatTokenUsage(tokenUsage) {
     return `${inputTokens} in / ${outputTokens} out / ${tokenUsage.total_tokens} total`;
 }
 
+function formatModelUsage(tokenUsage) {
+    if (!tokenUsage) {
+        return "";
+    }
+
+    const runtimeLabel = tokenUsage.runtime_label || tokenUsage.runtimeLabel || "";
+    return runtimeLabel || "";
+}
+
 function parseJsonField(value, fallback) {
     if (!value) {
         return fallback;
@@ -140,6 +149,49 @@ function inferTokenUsageFromReasoningSteps(reasoningSteps) {
         if (step.token_usage && step.token_usage.total_tokens) {
             return step.token_usage;
         }
+    }
+
+    return null;
+}
+
+function inferRuntimeMetadataFromReasoningSteps(reasoningSteps) {
+    const steps = Array.isArray(reasoningSteps) ? reasoningSteps : [];
+    const framework = inferWorkflowFramework(steps);
+    const normalized = String(framework || "").toLowerCase();
+
+    if (normalized === "langchain") {
+        return {
+            runtime_label: "IOA v2 · LangChain",
+            model_name: "gpt-4o-mini"
+        };
+    }
+
+    if (normalized === "langgraph") {
+        return {
+            runtime_label: "IOA v2 · LangGraph",
+            model_name: "gpt-4o-mini"
+        };
+    }
+
+    if (normalized === "n8n") {
+        return {
+            runtime_label: "IOA v2 · n8n",
+            model_name: "n8n workflow model"
+        };
+    }
+
+    if (normalized === "dify") {
+        return {
+            runtime_label: "IOA v2 · Dify",
+            model_name: "Dify app model"
+        };
+    }
+
+    if (normalized === "custom") {
+        return {
+            runtime_label: "IOA v2 · Custom Python",
+            model_name: "gpt-4.1-mini"
+        };
     }
 
     return null;
@@ -1050,18 +1102,37 @@ async function loadChatMessages(chat) {
             return response.json();
         })
         .then(data => {
-            chat.messages = data.messages.map(message => ({
-                role: message.role,
-                content: message.content,
-                createdAt: message.created_at,
-                hasReasoning: Boolean(message.reasoning_steps),
-                reasoningSteps: parseJsonField(message.reasoning_steps, []),
-                tokenUsage: parseJsonField(message.token_usage, null)
-            })).map(message => ({
+            chat.messages = data.messages.map(message => {
+                const reasoningSteps = parseJsonField(message.reasoning_steps, []);
+                const safeReasoningSteps = Array.isArray(reasoningSteps)
+                    ? reasoningSteps
+                    : [];
+
+                return {
+                    role: message.role,
+                    content: message.content,
+                    createdAt: message.created_at,
+                    hasReasoning: safeReasoningSteps.length > 0,
+                    reasoningSteps: safeReasoningSteps,
+                    tokenUsage: parseJsonField(message.token_usage, null)
+                };
+            }).map(message => ({
                 ...message,
                 tokenUsage: (
-                    message.tokenUsage ||
-                    inferTokenUsageFromReasoningSteps(message.reasoningSteps)
+                    {
+                        ...(
+                            inferRuntimeMetadataFromReasoningSteps(
+                                message.reasoningSteps
+                            ) || {}
+                        ),
+                        ...(
+                            message.tokenUsage ||
+                            inferTokenUsageFromReasoningSteps(
+                                message.reasoningSteps
+                            ) ||
+                            {}
+                        )
+                    }
                 )
             }));
             chat.messagesLoaded = true;
@@ -1327,6 +1398,7 @@ async function renderAssistantMessage(
         retryPrompt: retryPrompt
     };
     const tokenUsageLabel = formatTokenUsage(tokenUsage);
+    const modelUsageLabel = formatModelUsage(tokenUsage);
 
     chatMessages.innerHTML += `
         <div class="message-row assistant-row">
@@ -1340,6 +1412,12 @@ async function renderAssistantMessage(
                 </div>
 
                 <div class="assistant-actions">
+                    ${modelUsageLabel ? `
+                        <span class="model-usage-pill" title="Runtime and model used for this assistant message">
+                            Model: ${escapeHtml(modelUsageLabel)}
+                        </span>
+                    ` : ""}
+
                     ${tokenUsageLabel ? `
                         <span class="token-usage-pill" title="Actual model token usage">
                             Tokens: ${escapeHtml(tokenUsageLabel)}
@@ -1482,7 +1560,9 @@ function openReasoningDrawer(reasoningId = null) {
     reasoningDrawerOpen = true;
 
     if (reasoningId) {
-        const steps = window[reasoningId] || [];
+        const steps = Array.isArray(window[reasoningId])
+            ? window[reasoningId]
+            : [];
         renderReasoningStepsStatic(steps, true);
         return;
     }
@@ -1514,8 +1594,9 @@ function renderReasoningDrawerLive() {
 
 function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     const content = document.getElementById("reasoningDrawerContent");
+    const safeSteps = Array.isArray(steps) ? steps : [];
 
-    if (!steps || steps.length === 0) {
+    if (safeSteps.length === 0) {
         content.innerHTML = `
             ${renderWorkflowMap([], finalized)}
             <div class="reasoning-empty-state">
@@ -1527,7 +1608,7 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
 
     let html = "";
 
-    steps.forEach(step => {
+    safeSteps.forEach(step => {
         const outputText = step.output
             ? JSON.stringify(step.output, null, 2)
             : "Waiting for observation...";
@@ -1553,7 +1634,7 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     });
 
     content.innerHTML = `
-        ${renderWorkflowMap(steps, finalized)}
+        ${renderWorkflowMap(safeSteps, finalized)}
         <div class="reasoning-trace-list">
             ${html}
         </div>
@@ -1562,10 +1643,11 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
 
 function renderReasoningSteps(steps, shouldType = false) {
     const content = document.getElementById("reasoningDrawerContent");
+    const safeSteps = Array.isArray(steps) ? steps : [];
 
     let html = "";
 
-    steps.forEach((step, index) => {
+    safeSteps.forEach((step, index) => {
         const outputText = step.output
             ? JSON.stringify(step.output, null, 2)
             : "Waiting for observation...";
@@ -1592,7 +1674,7 @@ function renderReasoningSteps(steps, shouldType = false) {
 
     content.innerHTML = html
         ? `
-            ${renderWorkflowMap(steps, workflowFinalized)}
+            ${renderWorkflowMap(safeSteps, workflowFinalized)}
             <div class="reasoning-trace-list">
                 ${html}
             </div>
@@ -1608,7 +1690,7 @@ function renderReasoningSteps(steps, shouldType = false) {
         return;
     }
 
-    steps.forEach((step, index) => {
+    safeSteps.forEach((step, index) => {
         const stepElement = content.querySelector(`[data-step-index="${index}"]`);
 
         if (!stepElement) {
@@ -1857,29 +1939,49 @@ function getRuntimeWorkflowTemplate(runtimeMode, frameworkName = "") {
 }
 
 function inferWorkflowFramework(steps) {
-    const workflowFramework = steps
+    const safeSteps = Array.isArray(steps) ? steps : [];
+    const knownFrameworks = {
+        langchain: "LangChain",
+        langgraph: "LangGraph",
+        n8n: "n8n",
+        dify: "Dify",
+        custom: "Custom",
+        ioa: "Custom",
+        react: "Custom"
+    };
+    const workflowFramework = safeSteps
         .map(step => step.workflow?.framework)
-        .find(Boolean);
+        .map(value => String(value || "").toLowerCase())
+        .find(value => knownFrameworks[value]);
 
     if (workflowFramework) {
-        return workflowFramework;
+        return knownFrameworks[workflowFramework];
     }
 
-    const outputFramework = steps
-        .map(step => step.output?.framework)
-        .find(Boolean);
+    const actionText = safeSteps
+        .map(step => [
+            step.thought,
+            step.action,
+            step.workflow?.node_id,
+            step.workflow?.node_label
+        ].filter(Boolean).join(" "))
+        .join(" ")
+        .toLowerCase();
 
-    if (outputFramework) {
-        return outputFramework;
-    }
+    const customToolActions = [
+        "check_device_status",
+        "get_recent_logs",
+        "check_alarm_rules",
+        "check_system_overview",
+        "check_system_alarms"
+    ];
 
-    const searchableText = JSON.stringify(steps || []).toLowerCase();
-
-    if (searchableText.includes("langchain")) return "LangChain";
-    if (searchableText.includes("langgraph")) return "LangGraph";
-    if (searchableText.includes("n8n")) return "n8n";
-    if (searchableText.includes("dify")) return "Dify";
-    if (searchableText.includes("ioa") || searchableText.includes("react")) return "Custom";
+    if (actionText.includes("langchain")) return "LangChain";
+    if (actionText.includes("langgraph")) return "LangGraph";
+    if (actionText.includes("n8n")) return "n8n";
+    if (actionText.includes("dify")) return "Dify";
+    if (customToolActions.some(action => actionText.includes(action))) return "Custom";
+    if (actionText.includes("ioa") || actionText.includes("react")) return "Custom";
 
     return "";
 }
@@ -1931,14 +2033,15 @@ function keepHighestWorkflowStatus(nodeId, nextStatus) {
 }
 
 function buildWorkflowState(steps, finalized = workflowFinalized) {
-    const framework = inferWorkflowFramework(steps);
+    const safeSteps = Array.isArray(steps) ? steps : [];
+    const framework = inferWorkflowFramework(safeSteps);
     const template = getRuntimeWorkflowTemplate(currentMode, framework);
     const nodeIndexById = Object.fromEntries(
         template.nodes.map((node, index) => [node.id, index])
     );
     const explicitNodeStates = {};
 
-    steps.forEach(step => {
+    safeSteps.forEach(step => {
         const nodeId = inferWorkflowNodeId(step, framework);
 
         if (nodeIndexById[nodeId] !== undefined) {
@@ -1956,15 +2059,15 @@ function buildWorkflowState(steps, finalized = workflowFinalized) {
             status = explicitNodeStates[node.id];
         }
 
-        if (node.helper && steps.length > 0 && status === "pending") {
+        if (node.helper && safeSteps.length > 0 && status === "pending") {
             status = "available";
         }
 
-        if (node.id === "request" && steps.length > 0 && status === "pending") {
+        if (node.id === "request" && safeSteps.length > 0 && status === "pending") {
             status = "completed";
         }
 
-        const hasCompletedStep = steps.some(step =>
+        const hasCompletedStep = safeSteps.some(step =>
             inferWorkflowNodeId(step, framework) === node.id && step.output
         );
 
@@ -2013,7 +2116,7 @@ function buildWorkflowState(steps, finalized = workflowFinalized) {
             return;
         }
 
-        if (steps.length > 0 && node.status === "pending") {
+        if (safeSteps.length > 0 && node.status === "pending") {
             node.status = "available";
         }
     });
@@ -2097,8 +2200,9 @@ function getWorkflowEdgePath(edge, nodesById) {
 }
 
 function renderWorkflowMap(steps, finalized = workflowFinalized) {
-    const workflow = buildWorkflowState(steps || [], finalized);
-    const framework = inferWorkflowFramework(steps || []);
+    const safeSteps = Array.isArray(steps) ? steps : [];
+    const workflow = buildWorkflowState(safeSteps, finalized);
+    const framework = inferWorkflowFramework(safeSteps);
     const visibleNodes = workflow.nodes
         .filter(node => !node.helper)
         .slice(0, 4);
@@ -2106,7 +2210,7 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
     workflowNodeDetailStore = {};
 
     const nodesHtml = visibleNodes.map((node, index) => {
-        const matchingStep = (steps || []).find(step =>
+        const matchingStep = safeSteps.find(step =>
             inferWorkflowNodeId(step, framework) === node.id
         );
         const detailId = `workflow-node-${node.id}`;
@@ -2712,6 +2816,13 @@ async function saveMessageToDatabase(
         return;
     }
 
+    const safeReasoningSteps = (
+        Array.isArray(reasoningSteps) &&
+        reasoningSteps.length > 0
+    )
+        ? reasoningSteps
+        : null;
+
     const response = await fetch(`/api/chats/${currentChatId}/messages`, {
         method: "POST",
         headers: {
@@ -2720,7 +2831,7 @@ async function saveMessageToDatabase(
         body: JSON.stringify({
             role: role,
             content: content,
-            reasoning_steps: reasoningSteps,
+            reasoning_steps: safeReasoningSteps,
             token_usage: tokenUsage
         })
     });

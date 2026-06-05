@@ -131,6 +131,7 @@ Features include:
 - slash-command integration
 - synced prompt catalog between the Prompts tab and chat input
 - persistent prompt storage
+- custom operational workflow commands for benchmark and runtime testing
 
 <p align="center">
   <img src="../screenshots/prompts-tab.png" width="1000">
@@ -243,7 +244,9 @@ Benchmark dimensions include:
 
 Runtime benchmark results are stored in CSV format and summarized in the benchmarking documentation.
 
-Dify is available as a self-hosted chatflow runtime. It receives the same operational context as n8n, returns structured operational diagnoses through the Dify Chat Messages API, and surfaces UI-visible reasoning traces with at least three intermediate investigation steps in local testing.
+Assistant responses display a token usage badge when the selected runtime returns model usage metadata. Runtime traces also include workflow maps so Custom Python, LangChain, LangGraph, n8n, and Dify execution paths can be compared visually.
+
+Dify is available as a self-hosted chatflow runtime. It receives the same operational context as n8n, returns structured operational diagnoses through the Dify Chat Messages API, and surfaces UI-visible app-level reasoning traces in local testing.
 
 ---
 

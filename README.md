@@ -124,13 +124,15 @@ Current benchmark dimensions include:
 * telemetry grounding
 * reasoning clarity
 * runtime observability
+* workflow trace visibility
+* token usage visibility
 * integration complexity
 * ecosystem support
 * development speed
 
 Benchmark results are automatically logged into CSV execution records for evaluation and aggregation.
 
-The current benchmark compares Custom Python, LangChain, LangGraph, n8n, and Dify across shared operational prompts.
+The current benchmark compares Custom Python, LangChain, LangGraph, n8n, and Dify across shared operational prompts, including custom prompt workflows created from the Prompts tab.
 
 See the [Benchmarking Guide](docs/BENCHMARKING.md) for details.
 

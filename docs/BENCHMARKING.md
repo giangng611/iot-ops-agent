@@ -85,7 +85,7 @@ Each row represents one runtime, one prompt, and one execution result.
 
 # Benchmark Prompt Set
 
-The current benchmark uses five shared operational prompts.
+The current benchmark uses six shared operational prompts.
 
 ## 1. Fleet Overview
 
@@ -158,6 +158,21 @@ Evaluates:
 * cross-device correlation
 * failure-pattern recognition
 * fleet-level operational reasoning
+
+---
+
+## 6. Maintenance Priority Planning
+
+```text
+Rank devices and gateways that need maintenance by urgency, considering anomaly frequency, downtime, battery status, connectivity quality, and business impact.
+```
+
+Evaluates:
+
+* maintenance prioritization
+* business-impact-aware ranking
+* handling of missing operational fields
+* distinction between device, gateway, and connectivity risk
 
 ---
 
@@ -290,6 +305,7 @@ Characteristics:
 * full Thought → Action → Observation visibility
 * custom orchestration loop
 * maximum runtime control
+* token usage badge shown when model usage metadata is available
 
 Strengths:
 
@@ -297,6 +313,7 @@ Strengths:
 * strong debugging visibility
 * strong telemetry grounding
 * full orchestration flexibility
+* detailed answers with clear ReAct observations
 
 Tradeoffs:
 
@@ -330,6 +347,7 @@ Tradeoffs:
 * internal orchestration becomes abstracted
 * lower runtime observability
 * reduced debugging transparency
+* observation output is less auditable because the managed agent loop may appear as framework messages rather than raw JSON/tool observations
 
 Best suited for rapid AI workflow development and framework-based experimentation.
 
@@ -344,6 +362,7 @@ Characteristics:
 * stronger traceability than standard LangChain
 * structured state transitions
 * framework-supported agent graph design
+* token usage badge shown when model usage metadata is available
 
 Strengths:
 
@@ -352,6 +371,7 @@ Strengths:
 * clearer runtime structure than standard LangChain
 * better traceability through graph nodes
 * lower implementation burden than fully custom orchestration
+* stable token usage because the workflow path is fixed in code
 
 Tradeoffs:
 
@@ -372,7 +392,7 @@ Characteristics:
 * webhook-based integration from the IoT Ops Agent UI
 * OpenAI Chat Model execution inside the n8n workflow
 * JSON response contract back to Flask
-* UI-visible Thought → Action → Observation trace
+* UI-visible workflow trace normalized from webhook output
 * n8n execution history for workflow-level debugging
 
 Strengths:
@@ -387,6 +407,7 @@ Tradeoffs:
 * telemetry/tool execution is indirect because Flask packages operational context before sending it to n8n
 * response formatting depends on the n8n workflow contract
 * less low-level reasoning-loop control than Custom Python or LangGraph
+* token usage is usually unavailable unless the n8n workflow explicitly returns it
 
 Best suited for workflow automation, external integrations, and low-code orchestration around the IoT Ops Agent backend.
 
@@ -402,6 +423,7 @@ Characteristics:
 * Dify app API key configured through `.env`
 * UI-visible reasoning trace normalized back into Flask SSE events
 * local Dify execution through Docker/Colima or Docker Desktop
+* token usage badge shown when Dify returns usage metadata
 
 Strengths:
 
@@ -409,7 +431,7 @@ Strengths:
 * high integration speed after Dify is running locally
 * less workflow configuration overhead than n8n for text-based chatbot diagnosis
 * good operational answer quality and structured evidence
-* reasoning traces usually contain 3-5 visible investigation steps in local testing
+* reasoning traces usually contain short app-level investigation steps in local testing
 
 Tradeoffs:
 
@@ -424,7 +446,7 @@ Best suited for chatbot-native agent testing and fast app-level experimentation 
 
 # Runtime Benchmark Results
 
-The benchmark tested shared prompts across five orchestration runtimes. Dify was added after the initial Custom Python, LangChain, LangGraph, and n8n comparison and was evaluated through the same IoT Ops Agent UI.
+The benchmark tested shared prompts across five orchestration runtimes. Dify was added after the initial Custom Python, LangChain, LangGraph, and n8n comparison and was evaluated through the same IoT Ops Agent UI. The aggregate table below reflects scored benchmark rows; automatically captured rows with zero quality scores are treated as pending manual evaluation.
 
 | Runtime                | Avg Accuracy | Avg Tool Usage | Avg Reasoning Clarity | Avg Observability | Avg Latency | Dev Complexity | Integration Speed | Ecosystem | Maintainability |
 | ---------------------- | -----------: | -------------: | --------------------: | ----------------: | ----------: | -------------: | ----------------: | --------: | --------------: |
@@ -467,6 +489,25 @@ Rows are grouped by prompt. Runtime order is Custom Python, LangChain, LangGraph
 | Active sensor alert correlation | IOA v2 · LangGraph | 13.49s | 5 | 5 | 5 | 4 | Effective for correlated alert analysis because graph node execution improves reasoning structure, auditability, and workflow control. |
 | Active sensor alert correlation | IOA v2 · n8n | 6.55s | 4 | 4 | 4 | 4 | Reviewed active alarm context, identified correlated CPU, memory, and heartbeat-delay patterns, and returned structured recommendations. |
 | Active sensor alert correlation | IOA v2 · Dify | 8.98s | 4 | 4 | 4 | 4 | Reviewed active sensor and gateway alarms, identified correlated heartbeat-delay and high-CPU patterns, and returned a five-step trace. |
+| Maintenance priority planning | IOA v2 · Custom Python | 12.83s | pending | pending | pending | pending | Highest token usage in the latest run at 3790 input / 760 output / 4550 total tokens. Returned a detailed maintenance ranking and preserved clear ReAct-style observations. |
+| Maintenance priority planning | IOA v2 · LangChain | 8.92s | pending | pending | pending | pending | Used fewer tokens than Custom Python at 3025 input / 550 output / 3575 total tokens, but runtime behavior is more opaque: the UI primarily shows managed agent-loop messages rather than JSON-like observations. |
+| Maintenance priority planning | IOA v2 · LangGraph | 9.96s | pending | pending | pending | pending | Lowest token usage among runtimes with token metadata at 953 input / 585 output / 1538 total tokens. The fixed graph flow kept the answer format stable while preserving clear observations. |
+| Maintenance priority planning | IOA v2 · n8n | 10.81s | pending | pending | pending | pending | Fast webhook execution path with short workflow observation output. The response is summary-shaped rather than raw JSON, and token usage was not returned by the workflow. |
+| Maintenance priority planning | IOA v2 · Dify | 6.40s | 3 | 3 | 3 | 3 | Provisional auto-captured score. Latency was comparable to n8n, no answer preview was shown during the run, observations were short, and token usage was similar to LangChain at 2358 input / 562 output / 2920 total tokens. |
+
+---
+
+# Latest Maintenance Prompt Observations
+
+The June 5, 2026 maintenance-priority prompt highlighted UI/runtime behavior differences beyond answer quality:
+
+* Custom Python remained the most transparent and verbose runtime, with the largest token footprint and detailed ReAct observations.
+* LangChain reduced token usage versus Custom Python, but its managed loop is more black-box in the UI because raw observation JSON is not surfaced.
+* LangGraph behaved closest to the custom ReAct runtime while using far fewer tokens because the graph path is fixed in application code.
+* n8n favored speed and workflow integration, but returned short summarized observations and no token usage badge.
+* Dify ran with n8n-like latency, short app-level observations, no streaming answer preview in this run, and token usage roughly in the LangChain range.
+
+The chat UI displays a token usage badge beside assistant actions when a runtime returns usage metadata. This is currently most useful for Custom Python, LangChain, LangGraph, and Dify; n8n requires explicit workflow support to send token usage back to Flask.
 
 ---
 

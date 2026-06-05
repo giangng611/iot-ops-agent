@@ -154,8 +154,9 @@ Dify was tested locally through the UI with shared operational prompts:
 * `/diagnose system issue`
 * gateway heartbeat-delay investigation
 * active sensor alert correlation
+* maintenance priority planning
 
-Average Dify scores:
+Average Dify scores from manually scored rows:
 
 | Metric | Score |
 | ------ | ----: |
@@ -169,7 +170,7 @@ Average Dify scores:
 | Maintainability | 4.0 |
 | Avg Latency | 8.06s |
 
-Dify showed strong fit for chatbot-style operational diagnosis because it produced thoughtful structured answers, required less manual workflow configuration than n8n for text responses, and consistently returned at least three visible reasoning iterations during local testing.
+Dify showed strong fit for chatbot-style operational diagnosis because it produced thoughtful structured answers and required less manual workflow configuration than n8n for text responses. In the maintenance-priority prompt run, Dify had n8n-like latency, short app-level observations, no streamed answer preview, and token usage roughly in the LangChain range.
 
 ---
 

@@ -180,15 +180,16 @@ If it is left as `Immediately`, Flask may receive an empty response body before 
 
 ## Local Evaluation Result
 
-n8n was tested locally through the UI with the same five prompts used by the other runtimes:
+n8n was tested locally through the UI with the same shared prompts used by the other runtimes:
 
 * `/overview system health`
 * `/check all unhealthy devices`
 * `/diagnose system issue`
 * gateway heartbeat-delay investigation
 * active sensor alert correlation
+* maintenance priority planning
 
-Average n8n scores:
+Average n8n scores from manually scored rows:
 
 | Metric | Score |
 | ------ | ----: |
@@ -202,4 +203,4 @@ Average n8n scores:
 | Maintainability | 4.0 |
 | Avg Latency | 8.53s |
 
-n8n showed strong integration speed and workflow-level observability, while Custom Python and LangGraph still provide deeper low-level reasoning-loop control. After the later Dify integration, n8n remains the stronger visual workflow automation option, while Dify is better suited for chatbot-native operational diagnosis because it requires less manual workflow configuration for text responses.
+n8n showed strong integration speed and workflow-level observability, while Custom Python and LangGraph still provide deeper low-level reasoning-loop control. In the maintenance-priority prompt run, n8n returned a short summarized observation with a successful webhook workflow and no token usage metadata. After the later Dify integration, n8n remains the stronger visual workflow automation option, while Dify is better suited for chatbot-native operational diagnosis because it requires less manual workflow configuration for text responses.

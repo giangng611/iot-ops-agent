@@ -169,7 +169,8 @@ def create_diagnose_blueprint(runtime):
 
                 return jsonify({
                     "response": result["final_answer"],
-                    "steps": result["steps"]
+                    "steps": result["steps"],
+                    "token_usage": result.get("token_usage")
                 })
 
             if mode == "ioa_v2_langchain":
@@ -197,7 +198,8 @@ def create_diagnose_blueprint(runtime):
 
                 return jsonify({
                     "response": result["final_answer"],
-                    "steps": result["steps"]
+                    "steps": result["steps"],
+                    "token_usage": result.get("token_usage")
                 })
 
             if mode == "ioa_v2_n8n":
@@ -230,7 +232,8 @@ def create_diagnose_blueprint(runtime):
 
                 return jsonify({
                     "response": result["final_answer"],
-                    "steps": steps
+                    "steps": steps,
+                    "token_usage": result.get("token_usage")
                 })
 
             if mode == "ioa_v2_dify":
@@ -263,7 +266,8 @@ def create_diagnose_blueprint(runtime):
 
                 return jsonify({
                     "response": result["final_answer"],
-                    "steps": steps
+                    "steps": steps,
+                    "token_usage": result.get("token_usage")
                 })
 
             result = ioa_v2_agent.run(user_input)
@@ -290,7 +294,8 @@ def create_diagnose_blueprint(runtime):
 
             return jsonify({
                 "response": result["final_answer"],
-                "steps": result["steps"]
+                "steps": result["steps"],
+                "token_usage": result.get("token_usage")
             })
 
         except Exception as e:
@@ -526,7 +531,8 @@ def create_diagnose_blueprint(runtime):
 
                         yield f"data: {json.dumps({
                             'type': 'final',
-                            'final_answer': result['final_answer']
+                            'final_answer': result['final_answer'],
+                            'token_usage': result.get('token_usage')
                         })}\n\n"
                     except Exception as e:
                         latency_seconds = round(time.time() - start_time, 2)
@@ -612,7 +618,8 @@ def create_diagnose_blueprint(runtime):
 
                         yield f"data: {json.dumps({
                             'type': 'final',
-                            'final_answer': result['final_answer']
+                            'final_answer': result['final_answer'],
+                            'token_usage': result.get('token_usage')
                         })}\n\n"
                     except Exception as e:
                         latency_seconds = round(time.time() - start_time, 2)

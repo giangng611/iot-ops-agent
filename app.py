@@ -57,7 +57,11 @@ DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS = get_positive_int_env(
 )
 TELEMETRY_BROADCAST_INTERVAL_SECONDS = get_positive_int_env(
     "TELEMETRY_BROADCAST_INTERVAL_SECONDS",
-    30
+    300
+)
+TELEMETRY_CONNECTED_GRACE_SECONDS = max(
+    90,
+    TELEMETRY_BROADCAST_INTERVAL_SECONDS * 2
 )
 ENABLE_EMBEDDED_TELEMETRY = (
     os.getenv("ENABLE_EMBEDDED_TELEMETRY", "true").lower()
@@ -143,7 +147,10 @@ def build_device_update_payload():
 
     telemetry_stream_status = (
         "connected"
-        if telemetry_age_seconds is not None and telemetry_age_seconds < 90
+        if (
+            telemetry_age_seconds is not None
+            and telemetry_age_seconds < TELEMETRY_CONNECTED_GRACE_SECONDS
+        )
         else "disconnected"
     )
 

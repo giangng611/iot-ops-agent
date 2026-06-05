@@ -14,6 +14,80 @@ from storage.telemetry_store import (
 from tools import check_system_alarms, check_system_overview
 
 
+def parse_token_count(value):
+    if value is None or value == "":
+        return None
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_token_usage(value, source):
+    if not isinstance(value, dict):
+        return None
+
+    usage = value.get("usage") if isinstance(value.get("usage"), dict) else value
+
+    input_tokens = parse_token_count(
+        usage.get("input_tokens")
+        or usage.get("prompt_tokens")
+        or usage.get("promptTokens")
+        or usage.get("prompt_tokens_used")
+    )
+    output_tokens = parse_token_count(
+        usage.get("output_tokens")
+        or usage.get("completion_tokens")
+        or usage.get("completionTokens")
+        or usage.get("completion_tokens_used")
+    )
+    total_tokens = parse_token_count(
+        usage.get("total_tokens")
+        or usage.get("totalTokens")
+        or usage.get("total_tokens_used")
+    )
+
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    if total_tokens is None:
+        return None
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "source": source
+    }
+
+
+def extract_token_usage_from_response(data, source):
+    if not isinstance(data, dict):
+        return None
+
+    candidates = [
+        data.get("token_usage"),
+        data.get("tokenUsage"),
+        data.get("usage"),
+    ]
+
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.extend([
+            metadata.get("usage"),
+            metadata.get("token_usage"),
+            metadata.get("tokenUsage"),
+        ])
+
+    for candidate in candidates:
+        token_usage = normalize_token_usage(candidate, source)
+        if token_usage:
+            return token_usage
+
+    return None
+
+
 def extract_device_id_from_text(text):
     known_devices = [
         device["device_id"]
@@ -77,6 +151,11 @@ Operational context JSON:
 Return a valid JSON object only:
 {{
   "response": "final answer using the required format",
+  "token_usage": {{
+    "input_tokens": "actual prompt/input token count if available",
+    "output_tokens": "actual completion/output token count if available",
+    "total_tokens": "actual total token count if available"
+  }},
   "steps": [
     {{
       "thought": "what information you inspected",
@@ -171,7 +250,11 @@ def call_n8n_agent(user_input):
 
     return {
         "final_answer": final_answer,
-        "steps": data.get("steps", [])
+        "steps": data.get("steps", []),
+        "token_usage": extract_token_usage_from_response(
+            data,
+            "n8n_response_usage"
+        )
     }
 
 def build_dify_payload(user_input):
@@ -240,11 +323,16 @@ def call_dify_agent(user_input):
             pass
 
     metadata = data.get("metadata", {})
+    token_usage = extract_token_usage_from_response(
+        data,
+        "dify_metadata_usage"
+    )
 
     return {
         "final_answer": answer,
         "steps": returned_steps,
         "metadata": metadata,
+        "token_usage": token_usage,
         "conversation_id": data.get("conversation_id"),
         "message_id": data.get("message_id")
     }

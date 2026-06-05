@@ -98,6 +98,53 @@ function formatTokenUsage(tokenUsage) {
     return `${inputTokens} in / ${outputTokens} out / ${tokenUsage.total_tokens} total`;
 }
 
+function parseJsonField(value, fallback) {
+    if (!value) {
+        return fallback;
+    }
+
+    if (typeof value !== "string") {
+        return value;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch (error) {
+        return fallback;
+    }
+}
+
+function inferTokenUsageFromReasoningSteps(reasoningSteps) {
+    if (!Array.isArray(reasoningSteps)) {
+        return null;
+    }
+
+    for (let index = reasoningSteps.length - 1; index >= 0; index -= 1) {
+        const step = reasoningSteps[index];
+
+        if (!step || typeof step !== "object") {
+            continue;
+        }
+
+        const output = step.output;
+
+        if (
+            output &&
+            typeof output === "object" &&
+            output.token_usage &&
+            output.token_usage.total_tokens
+        ) {
+            return output.token_usage;
+        }
+
+        if (step.token_usage && step.token_usage.total_tokens) {
+            return step.token_usage;
+        }
+    }
+
+    return null;
+}
+
 function findPromptById(promptId) {
     return promptsData.find(prompt => String(prompt.id) === String(promptId));
 }
@@ -665,6 +712,7 @@ async function sendMessage() {
 
             const data = await response.json();
             finalAnswer = data.error ? "Error: " + data.error : data.response;
+            latestTokenUsage = data.token_usage || null;
             latestReasoningSteps = [];
         }
 
@@ -673,7 +721,8 @@ async function sendMessage() {
         await saveMessageToDatabase(
             "assistant",
             finalAnswer,
-            latestReasoningSteps
+            latestReasoningSteps,
+            latestTokenUsage
         );
         input.value = "";
 
@@ -1006,9 +1055,14 @@ async function loadChatMessages(chat) {
                 content: message.content,
                 createdAt: message.created_at,
                 hasReasoning: Boolean(message.reasoning_steps),
-                reasoningSteps: message.reasoning_steps
-                    ? JSON.parse(message.reasoning_steps)
-                    : []
+                reasoningSteps: parseJsonField(message.reasoning_steps, []),
+                tokenUsage: parseJsonField(message.token_usage, null)
+            })).map(message => ({
+                ...message,
+                tokenUsage: (
+                    message.tokenUsage ||
+                    inferTokenUsageFromReasoningSteps(message.reasoningSteps)
+                )
             }));
             chat.messagesLoaded = true;
             return chat.messages;
@@ -1464,7 +1518,9 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     if (!steps || steps.length === 0) {
         content.innerHTML = `
             ${renderWorkflowMap([], finalized)}
-            <div class="reasoning-empty-state">No reasoning trace yet.</div>
+            <div class="reasoning-empty-state">
+                No reasoning trace yet.
+            </div>
         `;
         return;
     }
@@ -1534,7 +1590,19 @@ function renderReasoningSteps(steps, shouldType = false) {
         `;
     });
 
-    content.innerHTML = html || "No reasoning trace yet.";
+    content.innerHTML = html
+        ? `
+            ${renderWorkflowMap(steps, workflowFinalized)}
+            <div class="reasoning-trace-list">
+                ${html}
+            </div>
+        `
+        : `
+            ${renderWorkflowMap([], workflowFinalized)}
+            <div class="reasoning-empty-state">
+                No reasoning trace yet.
+            </div>
+        `;
 
     if (!shouldType) {
         return;
@@ -2634,12 +2702,17 @@ document.addEventListener("DOMContentLoaded", () => {
     loadSlashCommands();
 });
 
-async function saveMessageToDatabase(role, content, reasoningSteps = null) {
+async function saveMessageToDatabase(
+    role,
+    content,
+    reasoningSteps = null,
+    tokenUsage = null
+) {
     if (currentChatId === null) {
         return;
     }
 
-    await fetch(`/api/chats/${currentChatId}/messages`, {
+    const response = await fetch(`/api/chats/${currentChatId}/messages`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
@@ -2647,9 +2720,18 @@ async function saveMessageToDatabase(role, content, reasoningSteps = null) {
         body: JSON.stringify({
             role: role,
             content: content,
-            reasoning_steps: reasoningSteps
+            reasoning_steps: reasoningSteps,
+            token_usage: tokenUsage
         })
     });
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        console.error(
+            "Failed to save chat message:",
+            data.error || response.status
+        );
+    }
 }
 
 function toggleHistoryMenu(chatId) {
@@ -2966,9 +3048,6 @@ async function openProfileDrawer(type) {
         const deviceCount =
             allDevices.length || 0;
 
-        const hasRecentTelemetry =
-            (Date.now() - lastRealtimeUpdate) < 90000;
-
         const realtimeStatus =
             currentAlerts.telemetry_stream_status === "connected"
                 ? '<span class="status-online">Connected</span>'
@@ -3045,7 +3124,7 @@ async function openProfileDrawer(type) {
         const warningEnabled = true;
 
         const refreshInterval =
-            "30 seconds";
+            "5 minutes";
 
         content.innerHTML = `
             <div class="drawer-info-list">
@@ -3563,7 +3642,7 @@ async function fetchStorageStatus() {
 function getRealtimeStatusHtml() {
     const isConnected =
         lastRealtimeUpdate > 0 &&
-        Date.now() - lastRealtimeUpdate < 90000;
+        Date.now() - lastRealtimeUpdate < 600000;
 
     return isConnected
         ? '<span class="status-online">Connected</span>'

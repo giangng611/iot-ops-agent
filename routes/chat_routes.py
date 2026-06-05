@@ -74,6 +74,7 @@ def create_chat_blueprint(openai_client):
             role=data.get("role"),
             content=data.get("content"),
             reasoning_steps=data.get("reasoning_steps"),
+            token_usage=data.get("token_usage"),
         )
 
         if not success:

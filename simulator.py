@@ -21,7 +21,7 @@ DEVICES = [
     "gateway-003"
 ]
 
-SIMULATION_INTERVAL_SECONDS = 30
+SIMULATION_INTERVAL_SECONDS = 300
 
 
 def determine_status(cpu, memory, heartbeat_delay):

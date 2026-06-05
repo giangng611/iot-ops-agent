@@ -59,10 +59,18 @@ def init_db():
             role TEXT NOT NULL,
             content TEXT NOT NULL,
             reasoning_steps TEXT,
+            token_usage TEXT,
             created_at TEXT NOT NULL,
             FOREIGN KEY (chat_id) REFERENCES chats(id)
         )
     """)
+
+    try:
+        cursor.execute("""
+            ALTER TABLE messages ADD COLUMN token_usage TEXT
+        """)
+    except sqlite3.OperationalError:
+        pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -338,7 +346,7 @@ def chat_belongs_to_user(chat_id, user_id):
     return row is not None
 
 
-def add_message(chat_id, role, content, reasoning_steps=None):
+def add_message(chat_id, role, content, reasoning_steps=None, token_usage=None):
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -348,14 +356,16 @@ def add_message(chat_id, role, content, reasoning_steps=None):
             role,
             content,
             reasoning_steps,
+            token_usage,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
     """, (
         chat_id,
         role,
         content,
         reasoning_steps,
+        token_usage,
         now_iso()
     ))
 
@@ -368,7 +378,7 @@ def get_messages(chat_id):
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT role, content, reasoning_steps, created_at
+        SELECT role, content, reasoning_steps, token_usage, created_at
         FROM messages
         WHERE chat_id = ?
         ORDER BY id ASC
@@ -382,7 +392,8 @@ def get_messages(chat_id):
             "role": row[0],
             "content": row[1],
             "reasoning_steps": row[2],
-            "created_at": row[3]
+            "token_usage": row[3],
+            "created_at": row[4]
         }
         for row in rows
     ]

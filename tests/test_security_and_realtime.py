@@ -151,7 +151,10 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             payload["alerts"]["telemetry_stream_status"],
             "connected",
         )
-        self.assertLess(payload["alerts"]["telemetry_age_seconds"], 90)
+        self.assertLess(
+            payload["alerts"]["telemetry_age_seconds"],
+            app_module.TELEMETRY_CONNECTED_GRACE_SECONDS,
+        )
 
     def test_telemetry_routes_return_source_payloads(self):
         user = self.create_user_once("telemetry-route-user", "telemetry-pass")

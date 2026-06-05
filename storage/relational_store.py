@@ -288,7 +288,7 @@ def chat_belongs_to_user(chat_id, user_id):
     )
 
 
-def add_message(chat_id, role, content, reasoning_steps=None):
+def add_message(chat_id, role, content, reasoning_steps=None, token_usage=None):
     def postgres_operation():
         with get_postgres_connection() as conn:
             with conn.cursor() as cursor:
@@ -299,15 +299,17 @@ def add_message(chat_id, role, content, reasoning_steps=None):
                         role,
                         content,
                         reasoning_steps,
+                        token_usage,
                         created_at
                     )
-                    values (%s, %s, %s, %s, %s)
+                    values (%s, %s, %s, %s, %s, %s)
                     """,
                     (
                         chat_id,
                         role,
                         content,
                         reasoning_steps,
+                        token_usage,
                         now_iso(),
                     ),
                 )
@@ -316,7 +318,13 @@ def add_message(chat_id, role, content, reasoning_steps=None):
     return _with_fallback(
         "add_message",
         postgres_operation,
-        lambda: sqlite_store.add_message(chat_id, role, content, reasoning_steps),
+        lambda: sqlite_store.add_message(
+            chat_id,
+            role,
+            content,
+            reasoning_steps,
+            token_usage,
+        ),
     )
 
 
@@ -326,7 +334,7 @@ def get_messages(chat_id):
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
-                    select role, content, reasoning_steps, created_at
+                    select role, content, reasoning_steps, token_usage, created_at
                     from public.messages
                     where chat_id = %s
                     order by id asc
@@ -340,6 +348,7 @@ def get_messages(chat_id):
                 "role": row["role"],
                 "content": row["content"],
                 "reasoning_steps": row["reasoning_steps"],
+                "token_usage": row["token_usage"],
                 "created_at": row["created_at"],
             }
             for row in rows

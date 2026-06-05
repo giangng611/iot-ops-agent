@@ -307,6 +307,7 @@ def call_dify_agent(user_input):
         or json.dumps(data, indent=2)
     )
     returned_steps = []
+    parsed_answer = None
 
     if isinstance(answer, str):
         try:
@@ -323,9 +324,12 @@ def call_dify_agent(user_input):
             pass
 
     metadata = data.get("metadata", {})
-    token_usage = extract_token_usage_from_response(
-        data,
-        "dify_metadata_usage"
+    token_usage = (
+        extract_token_usage_from_response(data, "dify_metadata_usage")
+        or extract_token_usage_from_response(
+            parsed_answer,
+            "dify_answer_usage"
+        )
     )
 
     return {

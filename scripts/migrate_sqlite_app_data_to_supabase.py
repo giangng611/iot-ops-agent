@@ -98,14 +98,16 @@ def migrate_messages(conn, rows):
                   role,
                   content,
                   reasoning_steps,
+                  token_usage,
                   created_at
                 )
-                values (%s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s)
                 on conflict (id) do update set
                   chat_id = excluded.chat_id,
                   role = excluded.role,
                   content = excluded.content,
                   reasoning_steps = excluded.reasoning_steps,
+                  token_usage = excluded.token_usage,
                   created_at = excluded.created_at
                 """,
                 (
@@ -114,6 +116,7 @@ def migrate_messages(conn, rows):
                     row["role"],
                     row["content"],
                     row.get("reasoning_steps"),
+                    row.get("token_usage"),
                     row["created_at"],
                 ),
             )

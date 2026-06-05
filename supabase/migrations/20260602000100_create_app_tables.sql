@@ -22,8 +22,12 @@ create table if not exists public.messages (
   role text not null,
   content text not null,
   reasoning_steps text,
+  token_usage text,
   created_at text not null
 );
+
+alter table public.messages
+  add column if not exists token_usage text;
 
 create index if not exists messages_chat_id_idx
   on public.messages (chat_id, id asc);

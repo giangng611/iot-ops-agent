@@ -189,7 +189,8 @@ class LangGraphAgent:
 
         return {
             "final_answer": result["final_answer"],
-            "steps": result["steps"]
+            "steps": result["steps"],
+            "token_usage": result.get("token_usage")
         }
 
     def run_stream(self, user_input):

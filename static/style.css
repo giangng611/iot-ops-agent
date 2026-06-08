@@ -1201,6 +1201,63 @@ pre {
     margin-bottom: 18px;
 }
 
+.data-source-panel {
+    align-items: center;
+    background: #171717;
+    border: 1px solid #2f2f2f;
+    border-radius: 14px;
+    display: grid;
+    gap: 16px;
+    grid-template-columns: 220px 1fr;
+    margin-bottom: 18px;
+    padding: 16px;
+}
+
+.data-source-panel label {
+    color: #a1a1aa;
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+}
+
+.data-source-panel select {
+    height: 42px;
+    width: 100%;
+}
+
+.source-badge {
+    border: 1px solid #3f3f46;
+    border-radius: 999px;
+    color: #ececec;
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    text-transform: uppercase;
+}
+
+.source-badge.not_configured {
+    background: #422006;
+    border-color: #854d0e;
+    color: #fde68a;
+}
+
+.source-badge.simulator,
+.source-badge.simulator_fallback {
+    background: #082f49;
+    border-color: #0369a1;
+    color: #bae6fd;
+}
+
+.data-source-panel p {
+    color: #a1a1aa;
+    font-size: 14px;
+    margin: 0;
+}
+
 .device-controls input,
 .device-controls select {
     height: 44px;
@@ -1257,6 +1314,19 @@ th {
 .status-pill.critical {
     background: #7f1d1d;
     color: #fecaca;
+}
+
+.status-pill.unknown {
+    background: #3f3f46;
+    color: #d4d4d8;
+}
+
+.device-subtext {
+    color: #a1a1aa;
+    display: block;
+    font-size: 12px;
+    margin-top: 5px;
+    max-width: 420px;
 }
 
 /* Prompts */
@@ -1333,6 +1403,15 @@ th {
     border-left: 5px solid #eab308;
 }
 
+.rules-pending-alert {
+    border-left: 5px solid #38bdf8;
+    grid-column: 1 / -1;
+}
+
+.rules-pending-alert h2 {
+    font-size: 28px;
+}
+
 .alert-list {
     display: flex;
     flex-direction: column;
@@ -1364,6 +1443,10 @@ th {
 
 .alert-item.warning {
     border-left: 5px solid #eab308;
+}
+
+.alert-item.info {
+    border-left: 5px solid #38bdf8;
 }
 
 .alert-actions {

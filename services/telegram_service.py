@@ -83,6 +83,7 @@ def build_help_text():
         "/show devices with alarms",
         "/diagnose system issue",
         "/check devices with delayed heartbeat",
+        "/check company telemetry records greater than a threshold",
         "/diagnose gateway-001",
     ])
 

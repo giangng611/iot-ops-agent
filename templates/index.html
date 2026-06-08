@@ -159,7 +159,26 @@
             <section id="devicesTab" class="tab-page">
                 <div class="page-header">
                     <h1>Devices</h1>
-                    <p>Current simulated IoT device inventory</p>
+                    <p>Current IoT operational records and telemetry source</p>
+                </div>
+
+                <div class="data-source-panel">
+                    <div>
+                        <label for="dataSourceSelect">Data Source</label>
+                        <select id="dataSourceSelect" onchange="changeDataSource(this.value)">
+                            <option value="simulator">Simulator</option>
+                            <option value="company">Company DB</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <span id="dataSourceBadge" class="source-badge simulator">
+                            Simulator
+                        </span>
+                        <p id="dataSourceNote">
+                            Simulator alert rules are active for demo telemetry.
+                        </p>
+                    </div>
                 </div>
 
                 <div class="device-controls">
@@ -271,7 +290,7 @@
             <section id="alertsTab" class="tab-page">
                 <div class="page-header">
                     <h1>Alerts</h1>
-                    <p>Real-time active warning and critical device conditions</p>
+                    <p>Active warning and critical conditions based on the selected data source</p>
                 </div>
 
                 <div id="alertSummary" class="alert-summary">

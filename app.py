@@ -18,6 +18,7 @@ from routes.profile_routes import profile_bp
 from routes.prompt_routes import prompt_bp
 from routes.storage_routes import storage_bp
 from routes.telemetry_routes import telemetry_bp
+from routes.telegram_routes import create_telegram_blueprint
 from storage.relational_store import init_db
 from storage.telemetry_store import (
     get_all_latest_devices,
@@ -101,6 +102,9 @@ app.register_blueprint(create_diagnose_blueprint({
     "get_rate_limit_requests": lambda: DIAGNOSE_RATE_LIMIT_REQUESTS,
     "get_rate_limit_window_seconds": lambda: DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS,
     "diagnose_rate_limit_log": diagnose_rate_limit_log,
+}))
+app.register_blueprint(create_telegram_blueprint({
+    "langgraph_agent": langgraph_agent,
 }))
 app.register_blueprint(prompt_bp)
 app.register_blueprint(profile_bp)

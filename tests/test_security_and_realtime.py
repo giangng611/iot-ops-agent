@@ -222,6 +222,124 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         response = self.client.delete(f"/api/prompts/{prompt_id}")
         self.assertEqual(response.status_code, 200)
 
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_webhook_rejects_invalid_secret(self, mock_post):
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
+
+        try:
+            response = self.client.post(
+                "/api/telegram/webhook",
+                headers={"X-Telegram-Bot-Api-Secret-Token": "wrong-secret"},
+                json={
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 456},
+                        "text": "/help",
+                    }
+                },
+            )
+
+            self.assertEqual(response.status_code, 403)
+            mock_post.assert_not_called()
+        finally:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+            os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_help_sends_prompt_list(self, mock_post):
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
+        os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "456"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        try:
+            response = self.client.post(
+                "/api/telegram/webhook",
+                headers={"X-Telegram-Bot-Api-Secret-Token": "expected-secret"},
+                json={
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 456, "username": "ops_user"},
+                        "text": "/help",
+                    }
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["status"], "help_sent")
+            sent_payload = mock_post.call_args.kwargs["json"]
+            self.assertEqual(sent_payload["chat_id"], 123)
+            self.assertIn("/diagnose system issue", sent_payload["text"])
+        finally:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+            os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
+            os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_message_calls_langgraph_and_saves_history(self, mock_post):
+        user = self.create_user_once("telegram-history-user", "history-pass")
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
+        os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "456"
+        os.environ["TELEGRAM_HISTORY_USER_ID"] = str(user["id"])
+        mock_post.return_value.raise_for_status.return_value = None
+
+        with patch.object(app_module.langgraph_agent, "run") as mock_run:
+            mock_run.return_value = {
+                "final_answer": "Fleet is in warning state.",
+                "steps": [
+                    {
+                        "thought": "Inspect fleet status.",
+                        "action": "check_system_overview",
+                        "output": {"warning_count": 1},
+                    }
+                ],
+                "token_usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            }
+
+            try:
+                response = self.client.post(
+                    "/api/telegram/webhook",
+                    headers={"X-Telegram-Bot-Api-Secret-Token": "expected-secret"},
+                    json={
+                        "message": {
+                            "chat": {"id": 123},
+                            "from": {"id": 456, "username": "ops_user"},
+                            "text": "/overview system health",
+                        }
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                payload = response.get_json()
+                self.assertEqual(payload["status"], "answered")
+                self.assertTrue(payload["history_chat_id"])
+                mock_run.assert_called_once_with("/overview system health")
+
+                messages = get_messages(payload["history_chat_id"])
+                self.assertEqual(messages[0]["role"], "user")
+                self.assertEqual(messages[1]["role"], "assistant")
+                self.assertEqual(
+                    messages[1]["content"],
+                    "Fleet is in warning state.",
+                )
+                self.assertIn(
+                    "check_system_overview",
+                    messages[1]["reasoning_steps"],
+                )
+                sent_payload = mock_post.call_args.kwargs["json"]
+                self.assertEqual(sent_payload["text"], "Fleet is in warning state.")
+            finally:
+                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+                os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
+                os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
+                os.environ.pop("TELEGRAM_HISTORY_USER_ID", None)
+
     def test_storage_status_api_reports_backend_shape(self):
         user = self.create_user_once("storage-api-user", "storage-pass")
         self.login_as(user)

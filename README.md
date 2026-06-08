@@ -229,6 +229,7 @@ Environment variables should be configured through the deployment provider inste
 * [Benchmarking](docs/BENCHMARKING.md)
 * [n8n UI Integration](docs/N8N_UI_INTEGRATION.md)
 * [Dify UI Integration](docs/DIFY_UI_INTEGRATION.md)
+* [Company DB Discovery](docs/COMPANY_DB_DISCOVERY.md)
 * [Roadmap](docs/ROADMAP.md)
 
 ---

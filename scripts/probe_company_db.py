@@ -11,6 +11,7 @@ load_dotenv(ROOT / ".env")
 
 from services.company_data_service import (  # noqa: E402
     company_db_type,
+    inspect_company_mongo_collection_schema,
     preview_company_mongo_collection,
     preview_company_table,
     probe_company_db,
@@ -38,6 +39,13 @@ def main():
         ),
     )
     parser.add_argument(
+        "--inspect",
+        help=(
+            "Inspect field paths and types without printing values. "
+            "MongoDB only, in database.collection format."
+        ),
+    )
+    parser.add_argument(
         "--preview-limit",
         type=int,
         default=5,
@@ -45,7 +53,17 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.preview:
+    if args.inspect:
+        if "." not in args.inspect:
+            raise RuntimeError("--inspect must use database.collection format.")
+
+        database_name, collection_name = args.inspect.split(".", 1)
+        payload = inspect_company_mongo_collection_schema(
+            database_name,
+            collection_name,
+            args.preview_limit,
+        )
+    elif args.preview:
         if "." not in args.preview:
             raise RuntimeError(
                 "--preview must use schema.table or database.collection format."

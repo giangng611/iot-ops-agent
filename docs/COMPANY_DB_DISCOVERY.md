@@ -44,6 +44,13 @@ For MongoDB, use `database.collection`:
 python3 scripts/probe_company_db.py --preview operations.devices --preview-limit 5
 ```
 
+To inspect MongoDB field paths without printing values:
+
+```bash
+python3 scripts/probe_company_db.py --inspect datamgmt.CNT --preview-limit 10
+python3 scripts/probe_company_db.py --inspect datamgmt.CIN --preview-limit 10
+```
+
 Guardrails:
 
 - read-only transaction

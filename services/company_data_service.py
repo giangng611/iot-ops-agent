@@ -22,6 +22,9 @@ MAX_MONGO_FIELDS = 32
 MAX_SCHEMA_SAMPLE_DOCUMENTS = 20
 MAX_SCHEMA_FIELD_PATHS = 120
 MAX_PAYLOAD_CHARS_TO_PARSE = 20000
+DEFAULT_OPERATIONAL_RECORD_LIMIT = 30
+MAX_THRESHOLD_SCAN_RECORDS = 80
+MAX_THRESHOLD_MATCHES = 20
 
 
 def get_company_db_url():
@@ -216,6 +219,28 @@ def collect_field_types(value, path, fields):
 
     if isinstance(value, list) and value:
         collect_field_types(value[0], f"{path}[]" if path else "[]", fields)
+
+
+def collect_numeric_values(value, path, values):
+    if isinstance(value, bool):
+        return
+
+    if isinstance(value, (int, float)):
+        values.append({
+            "path": path or "value",
+            "value": value,
+        })
+        return
+
+    if isinstance(value, dict):
+        for key, nested_value in list(value.items())[:MAX_MONGO_FIELDS]:
+            nested_path = f"{path}.{key}" if path else key
+            collect_numeric_values(nested_value, nested_path, values)
+        return
+
+    if isinstance(value, list):
+        for index, item in enumerate(value[:10]):
+            collect_numeric_values(item, f"{path}[{index}]", values)
 
 
 def parse_payload_value(value):
@@ -445,6 +470,218 @@ def inspect_company_mongo_payload_schema(
                 for path, value in sorted(fields.items())
             ][:MAX_SCHEMA_FIELD_PATHS],
         }
+
+
+def parse_company_timestamp(value):
+    if value is None or value == "":
+        return None
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+    text = str(abs(number))
+
+    if len(text) >= 13:
+        number = number / 1000
+
+    return number
+
+
+def summarize_payload(payload):
+    parsed_payload = parse_payload_value(payload)
+
+    if isinstance(parsed_payload, dict):
+        return {
+            "payload_type": "json",
+            "field_count": len(parsed_payload),
+            "fields": list(parsed_payload.keys())[:12],
+        }
+
+    if isinstance(parsed_payload, list):
+        return {
+            "payload_type": "json_array",
+            "item_count": len(parsed_payload),
+        }
+
+    if isinstance(payload, str):
+        return {
+            "payload_type": "text",
+            "preview": trim_value(payload),
+        }
+
+    return {
+        "payload_type": describe_value_type(payload),
+    }
+
+
+def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
+    safe_limit = max(1, min(int(limit), 100))
+    database_name = os.getenv("COMPANY_OPERATIONAL_DB", "datamgmt")
+    collection_name = os.getenv("COMPANY_OPERATIONAL_COLLECTION", "CIN")
+
+    validate_identifier(database_name, "database name")
+    validate_identifier(collection_name, "collection name")
+
+    with get_company_mongo_client() as client:
+        collection = client[database_name][collection_name]
+        rows = list(
+            collection.find(
+                {},
+                {
+                    "_id": 0,
+                    "rn": 1,
+                    "pi": 1,
+                    "ct": 1,
+                    "lt": 1,
+                    "cnf": 1,
+                    "con": 1,
+                    "tenantId": 1,
+                    "tenantName": 1,
+                    "appDomainId": 1,
+                    "appDomainName": 1,
+                },
+            )
+            .sort("ct", -1)
+            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
+            .limit(safe_limit)
+        )
+
+    records = []
+
+    for index, row in enumerate(rows, start=1):
+        payload_summary = summarize_payload(row.get("con"))
+        record_id = row.get("rn") or f"company-record-{index}"
+        timestamp = row.get("lt") or row.get("ct")
+
+        records.append({
+            "device_id": str(record_id),
+            "status": "unknown",
+            "cpu_usage": None,
+            "memory_usage": None,
+            "heartbeat_delay": None,
+            "timestamp": timestamp,
+            "company_record": True,
+            "rules_status": "not_configured",
+            "content_format": row.get("cnf"),
+            "parent_container": str(row.get("pi") or ""),
+            "tenant_name": row.get("tenantName"),
+            "app_domain_name": row.get("appDomainName"),
+            "payload_summary": payload_summary,
+        })
+
+    return records
+
+
+def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
+    if company_db_type() != "mongodb":
+        return simulator_fallback_snapshot(
+            "Company MongoDB URL is not configured."
+        )
+
+    try:
+        records = list_company_operational_records(limit)
+    except Exception as exc:
+        return simulator_fallback_snapshot(
+            f"Company MongoDB read failed: {exc}"
+        )
+
+    return {
+        "source": "company_mongodb",
+        "selected_source": "company",
+        "active_source": "company_mongodb",
+        "rules_status": "not_configured",
+        "rules_message": (
+            "Company alert rules are not configured yet. These records are "
+            "raw company data summaries and are not classified as alerts."
+        ),
+        "devices": records,
+        "alerts": {
+            "critical_count": 0,
+            "warning_count": 0,
+            "rules_status": "not_configured",
+            "message": (
+                "Company alert rules are not configured yet. Alert counts "
+                "are intentionally not derived from raw records."
+            ),
+        },
+    }
+
+
+def scan_company_payload_threshold(threshold, limit=MAX_THRESHOLD_SCAN_RECORDS):
+    safe_limit = max(1, min(int(limit), MAX_THRESHOLD_SCAN_RECORDS))
+    database_name = os.getenv("COMPANY_OPERATIONAL_DB", "datamgmt")
+    collection_name = os.getenv("COMPANY_OPERATIONAL_COLLECTION", "CIN")
+
+    validate_identifier(database_name, "database name")
+    validate_identifier(collection_name, "collection name")
+
+    with get_company_mongo_client() as client:
+        collection = client[database_name][collection_name]
+        rows = list(
+            collection.find(
+                {"con": {"$exists": True}},
+                {
+                    "_id": 0,
+                    "rn": 1,
+                    "pi": 1,
+                    "ct": 1,
+                    "lt": 1,
+                    "con": 1,
+                    "tenantName": 1,
+                    "appDomainName": 1,
+                },
+            )
+            .sort("ct", -1)
+            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
+            .limit(safe_limit)
+        )
+
+    matches = []
+    parseable_payloads = 0
+
+    for row in rows:
+        parsed_payload = parse_payload_value(row.get("con"))
+
+        if not isinstance(parsed_payload, (dict, list, int, float)):
+            continue
+
+        parseable_payloads += 1
+        numeric_values = []
+        collect_numeric_values(parsed_payload, "", numeric_values)
+
+        for numeric_value in numeric_values:
+            if numeric_value["value"] > threshold:
+                matches.append({
+                    "record_id": row.get("rn"),
+                    "parent_container": row.get("pi"),
+                    "timestamp": row.get("lt") or row.get("ct"),
+                    "field": numeric_value["path"],
+                    "value": numeric_value["value"],
+                    "tenant_name": row.get("tenantName"),
+                    "app_domain_name": row.get("appDomainName"),
+                })
+
+                if len(matches) >= MAX_THRESHOLD_MATCHES:
+                    break
+
+        if len(matches) >= MAX_THRESHOLD_MATCHES:
+            break
+
+    return {
+        "source": "company_mongodb",
+        "rules_status": "not_configured",
+        "threshold": threshold,
+        "scanned_records": len(rows),
+        "parseable_payloads": parseable_payloads,
+        "match_count": len(matches),
+        "matches": matches,
+        "note": (
+            "This is a manual threshold scan over raw company payloads, not "
+            "an approved company alert rule."
+        ),
+    }
 
 
 def simulator_fallback_snapshot(reason):

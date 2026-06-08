@@ -5,11 +5,21 @@ socket.on("connect", () => {
 });
 
 socket.on("device_update", (data) => {
+    if (selectedDataSource !== "simulator") {
+        return;
+    }
+
     lastRealtimeUpdate = Date.now();
 
     allDevices = data.devices;
     currentAlerts = data.alerts;
+    currentDataSourceState = {
+        selected_source: "simulator",
+        active_source: data.source || "simulator",
+        rules_status: "simulator"
+    };
 
+    updateDataSourceDisplay();
     renderDeviceTable();
     renderAlertCenter();
     renderCharts();
@@ -50,6 +60,12 @@ let realtimeStatusInterval = null;
 let assistantMessageActionStore = {};
 let userMessageActionStore = {};
 let workflowNodeDetailStore = {};
+let selectedDataSource = "simulator";
+let currentDataSourceState = {
+    selected_source: "simulator",
+    active_source: "simulator",
+    rules_status: "simulator"
+};
 
 const prompts = [
     "/overview system health",
@@ -58,6 +74,7 @@ const prompts = [
     "/diagnose system issue",
     "/check devices with delayed heartbeat",
     "/show devices with alarms",
+    "/check company telemetry records greater than a threshold",
     "/review current IoT fleet status",
     "/summarize current fleet risk",
     "/prioritize devices needing attention"
@@ -758,7 +775,8 @@ async function sendMessage() {
                 },
                 body: JSON.stringify({
                     message: message,
-                    mode: currentMode
+                    mode: currentMode,
+                    data_source: selectedDataSource
                 })
             });
 
@@ -814,7 +832,8 @@ async function sendStreamMessage(message) {
         },
         body: JSON.stringify({
             message: message,
-            mode: currentMode
+            mode: currentMode,
+            data_source: selectedDataSource
         })
     });
 
@@ -1186,15 +1205,126 @@ async function refreshDevices() {
         const response = await fetch("/api/devices");
         const data = await response.json();
 
-        allDevices = data.devices;
+        selectedDataSource = data.selected_source || selectedDataSource;
+        currentDataSourceState = {
+            selected_source: data.selected_source || selectedDataSource,
+            active_source: data.active_source || data.source || "simulator",
+            rules_status: data.rules_status || "unknown",
+            reason: data.reason || "",
+            rules_message: data.rules_message || "",
+            alerts: data.alerts || {}
+        };
+        allDevices = data.devices || [];
+        currentAlerts = data.alerts || {
+            critical_count: 0,
+            warning_count: 0
+        };
+        updateDataSourceControl();
+        updateDataSourceDisplay();
         renderDeviceTable();
+        renderAlertCenter();
+        renderCharts();
 
     } catch (error) {
         console.error("Failed to refresh devices:", error);
     }
 }
 
+async function changeDataSource(value) {
+    selectedDataSource = value;
+
+    try {
+        const response = await fetch("/api/data-source", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                selected_source: value
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error("Unable to update data source.");
+        }
+
+        await refreshDevices();
+    } catch (error) {
+        console.error("Failed to switch data source:", error);
+    }
+}
+
+function updateDataSourceControl() {
+    const selector = document.getElementById("dataSourceSelect");
+
+    if (selector && selector.value !== selectedDataSource) {
+        selector.value = selectedDataSource;
+    }
+}
+
+function formatDataSourceLabel(value) {
+    const labels = {
+        simulator: "Simulator",
+        sqlite: "SQLite simulator",
+        mongodb: "MongoDB simulator",
+        company: "Company DB",
+        company_mongodb: "Company MongoDB",
+        simulator_fallback: "Simulator fallback"
+    };
+
+    return labels[value] || value || "Unknown";
+}
+
+function updateDataSourceDisplay() {
+    const badge = document.getElementById("dataSourceBadge");
+    const note = document.getElementById("dataSourceNote");
+
+    if (!badge || !note) {
+        return;
+    }
+
+    const selectedLabel = formatDataSourceLabel(
+        currentDataSourceState.selected_source || selectedDataSource
+    );
+    const activeLabel = formatDataSourceLabel(
+        currentDataSourceState.active_source || currentDataSourceState.source
+    );
+    const rulesStatus = currentDataSourceState.rules_status || "unknown";
+
+    badge.textContent = `${selectedLabel} → ${activeLabel}`;
+    badge.className = `source-badge ${rulesStatus}`;
+
+    if (rulesStatus === "not_configured") {
+        note.textContent = (
+            currentDataSourceState.rules_message ||
+            "Company alert rules are not configured yet. Showing raw company record summaries only."
+        );
+        note.classList.remove("hidden");
+        return;
+    }
+
+    if (currentDataSourceState.active_source === "simulator_fallback") {
+        note.textContent = currentDataSourceState.reason
+            ? `Company DB unavailable. Showing simulator fallback. ${currentDataSourceState.reason}`
+            : "Company DB unavailable. Showing simulator fallback.";
+        note.classList.remove("hidden");
+        return;
+    }
+
+    if (selectedDataSource === "simulator") {
+        note.textContent = "Simulator alert rules are active for demo telemetry.";
+        note.classList.remove("hidden");
+        return;
+    }
+
+    note.classList.add("hidden");
+}
+
 function calculatePriority(device) {
+    if (device.company_record) {
+        return 0;
+    }
+
     let score = 0;
 
     if (device.status === "critical") {
@@ -1208,6 +1338,48 @@ function calculatePriority(device) {
     score += (Number(device.heartbeat_delay) || 0) / 10;
 
     return Math.round(score);
+}
+
+function formatMetricValue(value, suffix = "") {
+    if (value === null || value === undefined || value === "") {
+        return "—";
+    }
+
+    return `${value}${suffix}`;
+}
+
+function formatDeviceStatus(device) {
+    if (device.rules_status === "not_configured") {
+        return `
+            <span class="status-pill unknown">
+                rules pending
+            </span>
+        `;
+    }
+
+    return `
+        <span class="status-pill ${device.status}">
+            ${device.status}
+        </span>
+    `;
+}
+
+function formatCompanyPayloadSummary(device) {
+    if (!device.company_record || !device.payload_summary) {
+        return "";
+    }
+
+    const summary = device.payload_summary;
+
+    if (Array.isArray(summary.fields) && summary.fields.length > 0) {
+        return `Fields: ${summary.fields.slice(0, 4).join(", ")}`;
+    }
+
+    if (summary.preview) {
+        return `Payload: ${summary.preview}`;
+    }
+
+    return `Payload type: ${summary.payload_type || "unknown"}`;
 }
 
 function renderDeviceTable() {
@@ -1235,7 +1407,7 @@ function renderDeviceTable() {
     let devices = [...allDevices];
 
     devices = devices.filter(device => {
-        const matchesSearch = device.device_id.toLowerCase().includes(searchValue);
+        const matchesSearch = String(device.device_id).toLowerCase().includes(searchValue);
         const matchesStatus = statusValue === "all" || device.status === statusValue;
 
         return matchesSearch && matchesStatus;
@@ -1269,29 +1441,36 @@ function renderDeviceTable() {
 
     devices.forEach(device => {
         const priority = calculatePriority(device);
+        const payloadSummary = formatCompanyPayloadSummary(device);
+        const deviceLabel = escapeHtml(device.device_id);
 
         tableBody.innerHTML += `
             <tr>
-                <td>${device.device_id}</td>
                 <td>
-                    <span class="status-pill ${device.status}">
-                        ${device.status}
-                    </span>
+                    ${deviceLabel}
+                    ${payloadSummary ? `<small class="device-subtext">${escapeHtml(payloadSummary)}</small>` : ""}
                 </td>
-                <td>${device.cpu_usage}%</td>
-                <td>${device.memory_usage}%</td>
-                <td>${device.heartbeat_delay}s ago</td>
+                <td>${formatDeviceStatus(device)}</td>
+                <td>${formatMetricValue(device.cpu_usage, "%")}</td>
+                <td>${formatMetricValue(device.memory_usage, "%")}</td>
+                <td>${formatMetricValue(device.heartbeat_delay, "s ago")}</td>
                 <td>${priority}</td>
                 <td>
-                    <button onclick="diagnoseDevice('${device.device_id}')">
+                    <button onclick="diagnoseDevice('${deviceLabel}')">
                         Diagnose
                     </button>
                 </td>
 
                 <td>
-                    <button onclick="showDeviceHistory('${device.device_id}')">
-                        History
-                    </button>
+                    ${device.company_record ? `
+                        <button disabled title="Company telemetry chart mapping is pending.">
+                            Raw record
+                        </button>
+                    ` : `
+                        <button onclick="showDeviceHistory('${deviceLabel}')">
+                            History
+                        </button>
+                    `}
                 </td>
             </tr>
         `;
@@ -2364,6 +2543,37 @@ function renderAlertCenter() {
     const summary = document.getElementById("alertSummary");
     const alertList = document.getElementById("alertList");
 
+    if (
+        currentDataSourceState.selected_source === "company" &&
+        currentDataSourceState.rules_status === "not_configured"
+    ) {
+        badge.classList.add("hidden");
+
+        if (!summary || !alertList) {
+            return;
+        }
+
+        summary.innerHTML = `
+            <div class="alert-summary-card rules-pending-alert">
+                <h2>Rules pending</h2>
+                <p>Company alert rules are not configured.</p>
+            </div>
+        `;
+        alertList.innerHTML = `
+            <div class="alert-item info">
+                <div>
+                    <h3>Company DB connected</h3>
+                    <p>
+                        Raw company records are available in Devices, but the
+                        platform will not classify warning or critical alerts
+                        until approved business rules or Grafana tools are configured.
+                    </p>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
     const critical = currentAlerts.critical_count || 0;
     const warning = currentAlerts.warning_count || 0;
     const total = critical + warning;
@@ -2517,21 +2727,35 @@ function renderHealthChart() {
         return;
     }
 
-    const healthy = allDevices.filter(device => device.status === "healthy").length;
-    const warning = allDevices.filter(device => device.status === "warning").length;
-    const critical = allDevices.filter(device => device.status === "critical").length;
+    const data = currentDataSourceState.rules_status === "not_configured"
+        ? {
+            labels: ["Raw records"],
+            datasets: [
+                {
+                    data: [allDevices.length],
+                    backgroundColor: ["#38bdf8"],
+                    borderColor: "#171717",
+                    borderWidth: 2
+                }
+            ]
+        }
+        : (() => {
+            const healthy = allDevices.filter(device => device.status === "healthy").length;
+            const warning = allDevices.filter(device => device.status === "warning").length;
+            const critical = allDevices.filter(device => device.status === "critical").length;
 
-    const data = {
-        labels: ["Healthy", "Warning", "Critical"],
-        datasets: [
-            {
-                data: [healthy, warning, critical],
-                backgroundColor: ["#22c55e", "#eab308", "#ef4444"],
-                borderColor: "#171717",
-                borderWidth: 2
-            }
-        ]
-    };
+            return {
+                labels: ["Healthy", "Warning", "Critical"],
+                datasets: [
+                    {
+                        data: [healthy, warning, critical],
+                        backgroundColor: ["#22c55e", "#eab308", "#ef4444"],
+                        borderColor: "#171717",
+                        borderWidth: 2
+                    }
+                ]
+            };
+        })();
 
     if (healthChart) {
         healthChart.data = data;
@@ -2560,6 +2784,62 @@ function renderMetricsChart() {
     const canvas = document.getElementById("metricsChart");
 
     if (!canvas) {
+        return;
+    }
+
+    if (currentDataSourceState.rules_status === "not_configured") {
+        const data = {
+            labels: ["Metric mapping pending"],
+            datasets: [
+                {
+                    data: [0],
+                    backgroundColor: ["#38bdf8"],
+                    borderRadius: 8,
+                    barPercentage: 0.75,
+                    categoryPercentage: 0.8
+                }
+            ]
+        };
+
+        if (metricsChart) {
+            metricsChart.data = data;
+            metricsChart.update();
+            return;
+        }
+
+        metricsChart = new Chart(canvas, {
+            type: "bar",
+            data: data,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: {
+                        ticks: {
+                            color: "#ececec"
+                        },
+                        grid: {
+                            color: "#2f2f2f"
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: "#ececec"
+                        },
+                        grid: {
+                            color: "#2f2f2f"
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
         return;
     }
 
@@ -2804,6 +3084,7 @@ async function loadChatsFromDatabase() {
 document.addEventListener("DOMContentLoaded", () => {
     loadChatsFromDatabase();
     loadSlashCommands();
+    refreshDevices();
 });
 
 async function saveMessageToDatabase(

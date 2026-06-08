@@ -81,3 +81,26 @@ get_recent_device_logs(device_id, time_range)
 ```
 
 Each tool should apply explicit filters, limits, and output shaping before data reaches the model.
+
+## Platform Source Switch
+
+The Devices screen can switch between:
+
+```text
+Simulator
+Company DB
+```
+
+When Company DB is selected, the backend reads raw company MongoDB operational records and marks:
+
+```json
+{
+  "rules_status": "not_configured"
+}
+```
+
+The Alerts screen must not derive warning or critical alerts from raw company records until approved business rules or Grafana tools are available.
+
+If the company database is unavailable, the API returns an explicit simulator fallback state instead of silently pretending the data is real.
+
+Manual threshold prompts are supported as evidence scans over raw payloads, not official company alerts.

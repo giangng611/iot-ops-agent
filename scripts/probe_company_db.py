@@ -12,6 +12,7 @@ load_dotenv(ROOT / ".env")
 from services.company_data_service import (  # noqa: E402
     company_db_type,
     inspect_company_mongo_collection_schema,
+    inspect_company_mongo_payload_schema,
     preview_company_mongo_collection,
     preview_company_table,
     probe_company_db,
@@ -46,6 +47,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--inspect-payload",
+        help=(
+            "Inspect JSON payload field paths and types without printing values. "
+            "MongoDB only, in database.collection format."
+        ),
+    )
+    parser.add_argument(
+        "--payload-field",
+        default="con",
+        help="MongoDB payload field to inspect. Default: con.",
+    )
+    parser.add_argument(
         "--preview-limit",
         type=int,
         default=5,
@@ -53,7 +66,20 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.inspect:
+    if args.inspect_payload:
+        if "." not in args.inspect_payload:
+            raise RuntimeError(
+                "--inspect-payload must use database.collection format."
+            )
+
+        database_name, collection_name = args.inspect_payload.split(".", 1)
+        payload = inspect_company_mongo_payload_schema(
+            database_name,
+            collection_name,
+            args.payload_field,
+            args.preview_limit,
+        )
+    elif args.inspect:
         if "." not in args.inspect:
             raise RuntimeError("--inspect must use database.collection format.")
 

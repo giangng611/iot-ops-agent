@@ -1,5 +1,6 @@
 import os
 import re
+import json
 
 import psycopg
 from psycopg.rows import dict_row
@@ -20,6 +21,7 @@ MAX_COLUMNS = 24
 MAX_MONGO_FIELDS = 32
 MAX_SCHEMA_SAMPLE_DOCUMENTS = 20
 MAX_SCHEMA_FIELD_PATHS = 120
+MAX_PAYLOAD_CHARS_TO_PARSE = 20000
 
 
 def get_company_db_url():
@@ -216,6 +218,21 @@ def collect_field_types(value, path, fields):
         collect_field_types(value[0], f"{path}[]" if path else "[]", fields)
 
 
+def parse_payload_value(value):
+    if not isinstance(value, str):
+        return value
+
+    compact_value = value.strip()
+
+    if not compact_value or len(compact_value) > MAX_PAYLOAD_CHARS_TO_PARSE:
+        return None
+
+    try:
+        return json.loads(compact_value)
+    except ValueError:
+        return None
+
+
 def preview_company_table(schema_name, table_name, limit=DEFAULT_PREVIEW_LIMIT):
     validate_identifier(schema_name, "schema name")
     validate_identifier(table_name, "table name")
@@ -361,6 +378,65 @@ def inspect_company_mongo_collection_schema(
             "collection": collection_name,
             "sampled_documents": len(rows),
             "fields": [
+                {
+                    "path": path,
+                    "types": sorted(value["types"]),
+                    "sample_count": value["count"],
+                }
+                for path, value in sorted(fields.items())
+            ][:MAX_SCHEMA_FIELD_PATHS],
+        }
+
+
+def inspect_company_mongo_payload_schema(
+    database_name,
+    collection_name,
+    payload_field="con",
+    sample_limit=DEFAULT_PREVIEW_LIMIT,
+):
+    validate_identifier(database_name, "database name")
+    validate_identifier(collection_name, "collection name")
+    validate_identifier(payload_field, "payload field")
+    safe_limit = max(1, min(int(sample_limit), MAX_SCHEMA_SAMPLE_DOCUMENTS))
+
+    with get_company_mongo_client() as client:
+        collection = client[database_name][collection_name]
+        rows = list(
+            collection.find(
+                {payload_field: {"$exists": True}},
+                {"_id": 0, payload_field: 1, "cnf": 1},
+            )
+            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
+            .limit(safe_limit)
+        )
+        fields = {}
+        parseable_count = 0
+        content_formats = {}
+
+        for row in rows:
+            content_format = row.get("cnf")
+
+            if content_format:
+                content_formats[content_format] = (
+                    content_formats.get(content_format, 0) + 1
+                )
+
+            parsed_payload = parse_payload_value(row.get(payload_field))
+
+            if parsed_payload is None:
+                continue
+
+            parseable_count += 1
+            collect_field_types(parsed_payload, "", fields)
+
+        return {
+            "database": database_name,
+            "collection": collection_name,
+            "payload_field": payload_field,
+            "sampled_documents": len(rows),
+            "parseable_payloads": parseable_count,
+            "content_formats": content_formats,
+            "payload_fields": [
                 {
                     "path": path,
                     "types": sorted(value["types"]),

@@ -51,6 +51,13 @@ python3 scripts/probe_company_db.py --inspect datamgmt.CNT --preview-limit 10
 python3 scripts/probe_company_db.py --inspect datamgmt.CIN --preview-limit 10
 ```
 
+To inspect a JSON payload field such as oneM2M `CIN.con` without printing
+payload values:
+
+```bash
+python3 scripts/probe_company_db.py --inspect-payload datamgmt.CIN --payload-field con --preview-limit 20
+```
+
 Guardrails:
 
 - read-only transaction

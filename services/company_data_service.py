@@ -18,6 +18,8 @@ MAX_PREVIEW_LIMIT = 20
 MAX_TEXT_VALUE_CHARS = 160
 MAX_COLUMNS = 24
 MAX_MONGO_FIELDS = 32
+MAX_SCHEMA_SAMPLE_DOCUMENTS = 20
+MAX_SCHEMA_FIELD_PATHS = 120
 
 
 def get_company_db_url():
@@ -169,6 +171,51 @@ def trim_document(value):
     return trim_value(value)
 
 
+def describe_value_type(value):
+    if value is None:
+        return "null"
+
+    if isinstance(value, bool):
+        return "bool"
+
+    if isinstance(value, int):
+        return "int"
+
+    if isinstance(value, float):
+        return "float"
+
+    if isinstance(value, str):
+        return "str"
+
+    if isinstance(value, dict):
+        return "object"
+
+    if isinstance(value, list):
+        return "array"
+
+    return type(value).__name__
+
+
+def collect_field_types(value, path, fields):
+    if len(fields) >= MAX_SCHEMA_FIELD_PATHS:
+        return
+
+    value_type = describe_value_type(value)
+
+    if path:
+        field = fields.setdefault(path, {"types": set(), "count": 0})
+        field["types"].add(value_type)
+        field["count"] += 1
+
+    if isinstance(value, dict):
+        for key, nested_value in list(value.items())[:MAX_MONGO_FIELDS]:
+            nested_path = f"{path}.{key}" if path else key
+            collect_field_types(nested_value, nested_path, fields)
+
+    if isinstance(value, list) and value:
+        collect_field_types(value[0], f"{path}[]" if path else "[]", fields)
+
+
 def preview_company_table(schema_name, table_name, limit=DEFAULT_PREVIEW_LIMIT):
     validate_identifier(schema_name, "schema name")
     validate_identifier(table_name, "table name")
@@ -285,6 +332,42 @@ def preview_company_mongo_collection(
             "collection": collection_name,
             "limit": safe_limit,
             "documents": [trim_document(row) for row in rows],
+        }
+
+
+def inspect_company_mongo_collection_schema(
+    database_name,
+    collection_name,
+    sample_limit=DEFAULT_PREVIEW_LIMIT,
+):
+    validate_identifier(database_name, "database name")
+    validate_identifier(collection_name, "collection name")
+    safe_limit = max(1, min(int(sample_limit), MAX_SCHEMA_SAMPLE_DOCUMENTS))
+
+    with get_company_mongo_client() as client:
+        collection = client[database_name][collection_name]
+        rows = list(
+            collection.find({}, {"_id": 0})
+            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
+            .limit(safe_limit)
+        )
+        fields = {}
+
+        for row in rows:
+            collect_field_types(row, "", fields)
+
+        return {
+            "database": database_name,
+            "collection": collection_name,
+            "sampled_documents": len(rows),
+            "fields": [
+                {
+                    "path": path,
+                    "types": sorted(value["types"]),
+                    "sample_count": value["count"],
+                }
+                for path, value in sorted(fields.items())
+            ][:MAX_SCHEMA_FIELD_PATHS],
         }
 
 

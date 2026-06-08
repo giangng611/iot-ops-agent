@@ -3,6 +3,7 @@ import re
 
 import psycopg
 from psycopg.rows import dict_row
+from pymongo import MongoClient
 
 from storage.sqlite_store import (
     get_all_latest_devices as get_sqlite_latest_devices,
@@ -16,6 +17,7 @@ DEFAULT_PREVIEW_LIMIT = 5
 MAX_PREVIEW_LIMIT = 20
 MAX_TEXT_VALUE_CHARS = 160
 MAX_COLUMNS = 24
+MAX_MONGO_FIELDS = 32
 
 
 def get_company_db_url():
@@ -26,8 +28,30 @@ def get_company_db_url():
     )
 
 
+def get_company_mongodb_uri():
+    return (
+        os.getenv("COMPANY_MONGODB_URI")
+        or os.getenv("COMPANY_MONGO_URI")
+        or os.getenv("IOT_PLATFORM_MONGODB_URI")
+    )
+
+
+def get_company_mongodb_db():
+    return os.getenv("COMPANY_MONGODB_DB", "").strip()
+
+
 def company_db_configured():
-    return bool(get_company_db_url())
+    return bool(get_company_db_url() or get_company_mongodb_uri())
+
+
+def company_db_type():
+    if get_company_mongodb_uri():
+        return "mongodb"
+
+    if get_company_db_url():
+        return "postgres"
+
+    return "none"
 
 
 def get_company_connection():
@@ -45,6 +69,26 @@ def get_company_connection():
         row_factory=dict_row,
         prepare_threshold=None,
     )
+
+
+def get_company_mongo_client():
+    uri = get_company_mongodb_uri()
+
+    if not uri:
+        raise RuntimeError(
+            "COMPANY_MONGODB_URI, COMPANY_MONGO_URI, or "
+            "IOT_PLATFORM_MONGODB_URI is not configured."
+        )
+
+    timeout_ms = int(os.getenv("COMPANY_DB_CONNECT_TIMEOUT_SECONDS", "5")) * 1000
+    client = MongoClient(
+        uri,
+        serverSelectionTimeoutMS=timeout_ms,
+        connectTimeoutMS=timeout_ms,
+        socketTimeoutMS=int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")),
+    )
+    client.admin.command("ping")
+    return client
 
 
 def set_read_only_guardrails(cursor):
@@ -112,6 +156,19 @@ def trim_value(value):
     return value
 
 
+def trim_document(value):
+    if isinstance(value, dict):
+        return {
+            key: trim_document(nested_value)
+            for key, nested_value in list(value.items())[:MAX_MONGO_FIELDS]
+        }
+
+    if isinstance(value, list):
+        return [trim_document(item) for item in value[:10]]
+
+    return trim_value(value)
+
+
 def preview_company_table(schema_name, table_name, limit=DEFAULT_PREVIEW_LIMIT):
     validate_identifier(schema_name, "schema name")
     validate_identifier(table_name, "table name")
@@ -168,6 +225,69 @@ def preview_company_table(schema_name, table_name, limit=DEFAULT_PREVIEW_LIMIT):
             }
 
 
+def list_company_mongo_collections(limit=DEFAULT_TABLE_LIMIT):
+    safe_limit = max(1, min(int(limit), 100))
+    configured_db = get_company_mongodb_db()
+
+    with get_company_mongo_client() as client:
+        database_names = (
+            [configured_db]
+            if configured_db
+            else [
+                name for name in client.list_database_names()
+                if name not in {"admin", "config", "local"}
+            ]
+        )
+        collections = []
+
+        for database_name in database_names:
+            database = client[database_name]
+
+            for collection_name in database.list_collection_names()[:safe_limit]:
+                stats = database.command(
+                    "collStats",
+                    collection_name,
+                    scale=1,
+                    maxTimeMS=int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")),
+                )
+                collections.append({
+                    "database": database_name,
+                    "collection": collection_name,
+                    "estimated_documents": stats.get("count", 0),
+                    "avg_document_size": stats.get("avgObjSize"),
+                })
+
+                if len(collections) >= safe_limit:
+                    return collections
+
+        return collections
+
+
+def preview_company_mongo_collection(
+    database_name,
+    collection_name,
+    limit=DEFAULT_PREVIEW_LIMIT,
+):
+    validate_identifier(database_name, "database name")
+    validate_identifier(collection_name, "collection name")
+    safe_limit = max(1, min(int(limit), MAX_PREVIEW_LIMIT))
+
+    with get_company_mongo_client() as client:
+        collection = client[database_name][collection_name]
+        rows = list(
+            collection.find({}, {"_id": 0})
+            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
+            .limit(safe_limit)
+        )
+
+        return {
+            "database": database_name,
+            "collection": collection_name,
+            "limit": safe_limit,
+            "documents": [trim_document(row) for row in rows],
+        }
+
+
 def simulator_fallback_snapshot(reason):
     devices = get_sqlite_latest_devices()
     unhealthy = [
@@ -222,6 +342,13 @@ def probe_company_db(table_limit=DEFAULT_TABLE_LIMIT):
         return simulator_fallback_snapshot("Company DB URL is not configured.")
 
     try:
+        if company_db_type() == "mongodb":
+            collections = list_company_mongo_collections(table_limit)
+            return {
+                "source": "company_mongodb",
+                "collections": collections,
+            }
+
         tables = list_company_tables(table_limit)
     except Exception as exc:
         return simulator_fallback_snapshot(

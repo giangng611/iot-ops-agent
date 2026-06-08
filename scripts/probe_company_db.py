@@ -10,6 +10,8 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 from services.company_data_service import (  # noqa: E402
+    company_db_type,
+    preview_company_mongo_collection,
     preview_company_table,
     probe_company_db,
 )
@@ -30,7 +32,10 @@ def main():
     )
     parser.add_argument(
         "--preview",
-        help="Optional table preview in schema.table format.",
+        help=(
+            "Optional preview target. Use schema.table for Postgres or "
+            "database.collection for MongoDB."
+        ),
     )
     parser.add_argument(
         "--preview-limit",
@@ -42,14 +47,24 @@ def main():
 
     if args.preview:
         if "." not in args.preview:
-            raise RuntimeError("--preview must use schema.table format.")
+            raise RuntimeError(
+                "--preview must use schema.table or database.collection format."
+            )
 
-        schema_name, table_name = args.preview.split(".", 1)
-        payload = preview_company_table(
-            schema_name,
-            table_name,
-            args.preview_limit,
-        )
+        namespace, object_name = args.preview.split(".", 1)
+
+        if company_db_type() == "mongodb":
+            payload = preview_company_mongo_collection(
+                namespace,
+                object_name,
+                args.preview_limit,
+            )
+        else:
+            payload = preview_company_table(
+                namespace,
+                object_name,
+                args.preview_limit,
+            )
     else:
         payload = probe_company_db(args.table_limit)
 

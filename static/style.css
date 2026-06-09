@@ -1233,10 +1233,55 @@ pre {
     color: #bae6fd;
 }
 
-.drawer-select {
+.data-source-segmented {
+    background: #111111;
+    border: 1px solid #3f3f46;
+    border-radius: 8px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    isolation: isolate;
+    margin-top: 14px;
+    padding: 4px;
+    position: relative;
+}
+
+.data-source-segmented::before {
+    background: #f4f4f5;
+    border-radius: 6px;
+    content: "";
+    inset: 4px auto 4px 4px;
+    position: absolute;
+    transition: transform 180ms ease;
+    width: calc(50% - 4px);
+    z-index: 0;
+}
+
+.data-source-segmented[data-selected="simulator"]::before {
+    transform: translateX(100%);
+}
+
+.data-source-segmented button {
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    color: #a1a1aa;
+    font-size: 13px;
+    font-weight: 700;
     height: 42px;
-    margin-top: 10px;
+    padding: 0 10px;
+    position: relative;
+    transition: color 180ms ease;
     width: 100%;
+    z-index: 1;
+}
+
+.data-source-segmented button:hover {
+    background: transparent;
+    color: #f4f4f5;
+}
+
+.data-source-segmented button[aria-pressed="true"] {
+    color: #18181b;
 }
 
 .drawer-source-note {
@@ -2826,8 +2871,14 @@ button:disabled {
     font-weight: 700;
 }
 
+.status-on-demand {
+    color: #7dd3fc;
+    font-weight: 700;
+}
+
 .status-online::before,
-.status-offline::before {
+.status-offline::before,
+.status-on-demand::before {
     content: "●";
     margin-right: 6px;
 }

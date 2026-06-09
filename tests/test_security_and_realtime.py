@@ -118,6 +118,31 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             postgres_store._pool = original_pool
             postgres_store._pool_url = original_pool_url
 
+    def test_postgres_timeouts_are_applied_after_pool_checkout(self):
+        connection = MagicMock()
+        connection_context = MagicMock()
+        connection_context.__enter__.return_value = connection
+        connection_context.__exit__.return_value = False
+
+        with patch.dict(os.environ, {
+            "POSTGRES_STATEMENT_TIMEOUT_MS": "4500",
+            "POSTGRES_LOCK_TIMEOUT_MS": "2500",
+        }):
+            with postgres_store.PostgresConnectionContext(
+                connection_context
+            ) as checked_out_connection:
+                self.assertIs(checked_out_connection, connection)
+
+        cursor = connection.cursor.return_value.__enter__.return_value
+        query_args = cursor.execute.call_args.args
+        self.assertIn("set_config('statement_timeout'", query_args[0])
+        self.assertEqual(query_args[1], ("4500ms", "2500ms"))
+        connection_context.__exit__.assert_called_once_with(
+            None,
+            None,
+            None,
+        )
+
     def test_postgres_circuit_breaker_uses_sqlite_after_failure(self):
         postgres_calls = []
         sqlite_calls = []

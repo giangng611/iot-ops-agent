@@ -1,5 +1,6 @@
 import atexit
 import os
+import sys
 
 try:
     import psycopg
@@ -17,13 +18,19 @@ _pool = None
 _pool_url = None
 
 
+def get_postgres_runtime_timeouts():
+    return {
+        "statement_timeout_ms": int(
+            os.getenv("POSTGRES_STATEMENT_TIMEOUT_MS", "4000")
+        ),
+        "lock_timeout_ms": int(
+            os.getenv("POSTGRES_LOCK_TIMEOUT_MS", "3000")
+        ),
+    }
+
+
 def get_postgres_connection_kwargs():
-    statement_timeout_ms = int(
-        os.getenv("POSTGRES_STATEMENT_TIMEOUT_MS", "4000")
-    )
-    lock_timeout_ms = int(
-        os.getenv("POSTGRES_LOCK_TIMEOUT_MS", "3000")
-    )
+    timeouts = get_postgres_runtime_timeouts()
 
     return {
         "row_factory": dict_row,
@@ -32,10 +39,51 @@ def get_postgres_connection_kwargs():
             os.getenv("POSTGRES_CONNECT_TIMEOUT_SECONDS", "5")
         ),
         "options": (
-            f"-c statement_timeout={statement_timeout_ms} "
-            f"-c lock_timeout={lock_timeout_ms}"
+            f"-c statement_timeout={timeouts['statement_timeout_ms']} "
+            f"-c lock_timeout={timeouts['lock_timeout_ms']}"
         ),
     }
+
+
+def apply_postgres_runtime_timeouts(conn):
+    timeouts = get_postgres_runtime_timeouts()
+
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            select
+                set_config('statement_timeout', %s, true),
+                set_config('lock_timeout', %s, true)
+            """,
+            (
+                f"{timeouts['statement_timeout_ms']}ms",
+                f"{timeouts['lock_timeout_ms']}ms",
+            ),
+        )
+
+
+class PostgresConnectionContext:
+    def __init__(self, connection_context):
+        self.connection_context = connection_context
+        self.connection = None
+
+    def __enter__(self):
+        self.connection = self.connection_context.__enter__()
+
+        try:
+            apply_postgres_runtime_timeouts(self.connection)
+        except Exception:
+            self.connection_context.__exit__(*sys.exc_info())
+            raise
+
+        return self.connection
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return self.connection_context.__exit__(
+            exc_type,
+            exc_value,
+            traceback,
+        )
 
 
 def close_postgres_pool():
@@ -101,11 +149,17 @@ def get_postgres_connection():
             )
             _pool_url = url
 
-        return _pool.connection(
-            timeout=float(os.getenv("POSTGRES_POOL_TIMEOUT_SECONDS", "5"))
+        return PostgresConnectionContext(
+            _pool.connection(
+                timeout=float(
+                    os.getenv("POSTGRES_POOL_TIMEOUT_SECONDS", "5")
+                )
+            )
         )
 
-    return psycopg.connect(url, **get_postgres_connection_kwargs())
+    return PostgresConnectionContext(
+        psycopg.connect(url, **get_postgres_connection_kwargs())
+    )
 
 
 def apply_schema(schema_path):

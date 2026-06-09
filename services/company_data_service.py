@@ -25,6 +25,7 @@ MAX_PAYLOAD_CHARS_TO_PARSE = 20000
 DEFAULT_OPERATIONAL_RECORD_LIMIT = 30
 MAX_THRESHOLD_SCAN_RECORDS = 80
 MAX_THRESHOLD_MATCHES = 20
+MAX_DISPLAY_METRICS = 8
 
 
 def get_company_db_url():
@@ -241,6 +242,43 @@ def collect_numeric_values(value, path, values):
     if isinstance(value, list):
         for index, item in enumerate(value[:10]):
             collect_numeric_values(item, f"{path}[{index}]", values)
+
+
+def collect_display_metrics(value, path, metrics):
+    if len(metrics) >= MAX_DISPLAY_METRICS:
+        return
+
+    if isinstance(value, bool):
+        metrics.append({
+            "name": path or "value",
+            "value": value,
+            "type": "bool",
+        })
+        return
+
+    if isinstance(value, (int, float, str)):
+        metrics.append({
+            "name": path or "value",
+            "value": trim_value(value),
+            "type": describe_value_type(value),
+        })
+        return
+
+    if isinstance(value, dict):
+        for key, nested_value in list(value.items())[:MAX_MONGO_FIELDS]:
+            nested_path = f"{path}.{key}" if path else key
+            collect_display_metrics(nested_value, nested_path, metrics)
+
+            if len(metrics) >= MAX_DISPLAY_METRICS:
+                break
+        return
+
+    if isinstance(value, list):
+        for index, item in enumerate(value[:5]):
+            collect_display_metrics(item, f"{path}[{index}]", metrics)
+
+            if len(metrics) >= MAX_DISPLAY_METRICS:
+                break
 
 
 def parse_payload_value(value):
@@ -516,6 +554,54 @@ def summarize_payload(payload):
     }
 
 
+def extract_display_metrics(payload):
+    parsed_payload = parse_payload_value(payload)
+    metrics = []
+
+    if isinstance(parsed_payload, dict):
+        element_list = (
+            parsed_payload.get("elements")
+            or parsed_payload.get("e")
+            or parsed_payload.get("measurements")
+        )
+
+        if isinstance(element_list, list):
+            for element in element_list[:MAX_DISPLAY_METRICS]:
+                if not isinstance(element, dict):
+                    continue
+
+                name = (
+                    element.get("name")
+                    or element.get("n")
+                    or element.get("key")
+                    or element.get("metric")
+                )
+                value = (
+                    element.get("value")
+                    if "value" in element
+                    else element.get("v")
+                    if "v" in element
+                    else element.get("sv")
+                    if "sv" in element
+                    else element.get("bv")
+                )
+
+                if name and value is not None:
+                    metrics.append({
+                        "name": str(name),
+                        "value": trim_value(value),
+                        "type": describe_value_type(value),
+                    })
+
+            if metrics:
+                return metrics
+
+    if parsed_payload is not None:
+        collect_display_metrics(parsed_payload, "", metrics)
+
+    return metrics
+
+
 def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
     safe_limit = max(1, min(int(limit), 100))
     database_name = os.getenv("COMPANY_OPERATIONAL_DB", "datamgmt")
@@ -569,6 +655,7 @@ def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
             "tenant_name": row.get("tenantName"),
             "app_domain_name": row.get("appDomainName"),
             "payload_summary": payload_summary,
+            "metrics": extract_display_metrics(row.get("con")),
         })
 
     return records

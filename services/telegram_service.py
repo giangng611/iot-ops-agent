@@ -272,6 +272,19 @@ def merge_stream_event(steps, event):
 
 
 def handle_telegram_update(update, langgraph_agent, emit_user_event=None):
+    return process_telegram_update(
+        update,
+        langgraph_agent,
+        emit_user_event=emit_user_event,
+    )
+
+
+def process_telegram_update(
+    update,
+    langgraph_agent,
+    emit_user_event=None,
+    get_user_data_source=None,
+):
     message = extract_message(update)
 
     if message is None:
@@ -319,8 +332,16 @@ def handle_telegram_update(update, langgraph_agent, emit_user_event=None):
                 steps = []
                 final_answer = "No answer was generated."
                 token_usage = None
+                data_source = (
+                    get_user_data_source(history_user_id)
+                    if get_user_data_source
+                    else "simulator"
+                )
 
-                for stream_event in langgraph_agent.run_stream(prompt):
+                for stream_event in langgraph_agent.run_stream(
+                    prompt,
+                    data_source=data_source,
+                ):
                     merge_stream_event(steps, stream_event)
 
                     if stream_event.get("type") == "final":
@@ -383,6 +404,31 @@ def handle_telegram_update(update, langgraph_agent, emit_user_event=None):
 
     complete_telegram_update(update_key)
     return result
+
+
+def process_telegram_update_in_background(
+    update,
+    langgraph_agent,
+    emit_user_event=None,
+    get_user_data_source=None,
+):
+    def run():
+        try:
+            process_telegram_update(
+                update,
+                langgraph_agent,
+                emit_user_event=emit_user_event,
+                get_user_data_source=get_user_data_source,
+            )
+        except Exception as exc:
+            print(f"Telegram background processing failed: {exc}")
+
+    worker = threading.Thread(
+        target=run,
+        name=f"telegram-update-{update.get('update_id', 'unknown')}",
+        daemon=True,
+    )
+    worker.start()
 
 
 def build_set_webhook_payload(public_base_url):

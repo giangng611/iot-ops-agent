@@ -1,5 +1,7 @@
 import os
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -21,6 +23,7 @@ import storage.mongo_store as mongo_store  # noqa: E402
 import storage.postgres_store as postgres_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
 import services.telegram_service as telegram_service  # noqa: E402
+import routes.telemetry_routes as telemetry_routes  # noqa: E402
 from services.company_data_service import extract_display_metrics  # noqa: E402
 from storage.relational_store import (  # noqa: E402
     add_message,
@@ -38,6 +41,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         relational_store._postgres_circuit_open_until = 0.0
         telegram_service._telegram_updates_inflight.clear()
         telegram_service._telegram_updates_processed.clear()
+        telemetry_routes._user_data_sources.clear()
         for postgres_url_var in ("SUPABASE_DB_URL", "DATABASE_URL", "POSTGRES_URL"):
             os.environ.pop(postgres_url_var, None)
         init_db()
@@ -502,7 +506,13 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             )
 
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json()["status"], "help_sent")
+            self.assertEqual(response.get_json()["status"], "accepted")
+            deadline = time.monotonic() + 1
+
+            while not mock_post.called and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+            self.assertTrue(mock_post.called)
             sent_payload = mock_post.call_args.kwargs["json"]
             self.assertEqual(sent_payload["chat_id"], 123)
             self.assertIn("/diagnose system issue", sent_payload["text"])
@@ -524,6 +534,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             app_module.app,
             flask_test_client=self.client,
         )
+        telemetry_routes.remember_user_data_source(user["id"], "company")
 
         stream_events = [
             {
@@ -555,24 +566,32 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             return_value=iter(stream_events),
         ) as mock_run_stream:
             try:
-                response = self.client.post(
-                    "/api/telegram/webhook",
-                    headers={"X-Telegram-Bot-Api-Secret-Token": "expected-secret"},
-                    json={
+                payload = telegram_service.process_telegram_update(
+                    {
                         "message": {
                             "chat": {"id": 123},
                             "from": {"id": 456, "username": "ops_user"},
                             "text": "/overview system health",
-                        }
+                        },
                     },
+                    app_module.langgraph_agent,
+                    emit_user_event=lambda user_id, event, data: (
+                        app_module.socketio.emit(
+                            event,
+                            data,
+                            to=f"user:{user_id}",
+                        )
+                    ),
+                    get_user_data_source=(
+                        app_module.get_user_selected_data_source
+                    ),
                 )
 
-                self.assertEqual(response.status_code, 200)
-                payload = response.get_json()
                 self.assertEqual(payload["status"], "answered")
                 self.assertTrue(payload["history_chat_id"])
                 mock_run_stream.assert_called_once_with(
-                    "/overview system health"
+                    "/overview system health",
+                    data_source="company",
                 )
 
                 messages = get_messages(payload["history_chat_id"])
@@ -631,34 +650,86 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             return_value=iter(stream_events),
         ) as mock_run_stream:
             try:
-                first_response = self.client.post(
-                    "/api/telegram/webhook",
-                    headers={
-                        "X-Telegram-Bot-Api-Secret-Token": "expected-secret"
-                    },
-                    json=update,
+                first_response = telegram_service.process_telegram_update(
+                    update,
+                    app_module.langgraph_agent,
                 )
-                duplicate_response = self.client.post(
-                    "/api/telegram/webhook",
-                    headers={
-                        "X-Telegram-Bot-Api-Secret-Token": "expected-secret"
-                    },
-                    json=update,
+                duplicate_response = telegram_service.process_telegram_update(
+                    update,
+                    app_module.langgraph_agent,
                 )
 
-                self.assertEqual(first_response.get_json()["status"], "answered")
+                self.assertEqual(first_response["status"], "answered")
                 self.assertEqual(
-                    duplicate_response.get_json()["status"],
+                    duplicate_response["status"],
                     "duplicate",
                 )
                 mock_run_stream.assert_called_once_with(
-                    "/overview system health"
+                    "/overview system health",
+                    data_source="simulator",
                 )
                 self.assertEqual(mock_post.call_count, 1)
             finally:
                 os.environ.pop("TELEGRAM_BOT_TOKEN", None)
                 os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
                 os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
+
+    def test_telegram_webhook_returns_before_background_work_finishes(self):
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
+        processing_started = threading.Event()
+        release_processing = threading.Event()
+
+        def blocked_processing(*args, **kwargs):
+            processing_started.set()
+            release_processing.wait(timeout=1)
+
+        try:
+            with patch(
+                "services.telegram_service.process_telegram_update",
+                side_effect=blocked_processing,
+            ):
+                started_at = time.monotonic()
+                response = self.client.post(
+                    "/api/telegram/webhook",
+                    headers={
+                        "X-Telegram-Bot-Api-Secret-Token": "expected-secret"
+                    },
+                    json={"update_id": 123},
+                )
+                elapsed = time.monotonic() - started_at
+                self.assertTrue(processing_started.wait(timeout=0.2))
+
+                health_started_at = time.monotonic()
+                health_response = self.client.get(
+                    "/api/telegram/webhook-info"
+                )
+                health_elapsed = time.monotonic() - health_started_at
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["status"], "accepted")
+            self.assertLess(elapsed, 0.2)
+            self.assertEqual(health_response.status_code, 200)
+            self.assertLess(health_elapsed, 0.2)
+        finally:
+            release_processing.set()
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+            os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
+
+    def test_data_source_selection_is_remembered_for_telegram_user(self):
+        user = self.create_user_once("source-user", "source-pass")
+        self.login_as(user)
+
+        response = self.client.post(
+            "/api/data-source",
+            json={"selected_source": "company"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            app_module.get_user_selected_data_source(user["id"]),
+            "company",
+        )
 
     def test_storage_status_api_reports_backend_shape(self):
         user = self.create_user_once("storage-api-user", "storage-pass")

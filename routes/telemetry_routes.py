@@ -1,6 +1,8 @@
+import threading
+
 from flask import Blueprint, jsonify, request, session
 
-from routes.helpers import require_login_json
+from routes.helpers import current_user_id, require_login_json
 from services.telemetry_service import (
     get_device_history_payload,
     get_devices_payload,
@@ -12,10 +14,28 @@ from services.telemetry_service import (
 
 
 telemetry_bp = Blueprint("telemetry", __name__)
+_user_data_source_lock = threading.Lock()
+_user_data_sources = {}
 
 
 def get_selected_data_source():
     return session.get("selected_data_source", "simulator")
+
+
+def remember_user_data_source(user_id, selected_source):
+    if user_id is None:
+        return
+
+    with _user_data_source_lock:
+        _user_data_sources[int(user_id)] = selected_source
+
+
+def get_user_selected_data_source(user_id):
+    if user_id is None:
+        return "simulator"
+
+    with _user_data_source_lock:
+        return _user_data_sources.get(int(user_id), "simulator")
 
 
 @telemetry_bp.route("/api/devices", methods=["GET"])
@@ -25,7 +45,10 @@ def get_devices():
     if unauthorized:
         return unauthorized
 
-    return jsonify(get_devices_payload(get_selected_data_source()))
+    selected_source = get_selected_data_source()
+    remember_user_data_source(current_user_id(), selected_source)
+
+    return jsonify(get_devices_payload(selected_source))
 
 
 @telemetry_bp.route("/api/data-source", methods=["GET", "POST"])
@@ -44,8 +67,11 @@ def data_source():
 
         session["selected_data_source"] = selected_source
 
+    selected_source = get_selected_data_source()
+    remember_user_data_source(current_user_id(), selected_source)
+
     return jsonify({
-        "selected_source": get_selected_data_source(),
+        "selected_source": selected_source,
     })
 
 

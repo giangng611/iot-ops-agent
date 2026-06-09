@@ -3,8 +3,8 @@ import os
 from flask import Blueprint, jsonify, request
 
 from services.telegram_service import (
-    handle_telegram_update,
     get_telegram_secret_token,
+    process_telegram_update_in_background,
     telegram_enabled,
     telegram_secret_is_valid,
 )
@@ -14,6 +14,7 @@ def create_telegram_blueprint(runtime):
     telegram_bp = Blueprint("telegram", __name__)
     langgraph_agent = runtime["langgraph_agent"]
     emit_user_event = runtime.get("emit_user_event")
+    get_user_data_source = runtime.get("get_user_data_source")
 
     @telegram_bp.route("/api/telegram/webhook", methods=["POST"])
     def telegram_webhook():
@@ -26,13 +27,14 @@ def create_telegram_blueprint(runtime):
             return jsonify({"error": "Invalid Telegram webhook secret."}), 403
 
         update = request.get_json(silent=True) or {}
-        result = handle_telegram_update(
+        process_telegram_update_in_background(
             update,
             langgraph_agent,
             emit_user_event=emit_user_event,
+            get_user_data_source=get_user_data_source,
         )
 
-        return jsonify(result)
+        return jsonify({"status": "accepted"})
 
     @telegram_bp.route("/api/telegram/webhook-info", methods=["GET"])
     def telegram_webhook_info():

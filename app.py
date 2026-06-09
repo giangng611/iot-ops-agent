@@ -17,7 +17,10 @@ from routes.helpers import login_required
 from routes.profile_routes import profile_bp
 from routes.prompt_routes import prompt_bp
 from routes.storage_routes import storage_bp
-from routes.telemetry_routes import telemetry_bp
+from routes.telemetry_routes import (
+    get_user_selected_data_source,
+    telemetry_bp,
+)
 from routes.telegram_routes import create_telegram_blueprint
 from storage.relational_store import init_db
 from storage.telemetry_store import (
@@ -110,6 +113,7 @@ app.register_blueprint(create_telegram_blueprint({
         payload,
         to=f"user:{user_id}",
     ),
+    "get_user_data_source": get_user_selected_data_source,
 }))
 app.register_blueprint(prompt_bp)
 app.register_blueprint(profile_bp)

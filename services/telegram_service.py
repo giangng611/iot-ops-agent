@@ -271,6 +271,13 @@ def merge_stream_event(steps, event):
             step["output"] = (event.get("observation") or {}).get("output")
 
 
+def add_telegram_runtime_metadata(token_usage):
+    usage = dict(token_usage or {})
+    usage["runtime_label"] = "IOA v2 · LangGraph"
+    usage["model_name"] = "gpt-4o-mini"
+    return usage
+
+
 def handle_telegram_update(update, langgraph_agent, emit_user_event=None):
     return process_telegram_update(
         update,
@@ -349,7 +356,9 @@ def process_telegram_update(
                             stream_event.get("final_answer")
                             or final_answer
                         )
-                        token_usage = stream_event.get("token_usage")
+                        token_usage = add_telegram_runtime_metadata(
+                            stream_event.get("token_usage")
+                        )
 
                     if (
                         emit_user_event
@@ -422,6 +431,16 @@ def process_telegram_update_in_background(
             )
         except Exception as exc:
             print(f"Telegram background processing failed: {exc}")
+            history_user_id = get_history_user_id()
+
+            if emit_user_event and history_user_id is not None:
+                emit_user_event(
+                    history_user_id,
+                    "telegram_chat_failed",
+                    {
+                        "error": "Telegram request failed.",
+                    },
+                )
 
     worker = threading.Thread(
         target=run,
@@ -429,6 +448,7 @@ def process_telegram_update_in_background(
         daemon=True,
     )
     worker.start()
+    return worker
 
 
 def build_set_webhook_payload(public_base_url):

@@ -95,6 +95,10 @@ def normalize_token_usage(token_usage):
     if usage.get("source"):
         normalized["source"] = usage["source"]
 
+    for metadata_key in ("runtime_label", "model_name"):
+        if usage.get(metadata_key):
+            normalized[metadata_key] = usage[metadata_key]
+
     return normalized
 
 

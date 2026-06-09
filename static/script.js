@@ -76,6 +76,8 @@ socket.on("telegram_chat_started", (data) => {
         return;
     }
 
+    isAgentRunning = true;
+    telegramActiveChatId = chatId;
     currentChatId = chatId;
     latestReasoningSteps = [];
     displayedWorkflowSteps = [];
@@ -99,6 +101,7 @@ socket.on("telegram_chat_started", (data) => {
         </button>
     `;
     loading.classList.remove("hidden");
+    setTelegramRunState(true);
     renderChatHistory();
 });
 
@@ -157,6 +160,10 @@ socket.on("telegram_chat_completed", async (data) => {
     const chatId = Number(data.chat_id);
     const chat = chats.find(item => item.id === chatId);
     const reasoningSteps = Array.isArray(data.steps) ? data.steps : [];
+    const tokenUsage = {
+        ...(inferRuntimeMetadataFromReasoningSteps(reasoningSteps) || {}),
+        ...(data.token_usage || {})
+    };
 
     if (chat && !chat.messages.some(message =>
         message.role === "assistant" &&
@@ -167,13 +174,13 @@ socket.on("telegram_chat_completed", async (data) => {
             content: data.final_answer,
             hasReasoning: reasoningSteps.length > 0,
             reasoningSteps: reasoningSteps,
-            tokenUsage: data.token_usage || null
+            tokenUsage: tokenUsage
         });
     }
 
     if (chatId === currentChatId) {
         latestReasoningSteps = reasoningSteps;
-        latestTokenUsage = data.token_usage || latestTokenUsage;
+        latestTokenUsage = tokenUsage;
         pendingFinalAnswer = data.final_answer;
         workflowFinalized = true;
         document.getElementById("loading").classList.add("hidden");
@@ -191,7 +198,28 @@ socket.on("telegram_chat_completed", async (data) => {
         updateReasoningWorkflowMap(reasoningSteps, true);
     }
 
+    if (chatId === telegramActiveChatId) {
+        setTelegramRunState(false);
+    }
+
     renderChatHistory();
+});
+
+socket.on("telegram_chat_failed", (data) => {
+    if (telegramActiveChatId === null) {
+        return;
+    }
+
+    const loading = document.getElementById("loading");
+    loading.innerHTML = `
+        <span>${escapeHtml(data.error || "Telegram request failed.")}</span>
+    `;
+
+    setTimeout(() => {
+        loading.classList.add("hidden");
+    }, 2500);
+
+    setTelegramRunState(false);
 });
 
 let currentMode = "ioa_v2_langgraph";
@@ -217,6 +245,7 @@ let latestTokenUsage = null;
 let reasoningTypingActive = false;
 let pendingDeleteChatId = null;
 let isAgentRunning = false;
+let telegramActiveChatId = null;
 let slashCommands = [];
 let alertStates = {};
 let promptsData = [];
@@ -4425,6 +4454,33 @@ function waitForAssistantTypingToFinish() {
 
         checkTypingState();
     });
+}
+
+function setTelegramRunState(isRunning) {
+    const input = document.getElementById("messageInput");
+    const runButton = document.querySelector(".run-button");
+
+    isAgentRunning = isRunning;
+    telegramActiveChatId = isRunning ? telegramActiveChatId : null;
+
+    if (input) {
+        input.disabled = isRunning;
+    }
+
+    if (runButton) {
+        runButton.disabled = isRunning;
+        runButton.innerHTML = isRunning
+            ? `
+                Running...
+                <span>Telegram</span>
+            `
+            : `
+                Run
+                <span>Enter ↵</span>
+            `;
+    }
+
+    setAppBusyState(isRunning);
 }
 
 function setAppBusyState(isBusy) {

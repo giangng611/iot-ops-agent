@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import threading
@@ -24,6 +25,7 @@ import storage.postgres_store as postgres_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
 import services.telegram_service as telegram_service  # noqa: E402
 import routes.telemetry_routes as telemetry_routes  # noqa: E402
+from services.chat_service import normalize_token_usage  # noqa: E402
 from services.company_data_service import extract_display_metrics  # noqa: E402
 from storage.relational_store import (  # noqa: E402
     add_message,
@@ -121,6 +123,21 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         finally:
             postgres_store._pool = original_pool
             postgres_store._pool_url = original_pool_url
+
+    def test_token_usage_normalization_preserves_runtime_metadata(self):
+        normalized = normalize_token_usage({
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "runtime_label": "IOA v2 · LangGraph",
+            "model_name": "gpt-4o-mini",
+        })
+
+        self.assertEqual(
+            normalized["runtime_label"],
+            "IOA v2 · LangGraph",
+        )
+        self.assertEqual(normalized["model_name"], "gpt-4o-mini")
 
     def test_postgres_timeouts_are_applied_after_pool_checkout(self):
         connection = MagicMock()
@@ -605,6 +622,13 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                     "check_system_overview",
                     messages[1]["reasoning_steps"],
                 )
+                saved_token_usage = json.loads(
+                    messages[1]["token_usage"]
+                )
+                self.assertEqual(
+                    saved_token_usage["runtime_label"],
+                    "IOA v2 · LangGraph",
+                )
                 socket_events = socket_client.get_received()
                 event_names = [event["name"] for event in socket_events]
                 self.assertEqual(event_names[0], "telegram_chat_started")
@@ -715,6 +739,41 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             release_processing.set()
             os.environ.pop("TELEGRAM_BOT_TOKEN", None)
             os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
+
+    def test_telegram_background_failure_notifies_ui(self):
+        user = self.create_user_once("telegram-failure-user", "failure-pass")
+        os.environ["TELEGRAM_HISTORY_USER_ID"] = str(user["id"])
+        emitted_events = []
+
+        try:
+            with patch(
+                "services.telegram_service.process_telegram_update",
+                side_effect=RuntimeError("simulated agent failure"),
+            ):
+                worker = (
+                    telegram_service.process_telegram_update_in_background(
+                        {"update_id": 999},
+                        app_module.langgraph_agent,
+                        emit_user_event=lambda user_id, event, payload: (
+                            emitted_events.append(
+                                (user_id, event, payload)
+                            )
+                        ),
+                    )
+                )
+                worker.join(timeout=1)
+
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(
+                emitted_events,
+                [(
+                    user["id"],
+                    "telegram_chat_failed",
+                    {"error": "Telegram request failed."},
+                )],
+            )
+        finally:
+            os.environ.pop("TELEGRAM_HISTORY_USER_ID", None)
 
     def test_data_source_selection_is_remembered_for_telegram_user(self):
         user = self.create_user_once("source-user", "source-pass")

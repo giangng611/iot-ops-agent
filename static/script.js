@@ -2983,6 +2983,15 @@ async function openProfileDrawer(type) {
     const profileTab = document.getElementById("profileTab");
 
     profileTab.classList.add("drawer-open");
+    title.textContent = "Loading";
+    subtitle.textContent = "Preparing workspace details.";
+    content.innerHTML = `
+        <div class="chat-load-state">
+            <span></span>
+            <p>Loading...</p>
+        </div>
+    `;
+    drawer.classList.remove("hidden");
 
     if (type === "settings") {
         title.textContent = "Settings";
@@ -3169,14 +3178,6 @@ async function openProfileDrawer(type) {
             window.location.hostname.includes("127.0.0.1")
                 ? "Local development"
                 : "Render deployment";
-        const storageStatus = await fetchStorageStatus();
-        const appDataLabel = storageStatus && storageStatus.app_data
-            ? formatAppDataStatus(storageStatus.app_data)
-            : "Storage status unavailable";
-        const telemetryLabel = storageStatus && storageStatus.telemetry
-            ? formatBackendLabel(storageStatus.telemetry.source)
-            : "Telemetry source unavailable";
-
         content.innerHTML = `
             <div class="drawer-info-list">
                 <div>
@@ -3207,11 +3208,31 @@ async function openProfileDrawer(type) {
 
                 <div>
                     <strong>Storage Layer</strong>
-                    <p>App data: ${appDataLabel}. Telemetry: ${telemetryLabel}.</p>
+                    <p id="workspaceStorageLayer">Checking storage status...</p>
                 </div>
             </div>
         `;
 
+        fetchStorageStatus().then(storageStatus => {
+            const storageElement = document.getElementById(
+                "workspaceStorageLayer"
+            );
+
+            if (!storageElement) {
+                return;
+            }
+
+            const appDataLabel = storageStatus && storageStatus.app_data
+                ? formatAppDataStatus(storageStatus.app_data)
+                : "Storage status unavailable";
+            const telemetryLabel = storageStatus && storageStatus.telemetry
+                ? formatBackendLabel(storageStatus.telemetry.source)
+                : "Telemetry source unavailable";
+
+            storageElement.textContent = (
+                `App data: ${appDataLabel}. Telemetry: ${telemetryLabel}.`
+            );
+        });
         if (realtimeStatusInterval) {
             clearInterval(realtimeStatusInterval);
         }
@@ -3307,7 +3328,6 @@ async function openProfileDrawer(type) {
         loadUsageStats(content);
     }
 
-    drawer.classList.remove("hidden");
 }
 
 function closeProfileDrawer() {
@@ -3736,8 +3756,13 @@ function formatAppDataStatus(status) {
 }
 
 async function fetchStorageStatus() {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
     try {
-        const response = await fetch("/api/storage/status");
+        const response = await fetch("/api/storage/status", {
+            signal: controller.signal
+        });
 
         if (!response.ok) {
             return null;
@@ -3745,8 +3770,12 @@ async function fetchStorageStatus() {
 
         return await response.json();
     } catch (error) {
-        console.error("Failed to load storage status:", error);
+        if (error.name !== "AbortError") {
+            console.error("Failed to load storage status:", error);
+        }
         return null;
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 

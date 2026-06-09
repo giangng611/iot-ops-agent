@@ -104,3 +104,33 @@ The Alerts screen must not derive warning or critical alerts from raw company re
 If the company database is unavailable, the API returns an explicit simulator fallback state instead of silently pretending the data is real.
 
 Manual threshold prompts are supported as evidence scans over raw payloads, not official company alerts.
+
+## What The UI Calls Telemetry
+
+The company database does not currently expose a normalized telemetry table.
+The preview reads recent oneM2M content instances from:
+
+```text
+datamgmt.CIN.con
+```
+
+`con` is application-defined content. The service parses JSON-shaped payloads
+and displays only primitive fields that are actually present. For example,
+`deviceName`, `deviceId`, and `status` are treated as identity or connection
+fields, while values such as `temperature` or `humidity` are shown as additional
+telemetry when they exist.
+
+This extraction is a display adapter, not an approved company data model. It
+does not infer units, health states, device ownership, or alerts.
+
+Before this preview becomes an operational dashboard, confirm:
+
+- which `CNT` containers represent each device and telemetry stream
+- how a `CIN.pi` parent container maps to a device or asset
+- canonical metric names and units
+- which timestamp represents event time versus ingestion time
+- tenant and site ownership rules
+- approved Grafana or company alert rules
+
+Until that contract exists, the platform should keep raw record context visible
+and label alert rules as not configured.

@@ -171,6 +171,13 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertTrue(devices_payload["devices"])
         self.assertEqual(devices_payload["selected_source"], "simulator")
         self.assertEqual(devices_payload["rules_status"], "simulator")
+        self.assertEqual(
+            devices_payload["alerts"]["telemetry_stream_status"],
+            "connected",
+        )
+        self.assertIsNotNone(
+            devices_payload["alerts"]["telemetry_age_seconds"],
+        )
 
         response = self.client.get("/api/telemetry/sensor-001")
         self.assertEqual(response.status_code, 200)

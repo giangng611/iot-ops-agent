@@ -17,6 +17,27 @@ _pool = None
 _pool_url = None
 
 
+def get_postgres_connection_kwargs():
+    statement_timeout_ms = int(
+        os.getenv("POSTGRES_STATEMENT_TIMEOUT_MS", "8000")
+    )
+    lock_timeout_ms = int(
+        os.getenv("POSTGRES_LOCK_TIMEOUT_MS", "3000")
+    )
+
+    return {
+        "row_factory": dict_row,
+        "prepare_threshold": None,
+        "connect_timeout": int(
+            os.getenv("POSTGRES_CONNECT_TIMEOUT_SECONDS", "5")
+        ),
+        "options": (
+            f"-c statement_timeout={statement_timeout_ms} "
+            f"-c lock_timeout={lock_timeout_ms}"
+        ),
+    }
+
+
 def close_postgres_pool():
     global _pool
     global _pool_url
@@ -74,10 +95,7 @@ def get_postgres_connection():
         if _pool is None or _pool_url != url:
             _pool = ConnectionPool(
                 conninfo=url,
-                kwargs={
-                    "row_factory": dict_row,
-                    "prepare_threshold": None,
-                },
+                kwargs=get_postgres_connection_kwargs(),
                 min_size=int(os.getenv("POSTGRES_POOL_MIN_SIZE", "1")),
                 max_size=int(os.getenv("POSTGRES_POOL_MAX_SIZE", "5")),
             )
@@ -87,7 +105,7 @@ def get_postgres_connection():
             timeout=float(os.getenv("POSTGRES_POOL_TIMEOUT_SECONDS", "5"))
         )
 
-    return psycopg.connect(url, row_factory=dict_row, prepare_threshold=None)
+    return psycopg.connect(url, **get_postgres_connection_kwargs())
 
 
 def apply_schema(schema_path):

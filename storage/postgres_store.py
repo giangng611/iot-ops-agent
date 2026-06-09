@@ -83,7 +83,9 @@ def get_postgres_connection():
             )
             _pool_url = url
 
-        return _pool.connection()
+        return _pool.connection(
+            timeout=float(os.getenv("POSTGRES_POOL_TIMEOUT_SECONDS", "5"))
+        )
 
     return psycopg.connect(url, row_factory=dict_row, prepare_threshold=None)
 

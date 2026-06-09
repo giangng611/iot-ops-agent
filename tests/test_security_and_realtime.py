@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 os.environ.setdefault("FLASK_SECRET_KEY", "test-secret-key")
@@ -18,6 +18,7 @@ os.chdir(_TEMP_DIR.name)
 
 import app as app_module  # noqa: E402
 import storage.mongo_store as mongo_store  # noqa: E402
+import storage.postgres_store as postgres_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
 from services.company_data_service import extract_display_metrics  # noqa: E402
 from storage.relational_store import (  # noqa: E402
@@ -78,6 +79,40 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             with self.subTest(path=path):
                 response = getattr(self.client, method)(path, **kwargs)
                 self.assertEqual(response.status_code, 401)
+
+    def test_postgres_connections_apply_query_timeouts(self):
+        original_pool = postgres_store._pool
+        original_pool_url = postgres_store._pool_url
+        fake_pool = MagicMock()
+        fake_pool.connection.return_value = object()
+
+        try:
+            postgres_store._pool = None
+            postgres_store._pool_url = None
+
+            with patch.dict(os.environ, {
+                "SUPABASE_DB_URL": "postgresql://example.test/app",
+                "POSTGRES_CONNECT_TIMEOUT_SECONDS": "4",
+                "POSTGRES_STATEMENT_TIMEOUT_MS": "7000",
+                "POSTGRES_LOCK_TIMEOUT_MS": "2000",
+            }), patch.object(
+                postgres_store,
+                "ConnectionPool",
+                return_value=fake_pool,
+            ) as pool_class:
+                postgres_store.get_postgres_connection()
+
+            pool_kwargs = pool_class.call_args.kwargs["kwargs"]
+            self.assertEqual(pool_kwargs["connect_timeout"], 4)
+            self.assertIn(
+                "statement_timeout=7000",
+                pool_kwargs["options"],
+            )
+            self.assertIn("lock_timeout=2000", pool_kwargs["options"])
+            fake_pool.connection.assert_called_once_with(timeout=5.0)
+        finally:
+            postgres_store._pool = original_pool
+            postgres_store._pool_url = original_pool_url
 
     def test_chat_messages_require_owner(self):
         owner = self.create_user_once("owner", "owner-pass")

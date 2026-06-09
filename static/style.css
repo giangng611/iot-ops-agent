@@ -1201,30 +1201,11 @@ pre {
     margin-bottom: 18px;
 }
 
-.data-source-panel {
+.page-header-with-status {
     align-items: center;
-    background: #171717;
-    border: 1px solid #2f2f2f;
-    border-radius: 14px;
-    display: grid;
-    gap: 16px;
-    grid-template-columns: 220px 1fr;
-    margin-bottom: 18px;
-    padding: 16px;
-}
-
-.data-source-panel label {
-    color: #a1a1aa;
-    display: block;
-    font-size: 12px;
-    font-weight: 700;
-    margin-bottom: 8px;
-    text-transform: uppercase;
-}
-
-.data-source-panel select {
-    height: 42px;
-    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
 }
 
 .source-badge {
@@ -1234,9 +1215,9 @@ pre {
     display: inline-flex;
     font-size: 12px;
     font-weight: 700;
-    margin-bottom: 8px;
     padding: 6px 10px;
     text-transform: uppercase;
+    white-space: nowrap;
 }
 
 .source-badge.not_configured {
@@ -1252,10 +1233,23 @@ pre {
     color: #bae6fd;
 }
 
-.data-source-panel p {
-    color: #a1a1aa;
-    font-size: 14px;
-    margin: 0;
+.drawer-select {
+    height: 42px;
+    margin-top: 10px;
+    width: 100%;
+}
+
+.drawer-source-note {
+    color: #d4d4d8 !important;
+    line-height: 1.5;
+    margin-top: 10px !important;
+}
+
+@media (max-width: 760px) {
+    .page-header-with-status {
+        align-items: flex-start;
+        flex-direction: column;
+    }
 }
 
 .device-controls input,

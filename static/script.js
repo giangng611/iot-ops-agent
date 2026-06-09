@@ -1279,10 +1279,6 @@ function updateDataSourceDisplay() {
     const badge = document.getElementById("dataSourceBadge");
     const note = document.getElementById("dataSourceNote");
 
-    if (!badge || !note) {
-        return;
-    }
-
     const selectedLabel = formatDataSourceLabel(
         currentDataSourceState.selected_source || selectedDataSource
     );
@@ -1291,8 +1287,16 @@ function updateDataSourceDisplay() {
     );
     const rulesStatus = currentDataSourceState.rules_status || "unknown";
 
-    badge.textContent = `${selectedLabel} → ${activeLabel}`;
-    badge.className = `source-badge ${rulesStatus}`;
+    if (badge) {
+        badge.textContent = selectedDataSource === "simulator"
+            ? activeLabel
+            : `${selectedLabel} → ${activeLabel}`;
+        badge.className = `source-badge ${rulesStatus}`;
+    }
+
+    if (!note) {
+        return;
+    }
 
     if (rulesStatus === "not_configured") {
         note.textContent = (
@@ -3408,8 +3412,8 @@ async function openProfileDrawer(type) {
     }
 
     if (type === "workspace") {
-        title.textContent = "Session Activity";
-        subtitle.textContent = "Runtime and workspace status for this session.";
+        title.textContent = "Workspace & Data";
+        subtitle.textContent = "Operational data source and runtime status for this session.";
 
         const selectedMode =
         document.getElementById("modeSelect")?.dataset.value ||
@@ -3466,6 +3470,20 @@ async function openProfileDrawer(type) {
                 </div>
 
                 <div>
+                    <strong>Operational Data Source</strong>
+                    <p>Select the source used by Devices, Alerts, and LangGraph.</p>
+                    <select
+                        id="dataSourceSelect"
+                        class="drawer-select"
+                        onchange="changeDataSource(this.value)"
+                    >
+                        <option value="simulator">Simulator</option>
+                        <option value="company">Company DB</option>
+                    </select>
+                    <p id="dataSourceNote" class="drawer-source-note"></p>
+                </div>
+
+                <div>
                     <strong>Realtime Stream</strong>
                     <p id="realtimeStatusValue">
                         ${
@@ -3492,6 +3510,9 @@ async function openProfileDrawer(type) {
                 </div>
             </div>
         `;
+
+        updateDataSourceControl();
+        updateDataSourceDisplay();
 
         if (realtimeStatusInterval) {
             clearInterval(realtimeStatusInterval);

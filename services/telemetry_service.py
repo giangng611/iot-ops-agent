@@ -1,3 +1,6 @@
+import os
+
+from services.time_service import now, parse_timestamp
 from storage.mongo_store import (
     ensure_telemetry_indexes,
     get_all_latest_devices_from_mongo,
@@ -13,6 +16,13 @@ from storage.telemetry_store import (
 from services.company_data_service import get_company_operational_payload
 
 
+def get_telemetry_connected_grace_seconds():
+    broadcast_interval = int(
+        os.getenv("TELEMETRY_BROADCAST_INTERVAL_SECONDS", "300")
+    )
+    return max(90, broadcast_interval * 2)
+
+
 def get_simulator_alerts(devices):
     critical_count = len([
         device for device in devices
@@ -23,10 +33,39 @@ def get_simulator_alerts(devices):
         if device.get("status") == "warning"
     ])
 
+    latest_timestamp = None
+
+    for device in devices:
+        timestamp = device.get("timestamp")
+
+        if not timestamp:
+            continue
+
+        parsed_timestamp = parse_timestamp(timestamp)
+
+        if latest_timestamp is None or parsed_timestamp > latest_timestamp:
+            latest_timestamp = parsed_timestamp
+
+    telemetry_age_seconds = None
+
+    if latest_timestamp:
+        telemetry_age_seconds = (now() - latest_timestamp).total_seconds()
+
+    telemetry_stream_status = (
+        "connected"
+        if (
+            telemetry_age_seconds is not None
+            and telemetry_age_seconds < get_telemetry_connected_grace_seconds()
+        )
+        else "disconnected"
+    )
+
     return {
         "critical_count": critical_count,
         "warning_count": warning_count,
         "rules_status": "simulator",
+        "telemetry_stream_status": telemetry_stream_status,
+        "telemetry_age_seconds": telemetry_age_seconds,
     }
 
 

@@ -4390,7 +4390,7 @@ function formatAppDataStatus(status) {
 
 async function fetchStorageStatus() {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     try {
         const response = await fetch("/api/storage/status", {

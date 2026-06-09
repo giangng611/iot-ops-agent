@@ -5,11 +5,21 @@ socket.on("connect", () => {
 });
 
 socket.on("device_update", (data) => {
+    if (selectedDataSource !== "simulator") {
+        return;
+    }
+
     lastRealtimeUpdate = Date.now();
 
     allDevices = data.devices;
     currentAlerts = data.alerts;
+    currentDataSourceState = {
+        selected_source: "simulator",
+        active_source: data.source || "simulator",
+        rules_status: "simulator"
+    };
 
+    updateDataSourceDisplay();
     renderDeviceTable();
     renderAlertCenter();
     renderCharts();
@@ -50,6 +60,12 @@ let realtimeStatusInterval = null;
 let assistantMessageActionStore = {};
 let userMessageActionStore = {};
 let workflowNodeDetailStore = {};
+let selectedDataSource = "simulator";
+let currentDataSourceState = {
+    selected_source: "simulator",
+    active_source: "simulator",
+    rules_status: "simulator"
+};
 
 const prompts = [
     "/overview system health",
@@ -58,6 +74,7 @@ const prompts = [
     "/diagnose system issue",
     "/check devices with delayed heartbeat",
     "/show devices with alarms",
+    "/check company telemetry records greater than a threshold",
     "/review current IoT fleet status",
     "/summarize current fleet risk",
     "/prioritize devices needing attention"
@@ -758,7 +775,8 @@ async function sendMessage() {
                 },
                 body: JSON.stringify({
                     message: message,
-                    mode: currentMode
+                    mode: currentMode,
+                    data_source: selectedDataSource
                 })
             });
 
@@ -814,7 +832,8 @@ async function sendStreamMessage(message) {
         },
         body: JSON.stringify({
             message: message,
-            mode: currentMode
+            mode: currentMode,
+            data_source: selectedDataSource
         })
     });
 
@@ -1186,15 +1205,130 @@ async function refreshDevices() {
         const response = await fetch("/api/devices");
         const data = await response.json();
 
-        allDevices = data.devices;
+        selectedDataSource = data.selected_source || selectedDataSource;
+        currentDataSourceState = {
+            selected_source: data.selected_source || selectedDataSource,
+            active_source: data.active_source || data.source || "simulator",
+            rules_status: data.rules_status || "unknown",
+            reason: data.reason || "",
+            rules_message: data.rules_message || "",
+            alerts: data.alerts || {}
+        };
+        allDevices = data.devices || [];
+        currentAlerts = data.alerts || {
+            critical_count: 0,
+            warning_count: 0
+        };
+        updateDataSourceControl();
+        updateDataSourceDisplay();
         renderDeviceTable();
+        renderAlertCenter();
+        renderCharts();
 
     } catch (error) {
         console.error("Failed to refresh devices:", error);
     }
 }
 
+async function changeDataSource(value) {
+    selectedDataSource = value;
+
+    try {
+        const response = await fetch("/api/data-source", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                selected_source: value
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error("Unable to update data source.");
+        }
+
+        await refreshDevices();
+    } catch (error) {
+        console.error("Failed to switch data source:", error);
+    }
+}
+
+function updateDataSourceControl() {
+    const selector = document.getElementById("dataSourceSelect");
+
+    if (selector && selector.value !== selectedDataSource) {
+        selector.value = selectedDataSource;
+    }
+}
+
+function formatDataSourceLabel(value) {
+    const labels = {
+        simulator: "Simulator",
+        sqlite: "SQLite simulator",
+        mongodb: "MongoDB simulator",
+        company: "Company DB",
+        company_mongodb: "Company MongoDB",
+        simulator_fallback: "Simulator fallback"
+    };
+
+    return labels[value] || value || "Unknown";
+}
+
+function updateDataSourceDisplay() {
+    const badge = document.getElementById("dataSourceBadge");
+    const note = document.getElementById("dataSourceNote");
+
+    const selectedLabel = formatDataSourceLabel(
+        currentDataSourceState.selected_source || selectedDataSource
+    );
+    const activeLabel = formatDataSourceLabel(
+        currentDataSourceState.active_source || currentDataSourceState.source
+    );
+    const rulesStatus = currentDataSourceState.rules_status || "unknown";
+
+    if (badge) {
+        badge.textContent = selectedDataSource === "simulator"
+            ? activeLabel
+            : `${selectedLabel} → ${activeLabel}`;
+        badge.className = `source-badge ${rulesStatus}`;
+    }
+
+    if (!note) {
+        return;
+    }
+
+    if (rulesStatus === "not_configured") {
+        note.textContent = (
+            currentDataSourceState.rules_message ||
+            "Company alert rules are not configured yet. Showing raw company record summaries only."
+        );
+        note.classList.remove("hidden");
+        return;
+    }
+
+    if (currentDataSourceState.active_source === "simulator_fallback") {
+        note.textContent = currentDataSourceState.reason
+            ? `Company DB unavailable. Showing simulator fallback. ${currentDataSourceState.reason}`
+            : "Company DB unavailable. Showing simulator fallback.";
+        note.classList.remove("hidden");
+        return;
+    }
+
+    if (selectedDataSource === "simulator") {
+        note.textContent = "Simulator alert rules are active for demo telemetry.";
+        note.classList.remove("hidden");
+        return;
+    }
+
+    note.classList.add("hidden");
+}
+
 function calculatePriority(device) {
+    if (device.company_record) {
+        return 0;
+    }
+
     let score = 0;
 
     if (device.status === "critical") {
@@ -1210,17 +1344,237 @@ function calculatePriority(device) {
     return Math.round(score);
 }
 
-function renderDeviceTable() {
-    const tableBody = document.getElementById("deviceTableBody");
+function formatMetricValue(value, suffix = "") {
+    if (value === null || value === undefined || value === "") {
+        return "—";
+    }
 
-    if (!tableBody) {
+    return `${value}${suffix}`;
+}
+
+function formatDeviceStatus(device) {
+    if (device.rules_status === "not_configured") {
+        return `
+            <span class="status-pill unknown">
+                rules pending
+            </span>
+        `;
+    }
+
+    return `
+        <span class="status-pill ${device.status}">
+            ${device.status}
+        </span>
+    `;
+}
+
+function formatCompanyPayloadSummary(device) {
+    if (!device.company_record || !device.payload_summary) {
+        return "";
+    }
+
+    const summary = device.payload_summary;
+
+    if (Array.isArray(summary.fields) && summary.fields.length > 0) {
+        return `Fields: ${summary.fields.slice(0, 4).join(", ")}`;
+    }
+
+    if (summary.preview) {
+        return `Payload: ${summary.preview}`;
+    }
+
+    return `Payload type: ${summary.payload_type || "unknown"}`;
+}
+
+function isCompanyDataActive() {
+    return (
+        currentDataSourceState.selected_source === "company" &&
+        currentDataSourceState.active_source === "company_mongodb"
+    );
+}
+
+function formatCompanyTimestamp(value) {
+    if (value === null || value === undefined || value === "") {
+        return "Unknown";
+    }
+
+    const numericValue = Number(value);
+    let date = null;
+
+    if (Number.isFinite(numericValue)) {
+        const milliseconds = String(Math.abs(Math.trunc(numericValue))).length >= 13
+            ? numericValue
+            : numericValue * 1000;
+        date = new Date(milliseconds);
+    } else {
+        date = new Date(value);
+    }
+
+    if (Number.isNaN(date.getTime())) {
+        return String(value);
+    }
+
+    return date.toLocaleString();
+}
+
+function getCompanyMetric(device, names) {
+    const acceptedNames = names.map(name => name.toLowerCase());
+    return (device.metrics || []).find(metric => (
+        acceptedNames.includes(String(metric.name || "").toLowerCase())
+    ));
+}
+
+function getCompanyRecordView(device) {
+    const nameMetric = getCompanyMetric(device, ["deviceName", "device_name", "name"]);
+    const idMetric = getCompanyMetric(device, ["deviceId", "device_id"]);
+    const statusMetric = getCompanyMetric(device, ["status", "connectionStatus"]);
+    const semanticNames = new Set([
+        "devicename",
+        "device_name",
+        "name",
+        "deviceid",
+        "device_id",
+        "status",
+        "connectionstatus"
+    ]);
+
+    return {
+        name: nameMetric?.value || "Unnamed device",
+        id: idMetric?.value || device.device_id || "Unknown ID",
+        status: statusMetric?.value || "unknown",
+        telemetry: (device.metrics || []).filter(metric => (
+            !semanticNames.has(String(metric.name || "").toLowerCase())
+        ))
+    };
+}
+
+function renderCompanyMetrics(metrics) {
+    if (!Array.isArray(metrics) || metrics.length === 0) {
+        return '<span class="metric-empty">No additional telemetry in this record</span>';
+    }
+
+    return `
+        <div class="metric-chip-list">
+            ${metrics.map(metric => `
+                <span class="metric-chip">
+                    <strong>${escapeHtml(metric.name)}</strong>
+                    ${escapeHtml(metric.value)}
+                </span>
+            `).join("")}
+        </div>
+    `;
+}
+
+function renderCompanyDataSummary() {
+    const summary = document.getElementById("companyDataSummary");
+
+    if (!summary) {
         return;
     }
+
+    const views = allDevices.map(getCompanyRecordView);
+    const uniqueDevices = new Set(
+        views.map(view => String(view.id)).filter(Boolean)
+    ).size;
+    const statusCounts = views.reduce((counts, view) => {
+        const status = String(view.status || "unknown").toLowerCase();
+        counts[status] = (counts[status] || 0) + 1;
+        return counts;
+    }, {});
+    const tenantCount = new Set(
+        allDevices.map(device => device.tenant_name).filter(Boolean)
+    ).size;
+    const connectedCount = Object.entries(statusCounts)
+        .filter(([status]) => status.includes("connected") && !status.includes("disconnected"))
+        .reduce((total, [, count]) => total + count, 0);
+    const disconnectedCount = Object.entries(statusCounts)
+        .filter(([status]) => status.includes("disconnected"))
+        .reduce((total, [, count]) => total + count, 0);
+
+    summary.innerHTML = `
+        <div class="company-summary-stats">
+            <div>
+                <span>Records loaded</span>
+                <strong>${allDevices.length}</strong>
+            </div>
+            <div>
+                <span>Unique devices</span>
+                <strong>${uniqueDevices}</strong>
+            </div>
+            <div>
+                <span>Connected</span>
+                <strong>${connectedCount}</strong>
+            </div>
+            <div>
+                <span>Disconnected</span>
+                <strong>${disconnectedCount}</strong>
+            </div>
+            <div>
+                <span>Tenants</span>
+                <strong>${tenantCount}</strong>
+            </div>
+        </div>
+        <p class="company-rules-notice">
+            Live company records. Alert rules are not configured yet, so connection
+            status is shown as telemetry and is not treated as an operational alert.
+        </p>
+    `;
+}
+
+function updateDeviceControlsForSource() {
+    const companyMode = isCompanyDataActive();
+    const charts = document.getElementById("devicesCharts");
+    const summary = document.getElementById("companyDataSummary");
+    const tableCard = document.getElementById("devicesTableCard");
+
+    document.querySelectorAll(".simulator-only-control").forEach(control => {
+        control.classList.toggle("hidden", companyMode);
+    });
+
+    charts?.classList.toggle("hidden", companyMode);
+    summary?.classList.toggle("hidden", !companyMode);
+    tableCard?.classList.toggle("company-table-card", companyMode);
+
+    if (companyMode) {
+        renderCompanyDataSummary();
+    }
+}
+
+function renderDeviceTable() {
+    const tableBody = document.getElementById("deviceTableBody");
+    const tableHeader = document.getElementById("deviceTableHeader");
+
+    if (!tableBody || !tableHeader) {
+        return;
+    }
+
+    const companyMode = isCompanyDataActive();
+    updateDeviceControlsForSource();
+
+    tableHeader.innerHTML = companyMode
+        ? `
+            <th>Device</th>
+            <th>Connection</th>
+            <th>Telemetry</th>
+            <th>Last observed</th>
+            <th>Tenant / Domain</th>
+            <th>Source context</th>
+        `
+        : `
+            <th>Device ID</th>
+            <th>Status</th>
+            <th>CPU</th>
+            <th>Memory</th>
+            <th>Heartbeat</th>
+            <th>Priority</th>
+            <th>Diagnose</th>
+            <th>History</th>
+        `;
 
     if (!allDevices || allDevices.length === 0) {
         tableBody.innerHTML = `
             <tr>
-                <td colspan="8">
+                <td colspan="${companyMode ? 6 : 8}">
                     Waiting for realtime telemetry...
                 </td>
             </tr>
@@ -1229,19 +1583,35 @@ function renderDeviceTable() {
     }
 
     const searchValue = document.getElementById("deviceSearch")?.value.toLowerCase() || "";
-    const statusValue = document.getElementById("statusFilter")?.value || "all";
+    const statusValue = companyMode
+        ? "all"
+        : document.getElementById("statusFilter")?.value || "all";
     const sortValue = document.getElementById("sortSelect")?.value || "priority";
 
     let devices = [...allDevices];
 
     devices = devices.filter(device => {
-        const matchesSearch = device.device_id.toLowerCase().includes(searchValue);
+        const searchableMetrics = Array.isArray(device.metrics)
+            ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
+            : "";
+        const searchableText = [
+            device.device_id,
+            device.parent_container,
+            device.app_domain_name,
+            device.tenant_name,
+            searchableMetrics
+        ].join(" ").toLowerCase();
+        const matchesSearch = searchableText.includes(searchValue);
         const matchesStatus = statusValue === "all" || device.status === statusValue;
 
         return matchesSearch && matchesStatus;
     });
 
     devices.sort((a, b) => {
+        if (companyMode) {
+            return Number(b.timestamp || 0) - Number(a.timestamp || 0);
+        }
+
         if (sortValue === "priority") {
             return calculatePriority(b) - calculatePriority(a);
         }
@@ -1268,30 +1638,82 @@ function renderDeviceTable() {
     tableBody.innerHTML = "";
 
     devices.forEach(device => {
+        if (companyMode) {
+            const view = getCompanyRecordView(device);
+            const normalizedStatus = String(view.status || "unknown").toLowerCase();
+            const connectionClass = normalizedStatus.includes("disconnected")
+                ? "disconnected"
+                : normalizedStatus.includes("connected")
+                    ? "connected"
+                    : "unknown";
+
+            tableBody.innerHTML += `
+                <tr>
+                    <td class="company-device-cell">
+                        <strong>${escapeHtml(view.name)}</strong>
+                        <small class="device-subtext company-id" title="${escapeHtml(view.id)}">
+                            ${escapeHtml(view.id)}
+                        </small>
+                    </td>
+                    <td>
+                        <span class="connection-badge ${connectionClass}">
+                            ${escapeHtml(view.status)}
+                        </span>
+                    </td>
+                    <td>${renderCompanyMetrics(view.telemetry)}</td>
+                    <td class="company-time-cell">
+                        ${escapeHtml(formatCompanyTimestamp(device.timestamp))}
+                    </td>
+                    <td>
+                        ${escapeHtml(device.tenant_name || "No tenant")}
+                        <small class="device-subtext">
+                            ${escapeHtml(device.app_domain_name || "No domain")}
+                        </small>
+                    </td>
+                    <td class="company-context-cell">
+                        <span title="${escapeHtml(device.device_id || "")}">
+                            Record ${escapeHtml(device.device_id || "—")}
+                        </span>
+                        <small class="device-subtext" title="${escapeHtml(device.parent_container || "")}">
+                            Parent ${escapeHtml(device.parent_container || "—")}
+                        </small>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
         const priority = calculatePriority(device);
+        const payloadSummary = formatCompanyPayloadSummary(device);
+        const deviceLabel = escapeHtml(device.device_id);
 
         tableBody.innerHTML += `
             <tr>
-                <td>${device.device_id}</td>
                 <td>
-                    <span class="status-pill ${device.status}">
-                        ${device.status}
-                    </span>
+                    ${deviceLabel}
+                    ${payloadSummary ? `<small class="device-subtext">${escapeHtml(payloadSummary)}</small>` : ""}
                 </td>
-                <td>${device.cpu_usage}%</td>
-                <td>${device.memory_usage}%</td>
-                <td>${device.heartbeat_delay}s ago</td>
+                <td>${formatDeviceStatus(device)}</td>
+                <td>${formatMetricValue(device.cpu_usage, "%")}</td>
+                <td>${formatMetricValue(device.memory_usage, "%")}</td>
+                <td>${formatMetricValue(device.heartbeat_delay, "s ago")}</td>
                 <td>${priority}</td>
                 <td>
-                    <button onclick="diagnoseDevice('${device.device_id}')">
+                    <button onclick="diagnoseDevice('${deviceLabel}')">
                         Diagnose
                     </button>
                 </td>
 
                 <td>
-                    <button onclick="showDeviceHistory('${device.device_id}')">
-                        History
-                    </button>
+                    ${device.company_record ? `
+                        <button disabled title="Company telemetry chart mapping is pending.">
+                            Raw record
+                        </button>
+                    ` : `
+                        <button onclick="showDeviceHistory('${deviceLabel}')">
+                            History
+                        </button>
+                    `}
                 </td>
             </tr>
         `;
@@ -2364,6 +2786,37 @@ function renderAlertCenter() {
     const summary = document.getElementById("alertSummary");
     const alertList = document.getElementById("alertList");
 
+    if (
+        currentDataSourceState.selected_source === "company" &&
+        currentDataSourceState.rules_status === "not_configured"
+    ) {
+        badge.classList.add("hidden");
+
+        if (!summary || !alertList) {
+            return;
+        }
+
+        summary.innerHTML = `
+            <div class="alert-summary-card rules-pending-alert">
+                <h2>Rules pending</h2>
+                <p>Company alert rules are not configured.</p>
+            </div>
+        `;
+        alertList.innerHTML = `
+            <div class="alert-item info">
+                <div>
+                    <h3>Company DB connected</h3>
+                    <p>
+                        Raw company records are available in Devices, but the
+                        platform will not classify warning or critical alerts
+                        until approved business rules or Grafana tools are configured.
+                    </p>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
     const critical = currentAlerts.critical_count || 0;
     const warning = currentAlerts.warning_count || 0;
     const total = critical + warning;
@@ -2502,7 +2955,7 @@ function toggleSidebar() {
 }
 
 function renderCharts() {
-    if (!allDevices || allDevices.length === 0) {
+    if (!allDevices || allDevices.length === 0 || isCompanyDataActive()) {
         return;
     }
 
@@ -2512,26 +2965,70 @@ function renderCharts() {
 
 function renderHealthChart() {
     const canvas = document.getElementById("healthChart");
+    const title = document.getElementById("healthChartTitle");
 
     if (!canvas) {
         return;
     }
 
-    const healthy = allDevices.filter(device => device.status === "healthy").length;
-    const warning = allDevices.filter(device => device.status === "warning").length;
-    const critical = allDevices.filter(device => device.status === "critical").length;
+    const companyMode = isCompanyDataActive();
+    let chartType = "doughnut";
+    let data;
 
-    const data = {
-        labels: ["Healthy", "Warning", "Critical"],
-        datasets: [
-            {
-                data: [healthy, warning, critical],
-                backgroundColor: ["#22c55e", "#eab308", "#ef4444"],
-                borderColor: "#171717",
-                borderWidth: 2
-            }
-        ]
-    };
+    if (companyMode) {
+        const coverage = {};
+
+        allDevices.forEach(device => {
+            (device.metrics || []).forEach(metric => {
+                coverage[metric.name] = (coverage[metric.name] || 0) + 1;
+            });
+        });
+
+        const fields = Object.entries(coverage)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 8);
+
+        chartType = "bar";
+        data = {
+            labels: fields.map(([name]) => name),
+            datasets: [
+                {
+                    data: fields.map(([, count]) => count),
+                    backgroundColor: "#38bdf8",
+                    borderRadius: 6
+                }
+            ]
+        };
+
+        if (title) {
+            title.textContent = "Metric Field Coverage";
+        }
+    } else {
+        const healthy = allDevices.filter(device => device.status === "healthy").length;
+        const warning = allDevices.filter(device => device.status === "warning").length;
+        const critical = allDevices.filter(device => device.status === "critical").length;
+
+        data = {
+            labels: ["Healthy", "Warning", "Critical"],
+            datasets: [
+                {
+                    data: [healthy, warning, critical],
+                    backgroundColor: ["#22c55e", "#eab308", "#ef4444"],
+                    borderColor: "#171717",
+                    borderWidth: 2
+                }
+            ]
+        };
+
+        if (title) {
+            title.textContent = "Fleet Health Distribution";
+        }
+    }
+
+    if (healthChart && healthChart.config.type !== chartType) {
+        healthChart.destroy();
+        healthChart = null;
+    }
 
     if (healthChart) {
         healthChart.data = data;
@@ -2540,13 +3037,36 @@ function renderHealthChart() {
     }
 
     healthChart = new Chart(canvas, {
-        type: "doughnut",
+        type: chartType,
         data: data,
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            scales: companyMode
+                ? {
+                    x: {
+                        ticks: {
+                            color: "#ececec"
+                        },
+                        grid: {
+                            color: "#2f2f2f"
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: "#ececec",
+                            precision: 0
+                        },
+                        grid: {
+                            color: "#2f2f2f"
+                        }
+                    }
+                }
+                : undefined,
             plugins: {
                 legend: {
+                    display: !companyMode,
                     labels: {
                         color: "#ececec"
                     }
@@ -2558,9 +3078,104 @@ function renderHealthChart() {
 
 function renderMetricsChart() {
     const canvas = document.getElementById("metricsChart");
+    const title = document.getElementById("metricsChartTitle");
+    const legend = document.getElementById("metricsChartLegend");
 
     if (!canvas) {
         return;
+    }
+
+    if (isCompanyDataActive()) {
+        const numericMetrics = [];
+
+        allDevices.forEach(device => {
+            (device.metrics || []).forEach(metric => {
+                if (
+                    metric.type === "int" ||
+                    metric.type === "float"
+                ) {
+                    numericMetrics.push({
+                        label: metric.name,
+                        value: Number(metric.value)
+                    });
+                }
+            });
+        });
+
+        const recentMetrics = numericMetrics.slice(0, 12);
+        const data = {
+            labels: recentMetrics.length
+                ? recentMetrics.map(metric => metric.label)
+                : ["No numeric metrics"],
+            datasets: [
+                {
+                    data: recentMetrics.length
+                        ? recentMetrics.map(metric => metric.value)
+                        : [0],
+                    backgroundColor: "#34d399",
+                    borderRadius: 8,
+                    barPercentage: 0.75,
+                    categoryPercentage: 0.8
+                }
+            ]
+        };
+
+        if (title) {
+            title.textContent = "Recent Numeric Values (Mixed Units)";
+        }
+
+        if (legend) {
+            legend.classList.add("hidden");
+        }
+
+        if (metricsChart) {
+            metricsChart.data = data;
+            metricsChart.update();
+            return;
+        }
+
+        metricsChart = new Chart(canvas, {
+            type: "bar",
+            data: data,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: {
+                        ticks: {
+                            color: "#ececec"
+                        },
+                        grid: {
+                            color: "#2f2f2f"
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: "#ececec"
+                        },
+                        grid: {
+                            color: "#2f2f2f"
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
+        return;
+    }
+
+    if (title) {
+        title.textContent = "Average Fleet Metrics";
+    }
+
+    if (legend) {
+        legend.classList.remove("hidden");
     }
 
     const total = allDevices.length;
@@ -2804,6 +3419,7 @@ async function loadChatsFromDatabase() {
 document.addEventListener("DOMContentLoaded", () => {
     loadChatsFromDatabase();
     loadSlashCommands();
+    refreshDevices();
 });
 
 async function saveMessageToDatabase(
@@ -3136,8 +3752,8 @@ async function openProfileDrawer(type) {
     }
 
     if (type === "workspace") {
-        title.textContent = "Session Activity";
-        subtitle.textContent = "Runtime and workspace status for this session.";
+        title.textContent = "Workspace & Data";
+        subtitle.textContent = "Operational data source and runtime status for this session.";
 
         const selectedMode =
         document.getElementById("modeSelect")?.dataset.value ||
@@ -3186,6 +3802,20 @@ async function openProfileDrawer(type) {
                 </div>
 
                 <div>
+                    <strong>Operational Data Source</strong>
+                    <p>Select the source used by Devices, Alerts, and LangGraph.</p>
+                    <select
+                        id="dataSourceSelect"
+                        class="drawer-select"
+                        onchange="changeDataSource(this.value)"
+                    >
+                        <option value="simulator">Simulator</option>
+                        <option value="company">Company DB</option>
+                    </select>
+                    <p id="dataSourceNote" class="drawer-source-note"></p>
+                </div>
+
+                <div>
                     <strong>Realtime Stream</strong>
                     <p id="realtimeStatusValue">
                         ${
@@ -3212,6 +3842,9 @@ async function openProfileDrawer(type) {
                 </div>
             </div>
         `;
+
+        updateDataSourceControl();
+        updateDataSourceDisplay();
 
         fetchStorageStatus().then(storageStatus => {
             const storageElement = document.getElementById(

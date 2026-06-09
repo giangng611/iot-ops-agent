@@ -150,6 +150,10 @@ def create_diagnose_blueprint(runtime):
 
         try:
             mode = data.get("mode", "ioa_v2_custom")
+            data_source = data.get("data_source", session.get(
+                "selected_data_source",
+                "simulator",
+            ))
             start_time = time.time()
 
             if mode == "ioa_v1_custom":
@@ -185,7 +189,7 @@ def create_diagnose_blueprint(runtime):
                 })
 
             if mode == "ioa_v2_langgraph":
-                result = langgraph_agent.run(user_input)
+                result = langgraph_agent.run(user_input, data_source=data_source)
 
                 latency_seconds = round(
                     time.time() - start_time,
@@ -370,12 +374,19 @@ def create_diagnose_blueprint(runtime):
 
         user_input = data["message"]
         mode = data.get("mode", "ioa_v2_custom")
+        data_source = data.get("data_source", session.get(
+            "selected_data_source",
+            "simulator",
+        ))
         start_time = time.time()
 
         def generate():
             try:
                 if mode == "ioa_v2_langgraph":
-                    for event in langgraph_agent.run_stream(user_input):
+                    for event in langgraph_agent.run_stream(
+                        user_input,
+                        data_source=data_source,
+                    ):
                         if event.get("type") == "final":
                             event["token_usage"] = add_runtime_metadata(
                                 event.get("token_usage"),

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=7">
+    <link rel="stylesheet" href="/static/style.css?v=9">
 </head>
 
 <body>
@@ -157,9 +157,15 @@
             </section>
 
             <section id="devicesTab" class="tab-page">
-                <div class="page-header">
-                    <h1>Devices</h1>
-                    <p>Current simulated IoT device inventory</p>
+                <div class="page-header page-header-with-status">
+                    <div>
+                        <h1>Devices</h1>
+                        <p>Current IoT operational records and telemetry source</p>
+                    </div>
+
+                    <span id="dataSourceBadge" class="source-badge simulator">
+                        Simulator
+                    </span>
                 </div>
 
                 <div class="device-controls">
@@ -172,6 +178,7 @@
 
                     <select
                         id="statusFilter"
+                        class="simulator-only-control"
                         onchange="renderDeviceTable()"
                     >
                         <option value="all">
@@ -193,6 +200,7 @@
 
                     <select
                         id="sortSelect"
+                        class="simulator-only-control"
                         onchange="renderDeviceTable()"
                     >
                         <option value="priority">
@@ -218,15 +226,17 @@
 
                 </div>
 
-                <div class="charts-grid">
+                <div id="companyDataSummary" class="company-data-summary hidden"></div>
+
+                <div id="devicesCharts" class="charts-grid">
                     <div class="chart-card">
-                        <h2>Fleet Health Distribution</h2>
+                        <h2 id="healthChartTitle">Fleet Health Distribution</h2>
                         <canvas id="healthChart"></canvas>
                     </div>
 
                     <div class="chart-card">
-                        <h2>Average Fleet Metrics</h2>
-                        <div class="custom-chart-legend">
+                        <h2 id="metricsChartTitle">Average Fleet Metrics</h2>
+                        <div id="metricsChartLegend" class="custom-chart-legend">
                             <span><i class="legend-cpu"></i>Avg CPU %</span>
                             <span><i class="legend-memory"></i>Avg Memory %</span>
                             <span><i class="legend-heartbeat"></i>Avg Heartbeat Delay</span>
@@ -235,13 +245,13 @@
                     </div>
                 </div>
 
-                <div class="table-card">
+                <div id="devicesTableCard" class="table-card">
 
                     <div class="devices-table-wrapper">
 
                         <table>
                             <thead>
-                            <tr>
+                            <tr id="deviceTableHeader">
                                 <th>Device ID</th>
                                 <th>Status</th>
                                 <th>CPU</th>
@@ -271,7 +281,7 @@
             <section id="alertsTab" class="tab-page">
                 <div class="page-header">
                     <h1>Alerts</h1>
-                    <p>Real-time active warning and critical device conditions</p>
+                    <p>Active warning and critical conditions based on the selected data source</p>
                 </div>
 
                 <div id="alertSummary" class="alert-summary">
@@ -399,8 +409,8 @@
                                 </div>
 
                                 <div>
-                                    <h3>Session Activity</h3>
-                                    <p>View current session, runtime, storage, and realtime status.</p>
+                                    <h3>Workspace & Data</h3>
+                                    <p>Choose the operational data source and review runtime status.</p>
                                 </div>
                             </div>
 
@@ -668,6 +678,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=9"></script>
+<script src="/static/script.js?v=10"></script>
 </body>
 </html>

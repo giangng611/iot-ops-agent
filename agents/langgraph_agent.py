@@ -1,3 +1,4 @@
+import re
 from typing import TypedDict, List, Dict, Any
 
 from langchain_openai import ChatOpenAI
@@ -9,10 +10,15 @@ from storage.telemetry_store import (
     get_latest_status,
     get_device_telemetry_history
 )
+from services.company_data_service import (
+    get_company_operational_payload,
+    scan_company_payload_threshold,
+)
 
 
 class LangGraphState(TypedDict):
     user_input: str
+    data_source: str
     selected_tool: str
     tool_output: Any
     final_answer: str
@@ -74,8 +80,22 @@ class LangGraphAgent:
 
     def select_tool_node(self, state):
         user_input = state["user_input"].lower()
+        data_source = state.get("data_source", "simulator")
 
-        if "history" in user_input or "trend" in user_input:
+        if (
+            data_source == "company" and (
+                "greater than" in user_input
+                or "above" in user_input
+                or ">" in user_input
+                or "lớn hơn" in user_input
+                or "vuot" in user_input
+                or "vượt" in user_input
+            )
+        ):
+            selected_tool = "scan_company_threshold"
+        elif data_source == "company":
+            selected_tool = "get_company_records"
+        elif "history" in user_input or "trend" in user_input:
             selected_tool = "get_device_history"
         elif "diagnose" in user_input and self.extract_device_id(user_input):
             selected_tool = "get_device_status"
@@ -93,7 +113,8 @@ class LangGraphAgent:
                 "node_label": "Select tool"
             },
             "output": {
-                "selected_tool": selected_tool
+                "selected_tool": selected_tool,
+                "data_source": data_source
             }
         })
 
@@ -105,9 +126,28 @@ class LangGraphAgent:
     def run_tool_node(self, state):
         selected_tool = state["selected_tool"]
         user_input = state["user_input"]
+        data_source = state.get("data_source", "simulator")
         device_id = self.extract_device_id(user_input)
 
-        if selected_tool == "get_device_status" and device_id:
+        if selected_tool == "scan_company_threshold":
+            threshold = self.extract_threshold(user_input)
+
+            if threshold is None:
+                tool_output = {
+                    "source": "company_mongodb",
+                    "rules_status": "not_configured",
+                    "error": (
+                        "No numeric threshold was detected in the request. "
+                        "Ask with a value, for example: greater than 80."
+                    ),
+                }
+            else:
+                tool_output = scan_company_payload_threshold(threshold)
+
+        elif selected_tool == "get_company_records":
+            tool_output = get_company_operational_payload()
+
+        elif selected_tool == "get_device_status" and device_id:
             tool_output = get_latest_status(device_id)
 
         elif selected_tool == "get_device_history" and device_id:
@@ -119,7 +159,7 @@ class LangGraphAgent:
         steps = state.get("steps", [])
         steps.append({
             "iteration": 2,
-            "thought": "LangGraph executed the selected tool and collected telemetry evidence.",
+            "thought": "LangGraph executed the selected tool and collected operational evidence.",
             "action": selected_tool,
             "workflow": {
                 "framework": "LangGraph",
@@ -135,10 +175,20 @@ class LangGraphAgent:
         }
 
     def generate_answer_node(self, state):
+        source_instruction = (
+            "If the tool result says rules_status is not_configured, be explicit "
+            "that approved company alert rules are not configured yet. Do not "
+            "classify raw company records as healthy, warning, or critical unless "
+            "the tool result already provides that classification. Manual threshold "
+            "scan results are evidence only, not official alerts."
+        )
         prompt = f"""
     You are an IoT operations assistant.
 
     {DIAGNOSIS_OUTPUT_FORMAT}
+
+    Data source instruction:
+    {source_instruction}
 
     User request:
     {state["user_input"]}
@@ -178,9 +228,10 @@ class LangGraphAgent:
             "steps": steps
         }
 
-    def run(self, user_input):
+    def run(self, user_input, data_source="simulator"):
         result = self.graph.invoke({
             "user_input": user_input,
+            "data_source": data_source,
             "selected_tool": "",
             "tool_output": None,
             "final_answer": "",
@@ -193,9 +244,10 @@ class LangGraphAgent:
             "token_usage": result.get("token_usage")
         }
 
-    def run_stream(self, user_input):
+    def run_stream(self, user_input, data_source="simulator"):
         state = {
             "user_input": user_input,
+            "data_source": data_source,
             "selected_tool": "",
             "tool_output": None,
             "final_answer": "",
@@ -267,6 +319,13 @@ class LangGraphAgent:
 
     {DIAGNOSIS_OUTPUT_FORMAT}
 
+    Data source instruction:
+    If the tool result says rules_status is not_configured, be explicit that
+    approved company alert rules are not configured yet. Do not classify raw
+    company records as healthy, warning, or critical unless the tool result
+    already provides that classification. Manual threshold scan results are
+    evidence only, not official alerts.
+
     User request:
     {state["user_input"]}
 
@@ -306,3 +365,14 @@ class LangGraphAgent:
                 return token.strip()
 
         return None
+
+    def extract_threshold(self, text):
+        matches = re.findall(r"-?\d+(?:\.\d+)?", text)
+
+        if not matches:
+            return None
+
+        try:
+            return float(matches[-1])
+        except ValueError:
+            return None

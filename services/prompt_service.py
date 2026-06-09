@@ -49,6 +49,13 @@ DEFAULT_PROMPTS = [
         "category": "Alerts",
         "is_default": 1,
     },
+    {
+        "id": "default-7",
+        "title": "Check Threshold Manually",
+        "command": "/check company telemetry records greater than a threshold",
+        "category": "Operations",
+        "is_default": 1,
+    },
 ]
 
 

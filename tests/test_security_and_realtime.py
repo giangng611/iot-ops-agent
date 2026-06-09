@@ -19,6 +19,7 @@ os.chdir(_TEMP_DIR.name)
 import app as app_module  # noqa: E402
 import storage.mongo_store as mongo_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
+from services.company_data_service import extract_display_metrics  # noqa: E402
 from storage.relational_store import (  # noqa: E402
     add_message,
     create_chat,
@@ -56,6 +57,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         routes = [
             ("post", "/api/diagnose", {"json": {"message": "hello"}}),
             ("post", "/api/diagnose-stream", {"json": {"message": "hello"}}),
+            ("get", "/api/data-source", {}),
+            ("post", "/api/data-source", {"json": {"selected_source": "company"}}),
             ("get", "/api/devices", {}),
             ("get", "/api/telemetry/sensor-001", {}),
             ("get", "/api/mongo/telemetry/health", {}),
@@ -166,12 +169,114 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         devices_payload = response.get_json()
         self.assertEqual(devices_payload["source"], "sqlite")
         self.assertTrue(devices_payload["devices"])
+        self.assertEqual(devices_payload["selected_source"], "simulator")
+        self.assertEqual(devices_payload["rules_status"], "simulator")
 
         response = self.client.get("/api/telemetry/sensor-001")
         self.assertEqual(response.status_code, 200)
         history_payload = response.get_json()
         self.assertEqual(history_payload["source"], "sqlite")
         self.assertEqual(history_payload["device_id"], "sensor-001")
+
+    def test_data_source_switch_to_company_returns_rules_pending(self):
+        user = self.create_user_once("company-source-user", "company-pass")
+        self.login_as(user)
+
+        company_payload = {
+            "source": "company_mongodb",
+            "selected_source": "company",
+            "active_source": "company_mongodb",
+            "rules_status": "not_configured",
+            "rules_message": "Company alert rules are not configured yet.",
+            "devices": [
+                {
+                    "device_id": "cin-record-1",
+                    "status": "unknown",
+                    "cpu_usage": None,
+                    "memory_usage": None,
+                    "heartbeat_delay": None,
+                    "timestamp": 20260608,
+                    "company_record": True,
+                    "rules_status": "not_configured",
+                    "payload_summary": {
+                        "payload_type": "json",
+                        "fields": ["temperature"],
+                    },
+                }
+            ],
+            "alerts": {
+                "critical_count": 0,
+                "warning_count": 0,
+                "rules_status": "not_configured",
+            },
+        }
+
+        with patch(
+            "services.telemetry_service.get_company_operational_payload",
+            return_value=company_payload,
+        ):
+            response = self.client.post(
+                "/api/data-source",
+                json={"selected_source": "company"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+            response = self.client.get("/api/devices")
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+
+        self.assertEqual(payload["source"], "company_mongodb")
+        self.assertEqual(payload["selected_source"], "company")
+        self.assertEqual(payload["rules_status"], "not_configured")
+        self.assertEqual(payload["alerts"]["critical_count"], 0)
+        self.assertEqual(payload["alerts"]["warning_count"], 0)
+        self.assertTrue(payload["devices"][0]["company_record"])
+
+    def test_company_payload_metrics_are_extracted_for_adaptive_ui(self):
+        metrics = extract_display_metrics(
+            '{"telemetry":{"temperature":28.5,"humidity":72},"online":true}'
+        )
+
+        self.assertEqual(
+            metrics,
+            [
+                {
+                    "name": "telemetry.temperature",
+                    "value": 28.5,
+                    "type": "float",
+                },
+                {
+                    "name": "telemetry.humidity",
+                    "value": 72,
+                    "type": "int",
+                },
+                {
+                    "name": "online",
+                    "value": True,
+                    "type": "bool",
+                },
+            ],
+        )
+
+        element_metrics = extract_display_metrics(
+            '{"elements":[{"name":"temperature","value":29.2},'
+            '{"name":"humidity","value":68}]}'
+        )
+        self.assertEqual(
+            element_metrics,
+            [
+                {
+                    "name": "temperature",
+                    "value": 29.2,
+                    "type": "float",
+                },
+                {
+                    "name": "humidity",
+                    "value": 68,
+                    "type": "int",
+                },
+            ],
+        )
 
     def test_profile_usage_stats_include_storage_status(self):
         user = self.create_user_once("storage-status-user", "storage-pass")

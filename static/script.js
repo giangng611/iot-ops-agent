@@ -1332,14 +1332,16 @@ function updateDataSourceDisplay() {
 
     if (currentDataSourceState.active_source === "simulator_fallback") {
         note.textContent = currentDataSourceState.reason
-            ? `Company DB unavailable. Showing simulator fallback. ${currentDataSourceState.reason}`
-            : "Company DB unavailable. Showing simulator fallback.";
+            ? `Company DB unavailable. Fallback simulator is active. ${currentDataSourceState.reason}`
+            : "Company DB unavailable. Fallback simulator is active.";
         note.classList.remove("hidden");
         return;
     }
 
     if (selectedDataSource === "simulator") {
-        note.textContent = "Simulator alert rules are active for demo telemetry.";
+        note.textContent = (
+            "Fallback simulator is selected. Demo telemetry and demo alert rules are active."
+        );
         note.classList.remove("hidden");
         return;
     }
@@ -3843,14 +3845,14 @@ async function openProfileDrawer(type) {
                             aria-pressed="${selectedDataSource === "simulator"}"
                             onclick="changeDataSource('simulator')"
                         >
-                            Simulator
+                            Fallback simulator
                         </button>
                     </div>
                     <p id="dataSourceNote" class="drawer-source-note"></p>
                 </div>
 
                 <div>
-                    <strong>Data Connection</strong>
+                    <strong>Active Data Source</strong>
                     <p id="realtimeStatusValue">
                         ${getRealtimeStatusHtml()}
                     </p>
@@ -4447,18 +4449,18 @@ function getRealtimeStatusHtml() {
         selectedDataSource === "company" &&
         currentDataSourceState.active_source === "company_mongodb"
     ) {
-        return '<span class="status-on-demand">On-demand read</span>';
+        return '<span class="status-online">Company DB active</span>';
     }
 
     if (currentDataSourceState.active_source === "simulator_fallback") {
         return realtimeSocketConnected
-            ? '<span class="status-online">Simulator fallback connected</span>'
-            : '<span class="status-offline">Simulator fallback disconnected</span>';
+            ? '<span class="status-fallback">Fallback simulator active</span>'
+            : '<span class="status-offline">Fallback simulator disconnected</span>';
     }
 
     return realtimeSocketConnected
-        ? '<span class="status-online">Connected</span>'
-        : '<span class="status-offline">Disconnected</span>';
+        ? '<span class="status-fallback">Fallback simulator active</span>'
+        : '<span class="status-offline">Fallback simulator disconnected</span>';
 }
 
 function updateRealtimeStatusDisplay() {

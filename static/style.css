@@ -2871,14 +2871,14 @@ button:disabled {
     font-weight: 700;
 }
 
-.status-on-demand {
-    color: #7dd3fc;
+.status-fallback {
+    color: #facc15;
     font-weight: 700;
 }
 
 .status-online::before,
 .status-offline::before,
-.status-on-demand::before {
+.status-fallback::before {
     content: "●";
     margin-right: 6px;
 }

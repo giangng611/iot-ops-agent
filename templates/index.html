@@ -102,7 +102,7 @@
 
                     <div id="slashPalette" class="slash-palette hidden"></div>
                     <div class="input-row chat-input-row">
-                        <div id="modeSelect" class="mode-picker" data-value="ioa_v2_custom">
+                        <div id="modeSelect" class="mode-picker" data-value="ioa_v2_langgraph">
                             <button
                                 class="mode-picker-button"
                                 type="button"
@@ -110,7 +110,7 @@
                                 aria-haspopup="listbox"
                                 aria-expanded="false"
                             >
-                                <span id="modePickerLabel">IOA v2 · Custom Python</span>
+                                <span id="modePickerLabel">IOA v2 · LangGraph</span>
                                 <svg viewBox="0 0 20 20">
                                     <path d="M5.5 7.5 10 12l4.5-4.5"></path>
                                 </svg>
@@ -120,13 +120,13 @@
                                 <button type="button" data-mode="ioa_v1_custom" onclick="selectModeOption(this)">
                                     IOA v1 · Custom Python
                                 </button>
-                                <button type="button" data-mode="ioa_v2_custom" onclick="selectModeOption(this)" class="selected">
+                                <button type="button" data-mode="ioa_v2_custom" onclick="selectModeOption(this)">
                                     IOA v2 · Custom Python
                                 </button>
                                 <button type="button" data-mode="ioa_v2_langchain" onclick="selectModeOption(this)">
                                     IOA v2 · LangChain
                                 </button>
-                                <button type="button" data-mode="ioa_v2_langgraph" onclick="selectModeOption(this)">
+                                <button type="button" data-mode="ioa_v2_langgraph" onclick="selectModeOption(this)" class="selected">
                                     IOA v2 · LangGraph
                                 </button>
                                 <button type="button" data-mode="ioa_v2_n8n" onclick="selectModeOption(this)">
@@ -678,6 +678,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=12"></script>
+<script src="/static/script.js?v=13"></script>
 </body>
 </html>

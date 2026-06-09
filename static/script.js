@@ -39,7 +39,7 @@ socket.on("device_update", (data) => {
     updateDevicesMonitoredDisplay();
 });
 
-let currentMode = "ioa_v2_custom";
+let currentMode = "ioa_v2_langgraph";
 let allDevices = [];
 let chats = [];
 let currentChatId = null;
@@ -3782,7 +3782,7 @@ async function openProfileDrawer(type) {
 
         const selectedMode =
         document.getElementById("modeSelect")?.dataset.value ||
-        "ioa_v2_custom";
+        "ioa_v2_langgraph";
 
         let modeLabel = "IOA v2 · Custom Python ReAct Agent";
 
@@ -3823,7 +3823,7 @@ async function openProfileDrawer(type) {
 
                 <div>
                     <strong>Operational Data Source</strong>
-                    <p>Select the source used by Devices, Alerts, and LangGraph.</p>
+                    <p>Select the source used by Devices, Alerts, and all agent modes.</p>
                     <div
                         id="dataSourceSegmented"
                         class="data-source-segmented"

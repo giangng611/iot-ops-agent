@@ -19,6 +19,7 @@ os.chdir(_TEMP_DIR.name)
 import app as app_module  # noqa: E402
 import storage.mongo_store as mongo_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
+from services.company_data_service import extract_display_metrics  # noqa: E402
 from storage.relational_store import (  # noqa: E402
     add_message,
     create_chat,
@@ -230,6 +231,52 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertEqual(payload["alerts"]["critical_count"], 0)
         self.assertEqual(payload["alerts"]["warning_count"], 0)
         self.assertTrue(payload["devices"][0]["company_record"])
+
+    def test_company_payload_metrics_are_extracted_for_adaptive_ui(self):
+        metrics = extract_display_metrics(
+            '{"telemetry":{"temperature":28.5,"humidity":72},"online":true}'
+        )
+
+        self.assertEqual(
+            metrics,
+            [
+                {
+                    "name": "telemetry.temperature",
+                    "value": 28.5,
+                    "type": "float",
+                },
+                {
+                    "name": "telemetry.humidity",
+                    "value": 72,
+                    "type": "int",
+                },
+                {
+                    "name": "online",
+                    "value": True,
+                    "type": "bool",
+                },
+            ],
+        )
+
+        element_metrics = extract_display_metrics(
+            '{"elements":[{"name":"temperature","value":29.2},'
+            '{"name":"humidity","value":68}]}'
+        )
+        self.assertEqual(
+            element_metrics,
+            [
+                {
+                    "name": "temperature",
+                    "value": 29.2,
+                    "type": "float",
+                },
+                {
+                    "name": "humidity",
+                    "value": 68,
+                    "type": "int",
+                },
+            ],
+        )
 
     def test_profile_usage_stats_include_storage_status(self):
         user = self.create_user_once("storage-status-user", "storage-pass")

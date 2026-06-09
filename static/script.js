@@ -1386,17 +1386,97 @@ function formatCompanyPayloadSummary(device) {
     return `Payload type: ${summary.payload_type || "unknown"}`;
 }
 
+function isCompanyDataActive() {
+    return (
+        currentDataSourceState.selected_source === "company" &&
+        currentDataSourceState.active_source === "company_mongodb"
+    );
+}
+
+function formatCompanyTimestamp(value) {
+    if (value === null || value === undefined || value === "") {
+        return "Unknown";
+    }
+
+    const numericValue = Number(value);
+    let date = null;
+
+    if (Number.isFinite(numericValue)) {
+        const milliseconds = String(Math.abs(Math.trunc(numericValue))).length >= 13
+            ? numericValue
+            : numericValue * 1000;
+        date = new Date(milliseconds);
+    } else {
+        date = new Date(value);
+    }
+
+    if (Number.isNaN(date.getTime())) {
+        return String(value);
+    }
+
+    return date.toLocaleString();
+}
+
+function renderCompanyMetrics(metrics) {
+    if (!Array.isArray(metrics) || metrics.length === 0) {
+        return '<span class="metric-empty">No parseable primitive metrics</span>';
+    }
+
+    return `
+        <div class="metric-chip-list">
+            ${metrics.map(metric => `
+                <span class="metric-chip">
+                    <strong>${escapeHtml(metric.name)}</strong>
+                    ${escapeHtml(metric.value)}
+                </span>
+            `).join("")}
+        </div>
+    `;
+}
+
+function updateDeviceControlsForSource() {
+    const companyMode = isCompanyDataActive();
+
+    document.querySelectorAll(".simulator-only-control").forEach(control => {
+        control.classList.toggle("hidden", companyMode);
+    });
+}
+
 function renderDeviceTable() {
     const tableBody = document.getElementById("deviceTableBody");
+    const tableHeader = document.getElementById("deviceTableHeader");
 
-    if (!tableBody) {
+    if (!tableBody || !tableHeader) {
         return;
     }
+
+    const companyMode = isCompanyDataActive();
+    updateDeviceControlsForSource();
+
+    tableHeader.innerHTML = companyMode
+        ? `
+            <th>Record</th>
+            <th>Timestamp</th>
+            <th>Telemetry Metrics</th>
+            <th>Parent Container</th>
+            <th>Domain / Tenant</th>
+            <th>Rules</th>
+        `
+        : `
+            <th>Device ID</th>
+            <th>Status</th>
+            <th>CPU</th>
+            <th>Memory</th>
+            <th>Heartbeat</th>
+            <th>Priority</th>
+            <th>Diagnose</th>
+            <th>History</th>
+        `;
 
     if (!allDevices || allDevices.length === 0) {
         tableBody.innerHTML = `
             <tr>
-                <td colspan="8">
+                <td colspan="${companyMode ? 6 : 8}">
                     Waiting for realtime telemetry...
                 </td>
             </tr>
@@ -1405,19 +1485,35 @@ function renderDeviceTable() {
     }
 
     const searchValue = document.getElementById("deviceSearch")?.value.toLowerCase() || "";
-    const statusValue = document.getElementById("statusFilter")?.value || "all";
+    const statusValue = companyMode
+        ? "all"
+        : document.getElementById("statusFilter")?.value || "all";
     const sortValue = document.getElementById("sortSelect")?.value || "priority";
 
     let devices = [...allDevices];
 
     devices = devices.filter(device => {
-        const matchesSearch = String(device.device_id).toLowerCase().includes(searchValue);
+        const searchableMetrics = Array.isArray(device.metrics)
+            ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
+            : "";
+        const searchableText = [
+            device.device_id,
+            device.parent_container,
+            device.app_domain_name,
+            device.tenant_name,
+            searchableMetrics
+        ].join(" ").toLowerCase();
+        const matchesSearch = searchableText.includes(searchValue);
         const matchesStatus = statusValue === "all" || device.status === statusValue;
 
         return matchesSearch && matchesStatus;
     });
 
     devices.sort((a, b) => {
+        if (companyMode) {
+            return Number(b.timestamp || 0) - Number(a.timestamp || 0);
+        }
+
         if (sortValue === "priority") {
             return calculatePriority(b) - calculatePriority(a);
         }
@@ -1444,6 +1540,32 @@ function renderDeviceTable() {
     tableBody.innerHTML = "";
 
     devices.forEach(device => {
+        if (companyMode) {
+            tableBody.innerHTML += `
+                <tr>
+                    <td>
+                        ${escapeHtml(device.device_id)}
+                        <small class="device-subtext">
+                            ${escapeHtml(device.content_format || "Unknown content format")}
+                        </small>
+                    </td>
+                    <td>${escapeHtml(formatCompanyTimestamp(device.timestamp))}</td>
+                    <td>${renderCompanyMetrics(device.metrics)}</td>
+                    <td>${escapeHtml(device.parent_container || "—")}</td>
+                    <td>
+                        ${escapeHtml(device.app_domain_name || "—")}
+                        <small class="device-subtext">
+                            ${escapeHtml(device.tenant_name || "No tenant label")}
+                        </small>
+                    </td>
+                    <td>
+                        <span class="status-pill unknown">rules pending</span>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
         const priority = calculatePriority(device);
         const payloadSummary = formatCompanyPayloadSummary(device);
         const deviceLabel = escapeHtml(device.device_id);
@@ -2726,40 +2848,70 @@ function renderCharts() {
 
 function renderHealthChart() {
     const canvas = document.getElementById("healthChart");
+    const title = document.getElementById("healthChartTitle");
 
     if (!canvas) {
         return;
     }
 
-    const data = currentDataSourceState.rules_status === "not_configured"
-        ? {
-            labels: ["Raw records"],
+    const companyMode = isCompanyDataActive();
+    let chartType = "doughnut";
+    let data;
+
+    if (companyMode) {
+        const coverage = {};
+
+        allDevices.forEach(device => {
+            (device.metrics || []).forEach(metric => {
+                coverage[metric.name] = (coverage[metric.name] || 0) + 1;
+            });
+        });
+
+        const fields = Object.entries(coverage)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 8);
+
+        chartType = "bar";
+        data = {
+            labels: fields.map(([name]) => name),
             datasets: [
                 {
-                    data: [allDevices.length],
-                    backgroundColor: ["#38bdf8"],
+                    data: fields.map(([, count]) => count),
+                    backgroundColor: "#38bdf8",
+                    borderRadius: 6
+                }
+            ]
+        };
+
+        if (title) {
+            title.textContent = "Metric Field Coverage";
+        }
+    } else {
+        const healthy = allDevices.filter(device => device.status === "healthy").length;
+        const warning = allDevices.filter(device => device.status === "warning").length;
+        const critical = allDevices.filter(device => device.status === "critical").length;
+
+        data = {
+            labels: ["Healthy", "Warning", "Critical"],
+            datasets: [
+                {
+                    data: [healthy, warning, critical],
+                    backgroundColor: ["#22c55e", "#eab308", "#ef4444"],
                     borderColor: "#171717",
                     borderWidth: 2
                 }
             ]
-        }
-        : (() => {
-            const healthy = allDevices.filter(device => device.status === "healthy").length;
-            const warning = allDevices.filter(device => device.status === "warning").length;
-            const critical = allDevices.filter(device => device.status === "critical").length;
+        };
 
-            return {
-                labels: ["Healthy", "Warning", "Critical"],
-                datasets: [
-                    {
-                        data: [healthy, warning, critical],
-                        backgroundColor: ["#22c55e", "#eab308", "#ef4444"],
-                        borderColor: "#171717",
-                        borderWidth: 2
-                    }
-                ]
-            };
-        })();
+        if (title) {
+            title.textContent = "Fleet Health Distribution";
+        }
+    }
+
+    if (healthChart && healthChart.config.type !== chartType) {
+        healthChart.destroy();
+        healthChart = null;
+    }
 
     if (healthChart) {
         healthChart.data = data;
@@ -2768,13 +2920,36 @@ function renderHealthChart() {
     }
 
     healthChart = new Chart(canvas, {
-        type: "doughnut",
+        type: chartType,
         data: data,
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            scales: companyMode
+                ? {
+                    x: {
+                        ticks: {
+                            color: "#ececec"
+                        },
+                        grid: {
+                            color: "#2f2f2f"
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: "#ececec",
+                            precision: 0
+                        },
+                        grid: {
+                            color: "#2f2f2f"
+                        }
+                    }
+                }
+                : undefined,
             plugins: {
                 legend: {
+                    display: !companyMode,
                     labels: {
                         color: "#ececec"
                     }
@@ -2786,24 +2961,55 @@ function renderHealthChart() {
 
 function renderMetricsChart() {
     const canvas = document.getElementById("metricsChart");
+    const title = document.getElementById("metricsChartTitle");
+    const legend = document.getElementById("metricsChartLegend");
 
     if (!canvas) {
         return;
     }
 
-    if (currentDataSourceState.rules_status === "not_configured") {
+    if (isCompanyDataActive()) {
+        const numericMetrics = [];
+
+        allDevices.forEach(device => {
+            (device.metrics || []).forEach(metric => {
+                if (
+                    metric.type === "int" ||
+                    metric.type === "float"
+                ) {
+                    numericMetrics.push({
+                        label: metric.name,
+                        value: Number(metric.value)
+                    });
+                }
+            });
+        });
+
+        const recentMetrics = numericMetrics.slice(0, 12);
         const data = {
-            labels: ["Metric mapping pending"],
+            labels: recentMetrics.length
+                ? recentMetrics.map(metric => metric.label)
+                : ["No numeric metrics"],
             datasets: [
                 {
-                    data: [0],
-                    backgroundColor: ["#38bdf8"],
+                    data: recentMetrics.length
+                        ? recentMetrics.map(metric => metric.value)
+                        : [0],
+                    backgroundColor: "#34d399",
                     borderRadius: 8,
                     barPercentage: 0.75,
                     categoryPercentage: 0.8
                 }
             ]
         };
+
+        if (title) {
+            title.textContent = "Recent Numeric Values (Mixed Units)";
+        }
+
+        if (legend) {
+            legend.classList.add("hidden");
+        }
 
         if (metricsChart) {
             metricsChart.data = data;
@@ -2845,6 +3051,14 @@ function renderMetricsChart() {
             }
         });
         return;
+    }
+
+    if (title) {
+        title.textContent = "Average Fleet Metrics";
+    }
+
+    if (legend) {
+        legend.classList.remove("hidden");
     }
 
     const total = allDevices.length;

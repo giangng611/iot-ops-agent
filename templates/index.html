@@ -178,6 +178,7 @@
 
                     <select
                         id="statusFilter"
+                        class="simulator-only-control"
                         onchange="renderDeviceTable()"
                     >
                         <option value="all">
@@ -199,6 +200,7 @@
 
                     <select
                         id="sortSelect"
+                        class="simulator-only-control"
                         onchange="renderDeviceTable()"
                     >
                         <option value="priority">
@@ -226,13 +228,13 @@
 
                 <div class="charts-grid">
                     <div class="chart-card">
-                        <h2>Fleet Health Distribution</h2>
+                        <h2 id="healthChartTitle">Fleet Health Distribution</h2>
                         <canvas id="healthChart"></canvas>
                     </div>
 
                     <div class="chart-card">
-                        <h2>Average Fleet Metrics</h2>
-                        <div class="custom-chart-legend">
+                        <h2 id="metricsChartTitle">Average Fleet Metrics</h2>
+                        <div id="metricsChartLegend" class="custom-chart-legend">
                             <span><i class="legend-cpu"></i>Avg CPU %</span>
                             <span><i class="legend-memory"></i>Avg Memory %</span>
                             <span><i class="legend-heartbeat"></i>Avg Heartbeat Delay</span>
@@ -247,7 +249,7 @@
 
                         <table>
                             <thead>
-                            <tr>
+                            <tr id="deviceTableHeader">
                                 <th>Device ID</th>
                                 <th>Status</th>
                                 <th>CPU</th>

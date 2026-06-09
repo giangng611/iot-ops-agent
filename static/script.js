@@ -1,7 +1,19 @@
 const socket = io();
 
 socket.on("connect", () => {
+    realtimeSocketConnected = true;
     console.log("Connected to realtime device stream.");
+    updateRealtimeStatusDisplay();
+});
+
+socket.on("disconnect", () => {
+    realtimeSocketConnected = false;
+    updateRealtimeStatusDisplay();
+});
+
+socket.on("connect_error", () => {
+    realtimeSocketConnected = false;
+    updateRealtimeStatusDisplay();
 });
 
 socket.on("device_update", (data) => {
@@ -56,6 +68,7 @@ let promptsData = [];
 let pendingDeletePromptId = null;
 let pendingPasswordChange = null;
 let lastRealtimeUpdate = 0;
+let realtimeSocketConnected = false;
 let realtimeStatusInterval = null;
 let assistantMessageActionStore = {};
 let userMessageActionStore = {};
@@ -1224,6 +1237,8 @@ async function refreshDevices() {
         renderDeviceTable();
         renderAlertCenter();
         renderCharts();
+        updateRealtimeStatusDisplay();
+        updateDevicesMonitoredDisplay();
 
     } catch (error) {
         console.error("Failed to refresh devices:", error);
@@ -1232,6 +1247,8 @@ async function refreshDevices() {
 
 async function changeDataSource(value) {
     selectedDataSource = value;
+    updateDataSourceControl();
+    updateRealtimeStatusDisplay();
 
     try {
         const response = await fetch("/api/data-source", {
@@ -1255,11 +1272,17 @@ async function changeDataSource(value) {
 }
 
 function updateDataSourceControl() {
-    const selector = document.getElementById("dataSourceSelect");
+    const control = document.getElementById("dataSourceSegmented");
 
-    if (selector && selector.value !== selectedDataSource) {
-        selector.value = selectedDataSource;
+    if (!control) {
+        return;
     }
+
+    control.dataset.selected = selectedDataSource;
+    control.querySelectorAll("button").forEach(button => {
+        const isSelected = button.dataset.source === selectedDataSource;
+        button.setAttribute("aria-pressed", String(isSelected));
+    });
 }
 
 function formatDataSourceLabel(value) {
@@ -3784,11 +3807,6 @@ async function openProfileDrawer(type) {
         const deviceCount =
             allDevices.length || 0;
 
-        const realtimeStatus =
-            currentAlerts.telemetry_stream_status === "connected"
-                ? '<span class="status-online">Connected</span>'
-                : '<span class="status-offline">Disconnected</span>';
-
         const environment =
             window.location.hostname.includes("localhost") ||
             window.location.hostname.includes("127.0.0.1")
@@ -3804,25 +3822,37 @@ async function openProfileDrawer(type) {
                 <div>
                     <strong>Operational Data Source</strong>
                     <p>Select the source used by Devices, Alerts, and LangGraph.</p>
-                    <select
-                        id="dataSourceSelect"
-                        class="drawer-select"
-                        onchange="changeDataSource(this.value)"
+                    <div
+                        id="dataSourceSegmented"
+                        class="data-source-segmented"
+                        data-selected="${escapeHtml(selectedDataSource)}"
+                        role="group"
+                        aria-label="Operational data source"
                     >
-                        <option value="simulator">Simulator</option>
-                        <option value="company">Company DB</option>
-                    </select>
+                        <button
+                            type="button"
+                            data-source="company"
+                            aria-pressed="${selectedDataSource === "company"}"
+                            onclick="changeDataSource('company')"
+                        >
+                            Company DB
+                        </button>
+                        <button
+                            type="button"
+                            data-source="simulator"
+                            aria-pressed="${selectedDataSource === "simulator"}"
+                            onclick="changeDataSource('simulator')"
+                        >
+                            Simulator
+                        </button>
+                    </div>
                     <p id="dataSourceNote" class="drawer-source-note"></p>
                 </div>
 
                 <div>
-                    <strong>Realtime Stream</strong>
+                    <strong>Data Connection</strong>
                     <p id="realtimeStatusValue">
-                        ${
-                            currentAlerts.telemetry_stream_status === "connected"
-                                ? '<span class="status-online">Connected</span>'
-                                : '<span class="status-offline">Disconnected</span>'
-                        }
+                        ${getRealtimeStatusHtml()}
                     </p>
                 </div>
 
@@ -4413,11 +4443,20 @@ async function fetchStorageStatus() {
 }
 
 function getRealtimeStatusHtml() {
-    const isConnected =
-        lastRealtimeUpdate > 0 &&
-        Date.now() - lastRealtimeUpdate < 600000;
+    if (
+        selectedDataSource === "company" &&
+        currentDataSourceState.active_source === "company_mongodb"
+    ) {
+        return '<span class="status-on-demand">On-demand read</span>';
+    }
 
-    return isConnected
+    if (currentDataSourceState.active_source === "simulator_fallback") {
+        return realtimeSocketConnected
+            ? '<span class="status-online">Simulator fallback connected</span>'
+            : '<span class="status-offline">Simulator fallback disconnected</span>';
+    }
+
+    return realtimeSocketConnected
         ? '<span class="status-online">Connected</span>'
         : '<span class="status-offline">Disconnected</span>';
 }
@@ -4431,12 +4470,7 @@ function updateRealtimeStatusDisplay() {
         return;
     }
 
-    const isConnected =
-        currentAlerts.telemetry_stream_status === "connected";
-
-    element.innerHTML = isConnected
-        ? '<span class="status-online">Connected</span>'
-        : '<span class="status-offline">Disconnected</span>';
+    element.innerHTML = getRealtimeStatusHtml();
 }
 
 function updateDevicesMonitoredDisplay() {

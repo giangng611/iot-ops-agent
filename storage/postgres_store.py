@@ -19,7 +19,7 @@ _pool_url = None
 
 def get_postgres_connection_kwargs():
     statement_timeout_ms = int(
-        os.getenv("POSTGRES_STATEMENT_TIMEOUT_MS", "8000")
+        os.getenv("POSTGRES_STATEMENT_TIMEOUT_MS", "4000")
     )
     lock_timeout_ms = int(
         os.getenv("POSTGRES_LOCK_TIMEOUT_MS", "3000")

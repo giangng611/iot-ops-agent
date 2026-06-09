@@ -34,6 +34,7 @@ from storage.relational_store import (  # noqa: E402
 class SecurityAndRealtimeTests(unittest.TestCase):
     def setUp(self):
         relational_store._last_fallback = None
+        relational_store._postgres_circuit_open_until = 0.0
         for postgres_url_var in ("SUPABASE_DB_URL", "DATABASE_URL", "POSTGRES_URL"):
             os.environ.pop(postgres_url_var, None)
         init_db()
@@ -113,6 +114,37 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         finally:
             postgres_store._pool = original_pool
             postgres_store._pool_url = original_pool_url
+
+    def test_postgres_circuit_breaker_uses_sqlite_after_failure(self):
+        postgres_calls = []
+        sqlite_calls = []
+
+        with patch.object(
+            relational_store,
+            "using_postgres",
+            return_value=True,
+        ), patch.dict(os.environ, {
+            "APP_DB_FALLBACK_ENABLED": "true",
+            "POSTGRES_CIRCUIT_BREAKER_SECONDS": "30",
+        }):
+            first_result = relational_store._with_fallback(
+                "get_messages",
+                lambda: (
+                    postgres_calls.append("called"),
+                    (_ for _ in ()).throw(RuntimeError("query timed out")),
+                )[1],
+                lambda: sqlite_calls.append("called") or ["fallback"],
+            )
+            second_result = relational_store._with_fallback(
+                "get_messages",
+                lambda: postgres_calls.append("called") or ["postgres"],
+                lambda: sqlite_calls.append("called") or ["fallback"],
+            )
+
+        self.assertEqual(first_result, ["fallback"])
+        self.assertEqual(second_result, ["fallback"])
+        self.assertEqual(len(postgres_calls), 1)
+        self.assertEqual(len(sqlite_calls), 2)
 
     def test_chat_messages_require_owner(self):
         owner = self.create_user_once("owner", "owner-pass")

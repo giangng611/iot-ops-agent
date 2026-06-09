@@ -1417,9 +1417,40 @@ function formatCompanyTimestamp(value) {
     return date.toLocaleString();
 }
 
+function getCompanyMetric(device, names) {
+    const acceptedNames = names.map(name => name.toLowerCase());
+    return (device.metrics || []).find(metric => (
+        acceptedNames.includes(String(metric.name || "").toLowerCase())
+    ));
+}
+
+function getCompanyRecordView(device) {
+    const nameMetric = getCompanyMetric(device, ["deviceName", "device_name", "name"]);
+    const idMetric = getCompanyMetric(device, ["deviceId", "device_id"]);
+    const statusMetric = getCompanyMetric(device, ["status", "connectionStatus"]);
+    const semanticNames = new Set([
+        "devicename",
+        "device_name",
+        "name",
+        "deviceid",
+        "device_id",
+        "status",
+        "connectionstatus"
+    ]);
+
+    return {
+        name: nameMetric?.value || "Unnamed device",
+        id: idMetric?.value || device.device_id || "Unknown ID",
+        status: statusMetric?.value || "unknown",
+        telemetry: (device.metrics || []).filter(metric => (
+            !semanticNames.has(String(metric.name || "").toLowerCase())
+        ))
+    };
+}
+
 function renderCompanyMetrics(metrics) {
     if (!Array.isArray(metrics) || metrics.length === 0) {
-        return '<span class="metric-empty">No parseable primitive metrics</span>';
+        return '<span class="metric-empty">No additional telemetry in this record</span>';
     }
 
     return `
@@ -1434,12 +1465,79 @@ function renderCompanyMetrics(metrics) {
     `;
 }
 
+function renderCompanyDataSummary() {
+    const summary = document.getElementById("companyDataSummary");
+
+    if (!summary) {
+        return;
+    }
+
+    const views = allDevices.map(getCompanyRecordView);
+    const uniqueDevices = new Set(
+        views.map(view => String(view.id)).filter(Boolean)
+    ).size;
+    const statusCounts = views.reduce((counts, view) => {
+        const status = String(view.status || "unknown").toLowerCase();
+        counts[status] = (counts[status] || 0) + 1;
+        return counts;
+    }, {});
+    const tenantCount = new Set(
+        allDevices.map(device => device.tenant_name).filter(Boolean)
+    ).size;
+    const connectedCount = Object.entries(statusCounts)
+        .filter(([status]) => status.includes("connected") && !status.includes("disconnected"))
+        .reduce((total, [, count]) => total + count, 0);
+    const disconnectedCount = Object.entries(statusCounts)
+        .filter(([status]) => status.includes("disconnected"))
+        .reduce((total, [, count]) => total + count, 0);
+
+    summary.innerHTML = `
+        <div class="company-summary-stats">
+            <div>
+                <span>Records loaded</span>
+                <strong>${allDevices.length}</strong>
+            </div>
+            <div>
+                <span>Unique devices</span>
+                <strong>${uniqueDevices}</strong>
+            </div>
+            <div>
+                <span>Connected</span>
+                <strong>${connectedCount}</strong>
+            </div>
+            <div>
+                <span>Disconnected</span>
+                <strong>${disconnectedCount}</strong>
+            </div>
+            <div>
+                <span>Tenants</span>
+                <strong>${tenantCount}</strong>
+            </div>
+        </div>
+        <p class="company-rules-notice">
+            Live company records. Alert rules are not configured yet, so connection
+            status is shown as telemetry and is not treated as an operational alert.
+        </p>
+    `;
+}
+
 function updateDeviceControlsForSource() {
     const companyMode = isCompanyDataActive();
+    const charts = document.getElementById("devicesCharts");
+    const summary = document.getElementById("companyDataSummary");
+    const tableCard = document.getElementById("devicesTableCard");
 
     document.querySelectorAll(".simulator-only-control").forEach(control => {
         control.classList.toggle("hidden", companyMode);
     });
+
+    charts?.classList.toggle("hidden", companyMode);
+    summary?.classList.toggle("hidden", !companyMode);
+    tableCard?.classList.toggle("company-table-card", companyMode);
+
+    if (companyMode) {
+        renderCompanyDataSummary();
+    }
 }
 
 function renderDeviceTable() {
@@ -1455,12 +1553,12 @@ function renderDeviceTable() {
 
     tableHeader.innerHTML = companyMode
         ? `
-            <th>Record</th>
-            <th>Timestamp</th>
-            <th>Telemetry Metrics</th>
-            <th>Parent Container</th>
-            <th>Domain / Tenant</th>
-            <th>Rules</th>
+            <th>Device</th>
+            <th>Connection</th>
+            <th>Telemetry</th>
+            <th>Last observed</th>
+            <th>Tenant / Domain</th>
+            <th>Source context</th>
         `
         : `
             <th>Device ID</th>
@@ -1541,25 +1639,44 @@ function renderDeviceTable() {
 
     devices.forEach(device => {
         if (companyMode) {
+            const view = getCompanyRecordView(device);
+            const normalizedStatus = String(view.status || "unknown").toLowerCase();
+            const connectionClass = normalizedStatus.includes("disconnected")
+                ? "disconnected"
+                : normalizedStatus.includes("connected")
+                    ? "connected"
+                    : "unknown";
+
             tableBody.innerHTML += `
                 <tr>
-                    <td>
-                        ${escapeHtml(device.device_id)}
-                        <small class="device-subtext">
-                            ${escapeHtml(device.content_format || "Unknown content format")}
-                        </small>
-                    </td>
-                    <td>${escapeHtml(formatCompanyTimestamp(device.timestamp))}</td>
-                    <td>${renderCompanyMetrics(device.metrics)}</td>
-                    <td>${escapeHtml(device.parent_container || "—")}</td>
-                    <td>
-                        ${escapeHtml(device.app_domain_name || "—")}
-                        <small class="device-subtext">
-                            ${escapeHtml(device.tenant_name || "No tenant label")}
+                    <td class="company-device-cell">
+                        <strong>${escapeHtml(view.name)}</strong>
+                        <small class="device-subtext company-id" title="${escapeHtml(view.id)}">
+                            ${escapeHtml(view.id)}
                         </small>
                     </td>
                     <td>
-                        <span class="status-pill unknown">rules pending</span>
+                        <span class="connection-badge ${connectionClass}">
+                            ${escapeHtml(view.status)}
+                        </span>
+                    </td>
+                    <td>${renderCompanyMetrics(view.telemetry)}</td>
+                    <td class="company-time-cell">
+                        ${escapeHtml(formatCompanyTimestamp(device.timestamp))}
+                    </td>
+                    <td>
+                        ${escapeHtml(device.tenant_name || "No tenant")}
+                        <small class="device-subtext">
+                            ${escapeHtml(device.app_domain_name || "No domain")}
+                        </small>
+                    </td>
+                    <td class="company-context-cell">
+                        <span title="${escapeHtml(device.device_id || "")}">
+                            Record ${escapeHtml(device.device_id || "—")}
+                        </span>
+                        <small class="device-subtext" title="${escapeHtml(device.parent_container || "")}">
+                            Parent ${escapeHtml(device.parent_container || "—")}
+                        </small>
                     </td>
                 </tr>
             `;
@@ -2838,7 +2955,7 @@ function toggleSidebar() {
 }
 
 function renderCharts() {
-    if (!allDevices || allDevices.length === 0) {
+    if (!allDevices || allDevices.length === 0 || isCompanyDataActive()) {
         return;
     }
 

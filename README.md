@@ -175,6 +175,11 @@ N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 DIFY_API_URL=http://localhost/v1/chat-messages
 DIFY_API_KEY=your_dify_app_api_key
 DIFY_USER=iot-ops-agent-ui
+PUBLIC_BASE_URL=https://iot-ops-agent.onrender.com
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret
+TELEGRAM_ALLOWED_USER_IDS=
+TELEGRAM_HISTORY_USER_ID=
 ```
 
 ---
@@ -229,6 +234,7 @@ Environment variables should be configured through the deployment provider inste
 * [Benchmarking](docs/BENCHMARKING.md)
 * [n8n UI Integration](docs/N8N_UI_INTEGRATION.md)
 * [Dify UI Integration](docs/DIFY_UI_INTEGRATION.md)
+* [Telegram PoC](docs/TELEGRAM_POC.md)
 * [Company DB Discovery](docs/COMPANY_DB_DISCOVERY.md)
 * [Roadmap](docs/ROADMAP.md)
 
@@ -243,7 +249,8 @@ python3 -m unittest tests/test_security_and_realtime.py
 ```
 
 The suite covers protected API access, chat ownership, diagnosis request
-limits, storage status payloads, and embedded realtime telemetry health.
+limits, storage status payloads, Telegram webhook behavior, and embedded
+realtime telemetry health.
 
 Storage checks:
 

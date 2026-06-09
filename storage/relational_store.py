@@ -1,4 +1,5 @@
 import os
+import time
 
 from werkzeug.security import check_password_hash, generate_password_hash
 from services.time_service import now_iso
@@ -12,6 +13,7 @@ from storage.postgres_store import (
 )
 
 _last_fallback = None
+_postgres_circuit_open_until = 0.0
 
 
 def using_postgres():
@@ -44,12 +46,15 @@ def get_last_fallback():
 
 def clear_fallback():
     global _last_fallback
+    global _postgres_circuit_open_until
 
     _last_fallback = None
+    _postgres_circuit_open_until = 0.0
 
 
 def record_fallback(operation_name, error, fallback_backend="sqlite"):
     global _last_fallback
+    global _postgres_circuit_open_until
 
     _last_fallback = {
         "operation": operation_name,
@@ -57,6 +62,14 @@ def record_fallback(operation_name, error, fallback_backend="sqlite"):
         "fallback_backend": fallback_backend,
         "recorded_at": now_iso(),
     }
+    _postgres_circuit_open_until = (
+        time.monotonic()
+        + float(os.getenv("POSTGRES_CIRCUIT_BREAKER_SECONDS", "30"))
+    )
+
+
+def postgres_circuit_is_open():
+    return time.monotonic() < _postgres_circuit_open_until
 
 
 def _postgres_retry_allowed(operation_name):
@@ -87,8 +100,13 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
     if not using_postgres():
         return sqlite_operation()
 
+    if app_db_fallback_enabled() and postgres_circuit_is_open():
+        return sqlite_operation()
+
     try:
-        return postgres_operation()
+        result = postgres_operation()
+        clear_fallback()
+        return result
     except Exception as exc:
         if (
             _postgres_retry_allowed(operation_name)
@@ -149,6 +167,18 @@ def get_storage_status():
                 )
             status["app_data"]["last_fallback"] = get_last_fallback()
 
+        return status
+
+    if app_db_fallback_enabled() and postgres_circuit_is_open():
+        status["app_data"].update({
+            "active_backend": "sqlite",
+            "healthy": False,
+            "message": (
+                "Supabase/Postgres is temporarily unavailable; "
+                "SQLite fallback is active."
+            ),
+            "last_fallback": get_last_fallback(),
+        })
         return status
 
     try:

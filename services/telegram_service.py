@@ -206,11 +206,11 @@ def make_chat_title(message):
     return f"Telegram: {compact_message or 'New request'}"
 
 
-def save_telegram_history(message, result):
+def start_telegram_history(message):
     user_id = get_history_user_id()
 
     if user_id is None:
-        return None
+        return None, None
 
     chat_id = create_chat(user_id, make_chat_title(message["text"]))
     save_chat_message(
@@ -219,6 +219,14 @@ def save_telegram_history(message, result):
         role="user",
         content=message["text"],
     )
+
+    return user_id, chat_id
+
+
+def finish_telegram_history(user_id, chat_id, result):
+    if user_id is None or chat_id is None:
+        return
+
     save_chat_message(
         chat_id=chat_id,
         user_id=user_id,
@@ -228,10 +236,42 @@ def save_telegram_history(message, result):
         token_usage=result.get("token_usage"),
     )
 
-    return chat_id
+
+def merge_stream_event(steps, event):
+    if event.get("type") == "thought":
+        step = next(
+            (
+                item for item in steps
+                if item.get("iteration") == event.get("iteration")
+            ),
+            None,
+        )
+        values = {
+            "iteration": event.get("iteration"),
+            "thought": event.get("thought"),
+            "action": event.get("action"),
+            "workflow": event.get("workflow"),
+        }
+
+        if step is None:
+            steps.append(values)
+        else:
+            step.update(values)
+
+    if event.get("type") == "observation":
+        step = next(
+            (
+                item for item in steps
+                if item.get("iteration") == event.get("iteration")
+            ),
+            None,
+        )
+
+        if step is not None:
+            step["output"] = (event.get("observation") or {}).get("output")
 
 
-def handle_telegram_update(update, langgraph_agent):
+def handle_telegram_update(update, langgraph_agent, emit_user_event=None):
     message = extract_message(update)
 
     if message is None:
@@ -256,16 +296,80 @@ def handle_telegram_update(update, langgraph_agent):
                 send_telegram_message(message["chat_id"], help_text)
                 result = {"status": "help_sent"}
             else:
-                agent_result = langgraph_agent.run(prompt)
-                final_answer = (
-                    agent_result.get("final_answer")
-                    or "No answer was generated."
+                history_user_id, history_chat_id = start_telegram_history(
+                    message
                 )
-                history_chat_id = save_telegram_history(message, {
+                title = make_chat_title(message["text"])
+
+                if (
+                    emit_user_event
+                    and history_user_id is not None
+                    and history_chat_id is not None
+                ):
+                    emit_user_event(
+                        history_user_id,
+                        "telegram_chat_started",
+                        {
+                            "chat_id": history_chat_id,
+                            "title": title,
+                            "message": message["text"],
+                        },
+                    )
+
+                steps = []
+                final_answer = "No answer was generated."
+                token_usage = None
+
+                for stream_event in langgraph_agent.run_stream(prompt):
+                    merge_stream_event(steps, stream_event)
+
+                    if stream_event.get("type") == "final":
+                        final_answer = (
+                            stream_event.get("final_answer")
+                            or final_answer
+                        )
+                        token_usage = stream_event.get("token_usage")
+
+                    if (
+                        emit_user_event
+                        and history_user_id is not None
+                        and history_chat_id is not None
+                    ):
+                        emit_user_event(
+                            history_user_id,
+                            "telegram_reasoning_event",
+                            {
+                                "chat_id": history_chat_id,
+                                "event": stream_event,
+                            },
+                        )
+
+                agent_result = {
                     "final_answer": final_answer,
-                    "steps": agent_result.get("steps", []),
-                    "token_usage": agent_result.get("token_usage"),
-                })
+                    "steps": steps,
+                    "token_usage": token_usage,
+                }
+                finish_telegram_history(
+                    history_user_id,
+                    history_chat_id,
+                    agent_result,
+                )
+
+                if (
+                    emit_user_event
+                    and history_user_id is not None
+                    and history_chat_id is not None
+                ):
+                    emit_user_event(
+                        history_user_id,
+                        "telegram_chat_completed",
+                        {
+                            "chat_id": history_chat_id,
+                            "final_answer": final_answer,
+                            "steps": steps,
+                            "token_usage": token_usage,
+                        },
+                    )
 
                 send_telegram_message(message["chat_id"], final_answer)
                 result = {

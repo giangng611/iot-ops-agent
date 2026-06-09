@@ -39,6 +39,161 @@ socket.on("device_update", (data) => {
     updateDevicesMonitoredDisplay();
 });
 
+socket.on("telegram_chat_started", (data) => {
+    const chatId = Number(data.chat_id);
+
+    if (!chatId) {
+        return;
+    }
+
+    let chat = chats.find(item => item.id === chatId);
+
+    if (!chat) {
+        chat = {
+            id: chatId,
+            title: data.title || "Telegram request",
+            isPinned: false,
+            messagesLoaded: true,
+            messagesLoading: false,
+            messagesLoadPromise: null,
+            messages: []
+        };
+        chats.unshift(chat);
+    }
+
+    if (!chat.messages.some(message =>
+        message.role === "user" && message.content === data.message
+    )) {
+        chat.messages.push({
+            role: "user",
+            content: data.message
+        });
+    }
+
+    renderChatHistory();
+
+    if (isAgentRunning) {
+        return;
+    }
+
+    currentChatId = chatId;
+    latestReasoningSteps = [];
+    displayedWorkflowSteps = [];
+    workflowNodeStatusMemory = {};
+    workflowFinalized = false;
+    pendingFinalAnswer = null;
+    latestTokenUsage = null;
+    reasoningTypingQueue = Promise.resolve();
+
+    const homeButton = document.querySelector(".top-tab");
+    showTab("home", homeButton);
+    document.getElementById("homeHero").classList.add("hidden");
+    document.getElementById("chatMessages").innerHTML = "";
+    renderUserMessage(data.message);
+
+    const loading = document.getElementById("loading");
+    loading.innerHTML = `
+        <span>Telegram request is running...</span>
+        <button class="reasoning-loading-btn" onclick="openReasoningDrawer()">
+            Show reasoning trace
+        </button>
+    `;
+    loading.classList.remove("hidden");
+    renderChatHistory();
+});
+
+socket.on("telegram_reasoning_event", (data) => {
+    const chatId = Number(data.chat_id);
+    const event = data.event || {};
+
+    if (chatId !== currentChatId) {
+        return;
+    }
+
+    if (event.type === "thought") {
+        const existingStep = latestReasoningSteps.find(step =>
+            step.iteration === event.iteration
+        );
+        const step = {
+            iteration: event.iteration,
+            thought: event.thought,
+            action: event.action,
+            workflow: event.workflow || null,
+            output: existingStep?.output || null
+        };
+
+        if (existingStep) {
+            Object.assign(existingStep, step);
+        } else {
+            latestReasoningSteps.push(step);
+        }
+
+        if (reasoningDrawerOpen) {
+            enqueueReasoningThoughtAction(step);
+        }
+    }
+
+    if (event.type === "observation") {
+        const step = latestReasoningSteps.find(item =>
+            item.iteration === event.iteration
+        ) || latestReasoningSteps[latestReasoningSteps.length - 1];
+
+        if (step) {
+            step.output = event.observation?.output;
+
+            if (reasoningDrawerOpen) {
+                enqueueReasoningObservation(step);
+            }
+        }
+    }
+
+    if (event.type === "final") {
+        pendingFinalAnswer = event.final_answer || null;
+        latestTokenUsage = event.token_usage || latestTokenUsage;
+    }
+});
+
+socket.on("telegram_chat_completed", async (data) => {
+    const chatId = Number(data.chat_id);
+    const chat = chats.find(item => item.id === chatId);
+    const reasoningSteps = Array.isArray(data.steps) ? data.steps : [];
+
+    if (chat && !chat.messages.some(message =>
+        message.role === "assistant" &&
+        message.content === data.final_answer
+    )) {
+        chat.messages.push({
+            role: "assistant",
+            content: data.final_answer,
+            hasReasoning: reasoningSteps.length > 0,
+            reasoningSteps: reasoningSteps,
+            tokenUsage: data.token_usage || null
+        });
+    }
+
+    if (chatId === currentChatId) {
+        latestReasoningSteps = reasoningSteps;
+        latestTokenUsage = data.token_usage || latestTokenUsage;
+        pendingFinalAnswer = data.final_answer;
+        workflowFinalized = true;
+        document.getElementById("loading").classList.add("hidden");
+
+        await renderAssistantMessage(
+            data.final_answer,
+            reasoningSteps.length > 0,
+            reasoningSteps,
+            null,
+            true,
+            chat ? findLatestUserMessage(chat.messages) : null,
+            latestTokenUsage
+        );
+
+        updateReasoningWorkflowMap(reasoningSteps, true);
+    }
+
+    renderChatHistory();
+});
+
 let currentMode = "ioa_v2_langgraph";
 let allDevices = [];
 let chats = [];

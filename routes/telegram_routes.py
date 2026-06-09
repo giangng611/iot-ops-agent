@@ -13,6 +13,7 @@ from services.telegram_service import (
 def create_telegram_blueprint(runtime):
     telegram_bp = Blueprint("telegram", __name__)
     langgraph_agent = runtime["langgraph_agent"]
+    emit_user_event = runtime.get("emit_user_event")
 
     @telegram_bp.route("/api/telegram/webhook", methods=["POST"])
     def telegram_webhook():
@@ -25,7 +26,11 @@ def create_telegram_blueprint(runtime):
             return jsonify({"error": "Invalid Telegram webhook secret."}), 403
 
         update = request.get_json(silent=True) or {}
-        result = handle_telegram_update(update, langgraph_agent)
+        result = handle_telegram_update(
+            update,
+            langgraph_agent,
+            emit_user_event=emit_user_event,
+        )
 
         return jsonify(result)
 

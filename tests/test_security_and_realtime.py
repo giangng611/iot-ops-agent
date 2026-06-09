@@ -494,24 +494,41 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "456"
         os.environ["TELEGRAM_HISTORY_USER_ID"] = str(user["id"])
         mock_post.return_value.raise_for_status.return_value = None
+        self.login_as(user)
+        socket_client = app_module.socketio.test_client(
+            app_module.app,
+            flask_test_client=self.client,
+        )
 
-        with patch.object(app_module.langgraph_agent, "run") as mock_run:
-            mock_run.return_value = {
+        stream_events = [
+            {
+                "type": "thought",
+                "iteration": 1,
+                "thought": "Inspect fleet status.",
+                "action": "check_system_overview",
+                "workflow": {"framework": "LangGraph"},
+            },
+            {
+                "type": "observation",
+                "iteration": 1,
+                "observation": {"output": {"warning_count": 1}},
+            },
+            {
+                "type": "final",
                 "final_answer": "Fleet is in warning state.",
-                "steps": [
-                    {
-                        "thought": "Inspect fleet status.",
-                        "action": "check_system_overview",
-                        "output": {"warning_count": 1},
-                    }
-                ],
                 "token_usage": {
                     "input_tokens": 10,
                     "output_tokens": 5,
                     "total_tokens": 15,
                 },
-            }
+            },
+        ]
 
+        with patch.object(
+            app_module.langgraph_agent,
+            "run_stream",
+            return_value=iter(stream_events),
+        ) as mock_run_stream:
             try:
                 response = self.client.post(
                     "/api/telegram/webhook",
@@ -529,7 +546,9 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 payload = response.get_json()
                 self.assertEqual(payload["status"], "answered")
                 self.assertTrue(payload["history_chat_id"])
-                mock_run.assert_called_once_with("/overview system health")
+                mock_run_stream.assert_called_once_with(
+                    "/overview system health"
+                )
 
                 messages = get_messages(payload["history_chat_id"])
                 self.assertEqual(messages[0]["role"], "user")
@@ -542,9 +561,19 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                     "check_system_overview",
                     messages[1]["reasoning_steps"],
                 )
+                socket_events = socket_client.get_received()
+                event_names = [event["name"] for event in socket_events]
+                self.assertEqual(event_names[0], "telegram_chat_started")
+                self.assertIn("telegram_reasoning_event", event_names)
+                self.assertEqual(event_names[-1], "telegram_chat_completed")
+                self.assertEqual(
+                    socket_events[0]["args"][0]["chat_id"],
+                    payload["history_chat_id"],
+                )
                 sent_payload = mock_post.call_args.kwargs["json"]
                 self.assertEqual(sent_payload["text"], "Fleet is in warning state.")
             finally:
+                socket_client.disconnect()
                 os.environ.pop("TELEGRAM_BOT_TOKEN", None)
                 os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
                 os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
@@ -565,13 +594,17 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             },
         }
 
-        with patch.object(app_module.langgraph_agent, "run") as mock_run:
-            mock_run.return_value = {
-                "final_answer": "Fleet is stable.",
-                "steps": [],
-                "token_usage": None,
-            }
+        stream_events = [{
+            "type": "final",
+            "final_answer": "Fleet is stable.",
+            "token_usage": None,
+        }]
 
+        with patch.object(
+            app_module.langgraph_agent,
+            "run_stream",
+            return_value=iter(stream_events),
+        ) as mock_run_stream:
             try:
                 first_response = self.client.post(
                     "/api/telegram/webhook",
@@ -593,7 +626,9 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                     duplicate_response.get_json()["status"],
                     "duplicate",
                 )
-                mock_run.assert_called_once_with("/overview system health")
+                mock_run_stream.assert_called_once_with(
+                    "/overview system health"
+                )
                 self.assertEqual(mock_post.call_count, 1)
             finally:
                 os.environ.pop("TELEGRAM_BOT_TOKEN", None)

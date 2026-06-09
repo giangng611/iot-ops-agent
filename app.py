@@ -1,8 +1,8 @@
-from flask import Flask, render_template, redirect, url_for
+from flask import Flask, render_template, redirect, url_for, session
 from dotenv import load_dotenv
 from openai import OpenAI
 import os
-from flask_socketio import SocketIO
+from flask_socketio import SocketIO, join_room
 from simulator import DEVICES, generate_telemetry
 from collections import defaultdict, deque
 
@@ -105,6 +105,11 @@ app.register_blueprint(create_diagnose_blueprint({
 }))
 app.register_blueprint(create_telegram_blueprint({
     "langgraph_agent": langgraph_agent,
+    "emit_user_event": lambda user_id, event, payload: socketio.emit(
+        event,
+        payload,
+        to=f"user:{user_id}",
+    ),
 }))
 app.register_blueprint(prompt_bp)
 app.register_blueprint(profile_bp)
@@ -112,6 +117,14 @@ app.register_blueprint(storage_bp)
 app.register_blueprint(telemetry_bp)
 
 init_db()
+
+
+@socketio.on("connect")
+def connect_user_socket():
+    user_id = session.get("user_id")
+
+    if user_id is not None:
+        join_room(f"user:{user_id}")
 
 if len(get_all_latest_devices()) == 0:
     for device_id in DEVICES:

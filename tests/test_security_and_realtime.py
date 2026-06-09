@@ -20,6 +20,7 @@ import app as app_module  # noqa: E402
 import storage.mongo_store as mongo_store  # noqa: E402
 import storage.postgres_store as postgres_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
+import services.telegram_service as telegram_service  # noqa: E402
 from services.company_data_service import extract_display_metrics  # noqa: E402
 from storage.relational_store import (  # noqa: E402
     add_message,
@@ -35,6 +36,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
     def setUp(self):
         relational_store._last_fallback = None
         relational_store._postgres_circuit_open_until = 0.0
+        telegram_service._telegram_updates_inflight.clear()
+        telegram_service._telegram_updates_processed.clear()
         for postgres_url_var in ("SUPABASE_DB_URL", "DATABASE_URL", "POSTGRES_URL"):
             os.environ.pop(postgres_url_var, None)
         init_db()
@@ -145,6 +148,32 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertEqual(second_result, ["fallback"])
         self.assertEqual(len(postgres_calls), 1)
         self.assertEqual(len(sqlite_calls), 2)
+
+    def test_postgres_pool_timeout_falls_back_without_retry(self):
+        postgres_calls = []
+
+        with patch.object(
+            relational_store,
+            "using_postgres",
+            return_value=True,
+        ), patch.dict(os.environ, {
+            "APP_DB_FALLBACK_ENABLED": "true",
+        }):
+            result = relational_store._with_fallback(
+                "get_messages",
+                lambda: (
+                    postgres_calls.append("called"),
+                    (_ for _ in ()).throw(
+                        RuntimeError(
+                            "couldn't get a connection after 5.00 sec"
+                        )
+                    ),
+                )[1],
+                lambda: ["fallback"],
+            )
+
+        self.assertEqual(result, ["fallback"])
+        self.assertEqual(len(postgres_calls), 1)
 
     def test_chat_messages_require_owner(self):
         owner = self.create_user_once("owner", "owner-pass")
@@ -405,6 +434,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
     def test_telegram_webhook_rejects_invalid_secret(self, mock_post):
         os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
         os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
+        os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "456"
 
         try:
             response = self.client.post(
@@ -424,6 +454,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         finally:
             os.environ.pop("TELEGRAM_BOT_TOKEN", None)
             os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
+            os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
 
     @patch("services.telegram_service.requests.post")
     def test_telegram_help_sends_prompt_list(self, mock_post):
@@ -518,6 +549,56 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
                 os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
                 os.environ.pop("TELEGRAM_HISTORY_USER_ID", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_duplicate_update_is_answered_once(self, mock_post):
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
+        os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "456"
+        mock_post.return_value.raise_for_status.return_value = None
+        update = {
+            "update_id": 851724187,
+            "message": {
+                "chat": {"id": 123},
+                "from": {"id": 456, "username": "ops_user"},
+                "text": "/overview system health",
+            },
+        }
+
+        with patch.object(app_module.langgraph_agent, "run") as mock_run:
+            mock_run.return_value = {
+                "final_answer": "Fleet is stable.",
+                "steps": [],
+                "token_usage": None,
+            }
+
+            try:
+                first_response = self.client.post(
+                    "/api/telegram/webhook",
+                    headers={
+                        "X-Telegram-Bot-Api-Secret-Token": "expected-secret"
+                    },
+                    json=update,
+                )
+                duplicate_response = self.client.post(
+                    "/api/telegram/webhook",
+                    headers={
+                        "X-Telegram-Bot-Api-Secret-Token": "expected-secret"
+                    },
+                    json=update,
+                )
+
+                self.assertEqual(first_response.get_json()["status"], "answered")
+                self.assertEqual(
+                    duplicate_response.get_json()["status"],
+                    "duplicate",
+                )
+                mock_run.assert_called_once_with("/overview system health")
+                self.assertEqual(mock_post.call_count, 1)
+            finally:
+                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+                os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
+                os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
 
     def test_storage_status_api_reports_backend_shape(self):
         user = self.create_user_once("storage-api-user", "storage-pass")

@@ -1,5 +1,8 @@
 import json
 import os
+import threading
+import time
+from collections import OrderedDict
 
 import requests
 
@@ -9,6 +12,61 @@ from storage.relational_store import create_chat
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 MAX_TELEGRAM_MESSAGE_CHARS = 3900
+_telegram_update_lock = threading.Lock()
+_telegram_updates_inflight = set()
+_telegram_updates_processed = OrderedDict()
+
+
+def claim_telegram_update(update):
+    update_id = update.get("update_id") if isinstance(update, dict) else None
+
+    if update_id is None:
+        return None, True
+
+    update_key = str(update_id)
+    retention_seconds = int(
+        os.getenv("TELEGRAM_UPDATE_RETENTION_SECONDS", "86400")
+    )
+    cutoff = time.monotonic() - retention_seconds
+
+    with _telegram_update_lock:
+        while _telegram_updates_processed:
+            _, processed_at = next(iter(_telegram_updates_processed.items()))
+
+            if processed_at >= cutoff:
+                break
+
+            _telegram_updates_processed.popitem(last=False)
+
+        if (
+            update_key in _telegram_updates_inflight
+            or update_key in _telegram_updates_processed
+        ):
+            return update_key, False
+
+        _telegram_updates_inflight.add(update_key)
+
+    return update_key, True
+
+
+def complete_telegram_update(update_key):
+    if update_key is None:
+        return
+
+    with _telegram_update_lock:
+        _telegram_updates_inflight.discard(update_key)
+        _telegram_updates_processed[update_key] = time.monotonic()
+
+        while len(_telegram_updates_processed) > 2048:
+            _telegram_updates_processed.popitem(last=False)
+
+
+def release_telegram_update(update_key):
+    if update_key is None:
+        return
+
+    with _telegram_update_lock:
+        _telegram_updates_inflight.discard(update_key)
 
 
 def telegram_enabled():
@@ -179,34 +237,48 @@ def handle_telegram_update(update, langgraph_agent):
     if message is None:
         return {"status": "ignored"}
 
-    if not telegram_user_is_allowed(message["telegram_user_id"]):
-        send_telegram_message(
-            message["chat_id"],
-            "You are not allowed to use this IoT Ops Agent bot.",
-        )
-        return {"status": "forbidden"}
+    update_key, claimed = claim_telegram_update(update)
 
-    prompt, help_text = normalize_telegram_prompt(message["text"])
+    if not claimed:
+        return {"status": "duplicate"}
 
-    if help_text:
-        send_telegram_message(message["chat_id"], help_text)
-        return {"status": "help_sent"}
+    try:
+        if not telegram_user_is_allowed(message["telegram_user_id"]):
+            send_telegram_message(
+                message["chat_id"],
+                "You are not allowed to use this IoT Ops Agent bot.",
+            )
+            result = {"status": "forbidden"}
+        else:
+            prompt, help_text = normalize_telegram_prompt(message["text"])
 
-    result = langgraph_agent.run(prompt)
-    final_answer = result.get("final_answer") or "No answer was generated."
-    history_chat_id = save_telegram_history(message, {
-        "final_answer": final_answer,
-        "steps": result.get("steps", []),
-        "token_usage": result.get("token_usage"),
-    })
+            if help_text:
+                send_telegram_message(message["chat_id"], help_text)
+                result = {"status": "help_sent"}
+            else:
+                agent_result = langgraph_agent.run(prompt)
+                final_answer = (
+                    agent_result.get("final_answer")
+                    or "No answer was generated."
+                )
+                history_chat_id = save_telegram_history(message, {
+                    "final_answer": final_answer,
+                    "steps": agent_result.get("steps", []),
+                    "token_usage": agent_result.get("token_usage"),
+                })
 
-    send_telegram_message(message["chat_id"], final_answer)
+                send_telegram_message(message["chat_id"], final_answer)
+                result = {
+                    "status": "answered",
+                    "history_chat_id": history_chat_id,
+                    "step_count": len(agent_result.get("steps", [])),
+                }
+    except Exception:
+        release_telegram_update(update_key)
+        raise
 
-    return {
-        "status": "answered",
-        "history_chat_id": history_chat_id,
-        "step_count": len(result.get("steps", [])),
-    }
+    complete_telegram_update(update_key)
+    return result
 
 
 def build_set_webhook_payload(public_base_url):

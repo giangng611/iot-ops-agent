@@ -96,6 +96,21 @@ def _looks_like_stale_postgres_connection(error):
     return any(marker in message for marker in stale_markers)
 
 
+def _looks_like_postgres_timeout(error):
+    message = str(error).lower()
+    timeout_markers = [
+        "couldn't get a connection",
+        "operation timed out",
+        "timeout expired",
+        "query timed out",
+        "statement timeout",
+        "canceling statement due to statement timeout",
+        "another command is already in progress",
+    ]
+
+    return any(marker in message for marker in timeout_markers)
+
+
 def _with_fallback(operation_name, postgres_operation, sqlite_operation):
     if not using_postgres():
         return sqlite_operation()
@@ -104,13 +119,12 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
         return sqlite_operation()
 
     try:
-        result = postgres_operation()
-        clear_fallback()
-        return result
+        return postgres_operation()
     except Exception as exc:
         if (
             _postgres_retry_allowed(operation_name)
             and _looks_like_stale_postgres_connection(exc)
+            and not _looks_like_postgres_timeout(exc)
         ):
             close_postgres_pool()
             try:

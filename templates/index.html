@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=7">
+    <link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 
 <body>
@@ -157,28 +157,15 @@
             </section>
 
             <section id="devicesTab" class="tab-page">
-                <div class="page-header">
-                    <h1>Devices</h1>
-                    <p>Current IoT operational records and telemetry source</p>
-                </div>
-
-                <div class="data-source-panel">
+                <div class="page-header page-header-with-status">
                     <div>
-                        <label for="dataSourceSelect">Data Source</label>
-                        <select id="dataSourceSelect" onchange="changeDataSource(this.value)">
-                            <option value="simulator">Simulator</option>
-                            <option value="company">Company DB</option>
-                        </select>
+                        <h1>Devices</h1>
+                        <p>Current IoT operational records and telemetry source</p>
                     </div>
 
-                    <div>
-                        <span id="dataSourceBadge" class="source-badge simulator">
-                            Simulator
-                        </span>
-                        <p id="dataSourceNote">
-                            Simulator alert rules are active for demo telemetry.
-                        </p>
-                    </div>
+                    <span id="dataSourceBadge" class="source-badge simulator">
+                        Simulator
+                    </span>
                 </div>
 
                 <div class="device-controls">
@@ -418,8 +405,8 @@
                                 </div>
 
                                 <div>
-                                    <h3>Session Activity</h3>
-                                    <p>View current session, runtime, storage, and realtime status.</p>
+                                    <h3>Workspace & Data</h3>
+                                    <p>Choose the operational data source and review runtime status.</p>
                                 </div>
                             </div>
 

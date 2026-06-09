@@ -1323,6 +1323,126 @@ th {
     max-width: 420px;
 }
 
+.company-data-summary {
+    border-bottom: 1px solid #2f2f2f;
+    border-top: 1px solid #2f2f2f;
+    margin-bottom: 18px;
+    padding: 16px 4px;
+}
+
+.company-summary-stats {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(110px, 1fr));
+    gap: 12px;
+}
+
+.company-summary-stats div {
+    border-right: 1px solid #2f2f2f;
+    min-width: 0;
+    padding: 2px 16px;
+}
+
+.company-summary-stats div:first-child {
+    padding-left: 0;
+}
+
+.company-summary-stats div:last-child {
+    border-right: 0;
+}
+
+.company-summary-stats span {
+    color: #a1a1aa;
+    display: block;
+    font-size: 12px;
+    margin-bottom: 5px;
+}
+
+.company-summary-stats strong {
+    color: #f4f4f5;
+    font-size: 24px;
+    font-weight: 650;
+}
+
+.company-rules-notice {
+    color: #a1a1aa;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 15px 0 0;
+}
+
+.company-table-card .devices-table-wrapper {
+    max-height: min(62vh, 680px);
+}
+
+.company-table-card th,
+.company-table-card td {
+    vertical-align: top;
+}
+
+.company-device-cell {
+    min-width: 180px;
+}
+
+.company-device-cell > strong {
+    color: #f4f4f5;
+    display: block;
+    font-size: 14px;
+    font-weight: 650;
+}
+
+.company-id,
+.company-context-cell span,
+.company-context-cell small {
+    max-width: 210px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.company-context-cell {
+    color: #d4d4d8;
+    font-size: 12px;
+    max-width: 230px;
+}
+
+.company-context-cell span {
+    display: block;
+}
+
+.company-time-cell {
+    color: #d4d4d8;
+    font-size: 13px;
+    min-width: 145px;
+}
+
+.connection-badge {
+    border: 1px solid #52525b;
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 5px 9px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.connection-badge.connected {
+    background: #052e26;
+    border-color: #047857;
+    color: #86efac;
+}
+
+.connection-badge.disconnected {
+    background: #3f1518;
+    border-color: #991b1b;
+    color: #fecaca;
+}
+
+.connection-badge.unknown {
+    background: #27272a;
+    color: #d4d4d8;
+}
+
 .metric-chip-list {
     display: flex;
     flex-wrap: wrap;
@@ -1351,6 +1471,18 @@ th {
 .metric-empty {
     color: #a1a1aa;
     font-size: 12px;
+}
+
+@media (max-width: 900px) {
+    .company-summary-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .company-summary-stats div,
+    .company-summary-stats div:first-child {
+        border-right: 0;
+        padding: 6px 0;
+    }
 }
 
 /* Prompts */

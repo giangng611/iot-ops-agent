@@ -182,7 +182,19 @@ socket.on("telegram_chat_completed", async (data) => {
         latestReasoningSteps = reasoningSteps;
         latestTokenUsage = tokenUsage;
         pendingFinalAnswer = data.final_answer;
+
+        await reasoningTypingQueue;
+        await wait(WORKFLOW_EVENT_DELAY_MS);
+
         workflowFinalized = true;
+
+        if (reasoningDrawerOpen) {
+            renderReasoningStepsStatic(reasoningSteps, true);
+        }
+
+        updateReasoningWorkflowMap(reasoningSteps, true);
+        await wait(WORKFLOW_EVENT_DELAY_MS);
+
         document.getElementById("loading").classList.add("hidden");
 
         await renderAssistantMessage(
@@ -194,8 +206,6 @@ socket.on("telegram_chat_completed", async (data) => {
             chat ? findLatestUserMessage(chat.messages) : null,
             latestTokenUsage
         );
-
-        updateReasoningWorkflowMap(reasoningSteps, true);
     }
 
     if (chatId === telegramActiveChatId) {

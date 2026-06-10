@@ -258,9 +258,11 @@ Set `APP_DB_FALLBACK_ENABLED=false` when Supabase/Postgres should be the source
 of truth. With fallback disabled, app-data connection failures return backend
 errors instead of silently writing new rows to SQLite.
 
-Supabase RLS warnings are not blockers while the app uses only server-side
-Postgres connections from Flask. If browser-side Supabase clients are added,
-enable RLS and per-user policies before exposing publishable keys.
+Supabase RLS is enabled for all app-data tables, with direct access revoked
+from the `anon` and `authenticated` roles. Run
+`python3 scripts/check_supabase_rls.py` after applying migrations. If
+browser-side Supabase clients are added, define per-user policies and grant
+only the required operations before exposing publishable keys.
 
 ---
 

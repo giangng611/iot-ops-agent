@@ -10,17 +10,27 @@ load_dotenv(ROOT / ".env")
 from storage.postgres_store import apply_schema  # noqa: E402
 
 
-SCHEMA_PATH = ROOT / "supabase" / "migrations" / "20260602000100_create_app_tables.sql"
+MIGRATIONS_DIR = ROOT / "supabase" / "migrations"
 
 
 def main():
-    try:
-        apply_schema(SCHEMA_PATH)
-    except Exception as exc:
-        print(f"Supabase/Postgres schema apply failed: {exc}", file=sys.stderr)
+    migration_paths = sorted(MIGRATIONS_DIR.glob("*.sql"))
+
+    if not migration_paths:
+        print(f"No SQL migrations found in {MIGRATIONS_DIR}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Applied schema: {SCHEMA_PATH}")
+    for migration_path in migration_paths:
+        try:
+            apply_schema(migration_path)
+        except Exception as exc:
+            print(
+                f"Supabase/Postgres migration failed ({migration_path.name}): {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        print(f"Applied migration: {migration_path}")
 
 
 if __name__ == "__main__":

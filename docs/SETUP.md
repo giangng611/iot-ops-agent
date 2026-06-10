@@ -336,13 +336,18 @@ With fallback disabled, Supabase/Postgres connection failures return backend
 errors instead of writing new app data to SQLite. This avoids split-brain app
 data when Supabase is expected to be the source of truth.
 
-Supabase may show the app-data tables as unrestricted when Row Level Security
-is disabled. This project currently queries Supabase/Postgres from the Flask
-server through a Postgres connection string, not from browser-side Supabase
-clients. Because publishable/anon keys are not used for direct frontend table
-access, RLS is not a migration blocker in this phase. If the frontend later
-queries Supabase directly, enable RLS and add per-user policies before exposing
-the publishable key.
+The schema migrations enable Row Level Security and revoke direct table access
+from the Supabase `anon` and `authenticated` roles. The Flask server continues
+to use its direct Postgres connection; browser-side Data API access is denied
+by default. Verify the deployed security state with:
+
+```bash
+python3 scripts/check_supabase_rls.py
+```
+
+If browser-side Supabase access is added later, design per-user policies and
+explicitly grant only the required operations before exposing a publishable
+key.
 
 ---
 

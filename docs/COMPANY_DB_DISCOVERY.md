@@ -105,32 +105,39 @@ If the company database is unavailable, the API returns an explicit simulator fa
 
 Manual threshold prompts are supported as evidence scans over raw payloads, not official company alerts.
 
-## What The UI Calls Telemetry
+## Unified Device And Telemetry Read Model
 
-The company database does not currently expose a normalized telemetry table.
-The preview reads recent oneM2M content instances from:
+The company preview now builds a bounded, read-only model from:
 
 ```text
-datamgmt.CIN.con
+devicemgmt.NODE.childDeviceInfoEntities  -> device inventory
+authorization.IDENTITY                  -> identity metadata
+datamgmt.CNT                            -> container ownership
+datamgmt.CIN.con                        -> status and telemetry values
+datamgmt.DEVICE_TELEMETRY               -> metric names and units
+datamgmt.RULE                           -> device rule references
 ```
 
-`con` is application-defined content. The service parses JSON-shaped payloads
-and displays only primitive fields that are actually present. For example,
-`deviceName`, `deviceId`, and `status` are treated as identity or connection
-fields, while values such as `temperature` or `humidity` are shown as additional
-telemetry when they exist.
+Devices are joined by normalized platform identifiers or names. Telemetry
+without an explicit identity is joined only when its `CIN`/`CNT` ownership
+resolves to a known device. Unresolved telemetry is counted but never assigned
+by guesswork. Command content is counted separately and excluded from telemetry
+history.
 
-This extraction is a display adapter, not an approved company data model. It
-does not infer units, health states, device ownership, or alerts.
+`CIN.con` remains application-defined content. The adapter displays primitive
+measurement and event fields that actually exist, and uses a unit only when the
+telemetry catalog provides one unambiguous value.
 
-Before this preview becomes an operational dashboard, confirm:
+The database contains company rules in `datamgmt.RULE`. The PoC exposes rule
+counts per matched device but does not execute or reinterpret their business
+semantics. Raw connection status is telemetry evidence, not alert severity.
 
-- which `CNT` containers represent each device and telemetry stream
-- how a `CIN.pi` parent container maps to a device or asset
-- canonical metric names and units
+Before this becomes an operational dashboard, confirm:
+
 - which timestamp represents event time versus ingestion time
 - tenant and site ownership rules
-- approved Grafana or company alert rules
+- rule status, severity, trigger, and filter enum semantics
+- whether Grafana remains the authoritative alert execution source
 
-Until that contract exists, the platform should keep raw record context visible
-and label alert rules as not configured.
+Until that contract exists, the platform reports rules as discovered with
+evaluation pending and does not produce warning or critical counts.

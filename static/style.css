@@ -1823,6 +1823,30 @@ th {
     height: 100% !important;
 }
 
+.device-history-empty {
+    height: 100%;
+    overflow-y: auto;
+    border: 1px solid #333333;
+    border-radius: 8px;
+}
+
+.device-history-empty > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 14px 16px;
+    border-bottom: 1px solid #2f2f2f;
+}
+
+.device-history-empty span,
+.device-history-empty p {
+    color: #a1a1aa;
+}
+
+.device-history-empty p {
+    padding: 20px;
+}
+
 .sidebar-footer {
     margin-top: auto;
     padding-top: 16px;

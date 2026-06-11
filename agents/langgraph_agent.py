@@ -177,14 +177,18 @@ class LangGraphAgent:
     def generate_answer_node(self, state):
         source_instruction = (
             "If the tool result says rules_status is not_configured, be explicit "
-            "that approved company alert rules are not configured yet. Do not "
+            "that approved company alert rules are not configured yet. "
+            "If rules_status is available_unmapped, say that company rules were "
+            "discovered but their evaluation semantics are not integrated. Do not "
             "classify raw company records as healthy, warning, or critical unless "
             "the tool result already provides that classification. Manual threshold "
             "scan results are evidence only, not official alerts. When the source is "
-            "company_mongodb, describe the database and collection from provenance. "
-            "CIN records are content instances, not confirmed devices. Never call "
-            "an unclassified record unhealthy or claim missing alert rules caused an "
-            "incident. Summarize the record count and at most five samples."
+            "company_mongodb, describe the bounded collections from provenance. "
+            "Treat unified devices as inventory records augmented with identity, "
+            "latest CIN telemetry, and rule references. CIN records remain content "
+            "instances, not alerts. Never call an unclassified device unhealthy or "
+            "claim pending rule evaluation caused an incident. Summarize the device "
+            "count and at most five samples."
         )
         prompt = f"""
     You are an IoT operations assistant.
@@ -325,14 +329,17 @@ class LangGraphAgent:
 
     Data source instruction:
     If the tool result says rules_status is not_configured, be explicit that
-    approved company alert rules are not configured yet. Do not classify raw
+    approved company alert rules are not configured yet.
+    If rules_status is available_unmapped, say that company rules were
+    discovered but their evaluation semantics are not integrated. Do not classify
     company records as healthy, warning, or critical unless the tool result
     already provides that classification. Manual threshold scan results are
     evidence only, not official alerts. When the source is company_mongodb,
-    describe the database and collection from provenance. CIN records are
-    content instances, not confirmed devices. Never call an unclassified
-    record unhealthy or claim missing alert rules caused an incident.
-    Summarize the record count and at most five samples.
+    describe the bounded collections from provenance. Treat unified devices as
+    inventory records augmented with identity, latest CIN telemetry, and rule
+    references. CIN records remain content instances, not alerts. Never call an
+    unclassified device unhealthy or claim pending rule evaluation caused an
+    incident. Summarize the device count and at most five samples.
 
     User request:
     {state["user_input"]}

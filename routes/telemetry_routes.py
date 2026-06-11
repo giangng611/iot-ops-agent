@@ -91,7 +91,10 @@ def get_device_history(device_id):
     if unauthorized:
         return unauthorized
 
-    return jsonify(get_device_history_payload(device_id))
+    return jsonify(get_device_history_payload(
+        device_id,
+        get_selected_data_source(),
+    ))
 
 
 @telemetry_bp.route("/api/mongo/telemetry/health", methods=["GET"])

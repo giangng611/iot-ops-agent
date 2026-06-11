@@ -13,7 +13,10 @@ from storage.telemetry_store import (
     get_device_telemetry_history,
     get_telemetry_source,
 )
-from services.company_data_service import get_company_operational_payload
+from services.company_data_service import (
+    get_company_device_history,
+    get_company_operational_payload,
+)
 
 
 def get_telemetry_connected_grace_seconds():
@@ -99,7 +102,20 @@ def get_devices_payload(selected_source="simulator"):
     }
 
 
-def get_device_history_payload(device_id):
+def get_device_history_payload(device_id, selected_source="simulator"):
+    if selected_source == "company":
+        try:
+            return get_company_device_history(device_id)
+        except Exception as exc:
+            return {
+                "source": get_telemetry_source(),
+                "selected_source": "company",
+                "active_source": "simulator_fallback",
+                "reason": f"Company MongoDB history read failed: {exc}",
+                "device_id": device_id,
+                "history": get_device_telemetry_history(device_id),
+            }
+
     return {
         "source": get_telemetry_source(),
         "device_id": device_id,

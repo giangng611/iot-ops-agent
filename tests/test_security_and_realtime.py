@@ -27,9 +27,11 @@ import services.telegram_service as telegram_service  # noqa: E402
 import routes.telemetry_routes as telemetry_routes  # noqa: E402
 from services.chat_service import normalize_token_usage  # noqa: E402
 from services.company_data_service import (  # noqa: E402
+    enrich_company_metrics,
     extract_display_metrics,
     get_company_agent_context,
     get_metric_value,
+    normalize_company_key,
 )
 from storage.relational_store import (  # noqa: E402
     add_message,
@@ -385,6 +387,63 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertEqual(payload["alerts"]["warning_count"], 0)
         self.assertTrue(payload["devices"][0]["company_record"])
 
+    def test_company_device_history_uses_company_source(self):
+        user = self.create_user_once("company-history-user", "history-pass")
+        self.login_as(user)
+        self.client.post(
+            "/api/data-source",
+            json={"selected_source": "company"},
+        )
+
+        with patch(
+            "services.telemetry_service.get_company_device_history",
+            return_value={
+                "source": "company_mongodb",
+                "device_id": "device-1",
+                "history": [
+                    {
+                        "timestamp": 123,
+                        "metrics": [
+                            {
+                                "name": "temperature",
+                                "value": 28,
+                                "type": "int",
+                                "unit": "oC",
+                            }
+                        ],
+                    }
+                ],
+            },
+        ) as company_history:
+            response = self.client.get("/api/telemetry/device-1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["source"], "company_mongodb")
+        company_history.assert_called_once_with("device-1")
+
+    def test_company_device_history_falls_back_with_simulator(self):
+        user = self.create_user_once(
+            "company-history-fallback-user",
+            "history-pass",
+        )
+        self.login_as(user)
+        self.client.post(
+            "/api/data-source",
+            json={"selected_source": "company"},
+        )
+
+        with patch(
+            "services.telemetry_service.get_company_device_history",
+            side_effect=RuntimeError("company DB unavailable"),
+        ):
+            response = self.client.get("/api/telemetry/sensor-001")
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["selected_source"], "company")
+        self.assertEqual(payload["active_source"], "simulator_fallback")
+        self.assertEqual(payload["device_id"], "sensor-001")
+
     def test_company_payload_metrics_are_extracted_for_adaptive_ui(self):
         metrics = extract_display_metrics(
             '{"telemetry":{"temperature":28.5,"humidity":72},"online":true}'
@@ -431,18 +490,25 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             ],
         )
 
-    def test_company_agent_context_does_not_classify_cin_as_devices(self):
+    def test_company_agent_context_describes_unified_devices(self):
         records = [
             {
-                "record_id": f"cin-{index}",
-                "device_id": f"device-{index % 2}",
-                "device_name": f"Device {index % 2}",
+                "record_id": f"device-{index}",
+                "device_id": f"device-{index}",
+                "device_name": f"Device {index}",
                 "status": "connected",
                 "status_source": "payload",
+                "inventory_source": "devicemgmt.NODE",
+                "node_id": f"node-{index}",
+                "category": "sensor",
+                "model": "model-a",
+                "protocol": "mqtt",
                 "parent_container": f"cnt-{index}",
                 "timestamp": index,
                 "tenant_name": "tenant",
                 "app_domain_name": "domain",
+                "telemetry_record_count": index + 1,
+                "rule_count": 1,
                 "metrics": [
                     {"name": "temperature", "value": 20 + index}
                 ],
@@ -455,12 +521,15 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             return_value={
                 "source": "company_mongodb",
                 "provenance": {
-                    "database": "datamgmt",
-                    "collection": "CIN",
+                    "collections": [
+                        "devicemgmt.NODE",
+                        "datamgmt.CIN",
+                    ],
                 },
+                "summary": {"rule_count": 2},
                 "devices": records,
-                "rules_status": "not_configured",
-                "rules_message": "Rules are not configured.",
+                "rules_status": "available_unmapped",
+                "rules_message": "Rule evaluation is pending.",
             },
         ):
             context = get_company_agent_context()
@@ -468,14 +537,18 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertEqual(context["record_count"], 7)
         self.assertEqual(
             context["record_type"],
-            "oneM2M content instances (CIN)",
+            "unified company devices",
         )
-        self.assertEqual(context["distinct_device_count"], 2)
-        self.assertEqual(len(context["sample_records"]), 2)
+        self.assertEqual(context["distinct_device_count"], 7)
+        self.assertEqual(len(context["sample_records"]), 5)
         self.assertNotIn("status", context["sample_records"][0])
         self.assertIn(
-            "device identity is read from CIN.con",
+            "devicemgmt.NODE",
             context["interpretation_notes"][0],
+        )
+        self.assertEqual(
+            context["classification_status"],
+            "rules_available_evaluation_pending",
         )
 
     def test_company_metric_identity_values_are_read_from_payload(self):
@@ -491,6 +564,33 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertEqual(
             get_metric_value(metrics, {"status"}),
             "connected",
+        )
+
+    def test_company_device_keys_and_numeric_metrics_are_normalized(self):
+        self.assertEqual(
+            normalize_company_key("dvi-S123"),
+            "s123",
+        )
+        self.assertEqual(
+            normalize_company_key("S123"),
+            "s123",
+        )
+        self.assertEqual(
+            enrich_company_metrics(
+                [
+                    {"name": "deviceId", "value": "S123", "type": "str"},
+                    {"name": "temp", "value": "28.5", "type": "str"},
+                ],
+                {"temp": "oC"},
+            ),
+            [
+                {
+                    "name": "temp",
+                    "value": 28.5,
+                    "type": "float",
+                    "unit": "oC",
+                }
+            ],
         )
 
     def test_profile_usage_stats_include_storage_status(self):

@@ -22,11 +22,25 @@ MAX_MONGO_FIELDS = 32
 MAX_SCHEMA_SAMPLE_DOCUMENTS = 20
 MAX_SCHEMA_FIELD_PATHS = 120
 MAX_PAYLOAD_CHARS_TO_PARSE = 20000
-DEFAULT_OPERATIONAL_RECORD_LIMIT = 30
+DEFAULT_OPERATIONAL_RECORD_LIMIT = 100
+DEFAULT_COMPANY_CIN_SCAN_LIMIT = 500
+MAX_COMPANY_INVENTORY_RECORDS = 1000
 MAX_THRESHOLD_SCAN_RECORDS = 80
 MAX_THRESHOLD_MATCHES = 20
 MAX_DISPLAY_METRICS = 8
 MAX_AGENT_SAMPLE_RECORDS = 5
+DEVICE_ID_PREFIXES = ("dvi-", "dvi_", "nod_", "cnt-", "cnt_")
+SEMANTIC_METRIC_NAMES = {
+    "deviceid",
+    "device_id",
+    "devicename",
+    "device_name",
+    "id",
+    "name",
+    "status",
+    "connectionstatus",
+    "timestamp",
+}
 
 
 def get_company_db_url():
@@ -370,17 +384,33 @@ def list_company_mongo_collections(limit=DEFAULT_TABLE_LIMIT):
 
         for database_name in database_names:
             database = client[database_name]
+            namespaces = list(database.list_collections(
+                filter={"type": {"$in": ["collection", "view"]}},
+                nameOnly=True,
+            ))
 
-            for collection_name in database.list_collection_names()[:safe_limit]:
-                stats = database.command(
-                    "collStats",
-                    collection_name,
-                    scale=1,
-                    maxTimeMS=int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")),
-                )
+            for namespace in namespaces[:safe_limit]:
+                collection_name = namespace["name"]
+                namespace_type = namespace.get("type", "collection")
+                stats = {}
+
+                if namespace_type == "collection":
+                    stats = database.command(
+                        "collStats",
+                        collection_name,
+                        scale=1,
+                        maxTimeMS=int(
+                            os.getenv(
+                                "COMPANY_DB_STATEMENT_TIMEOUT_MS",
+                                "5000",
+                            )
+                        ),
+                    )
+
                 collections.append({
                     "database": database_name,
                     "collection": collection_name,
+                    "type": namespace_type,
                     "estimated_documents": stats.get("count", 0),
                     "avg_document_size": stats.get("avgObjSize"),
                 })
@@ -615,83 +645,534 @@ def get_metric_value(metrics, names):
     return None
 
 
-def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
-    safe_limit = max(1, min(int(limit), 100))
-    database_name = os.getenv("COMPANY_OPERATIONAL_DB", "datamgmt")
-    collection_name = os.getenv("COMPANY_OPERATIONAL_COLLECTION", "CIN")
+def normalize_company_key(value):
+    if value is None:
+        return ""
 
-    validate_identifier(database_name, "database name")
-    validate_identifier(collection_name, "collection name")
+    normalized = str(value).strip()
 
-    with get_company_mongo_client() as client:
-        collection = client[database_name][collection_name]
-        rows = list(
-            collection.find(
-                {},
-                {
-                    "_id": 0,
-                    "rn": 1,
-                    "pi": 1,
-                    "ct": 1,
-                    "lt": 1,
-                    "cnf": 1,
-                    "con": 1,
-                    "tenantId": 1,
-                    "tenantName": 1,
-                    "appDomainId": 1,
-                    "appDomainName": 1,
-                },
-            )
-            .sort("ct", -1)
-            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
-            .limit(safe_limit)
-        )
+    if not normalized:
+        return ""
 
-    records = []
+    lowered = normalized.lower()
 
-    for index, row in enumerate(rows, start=1):
-        payload_summary = summarize_payload(row.get("con"))
-        record_id = row.get("rn") or f"company-record-{index}"
-        timestamp = row.get("lt") or row.get("ct")
-        metrics = extract_display_metrics(row.get("con"))
-        payload_device_id = get_metric_value(
-            metrics,
-            {"deviceId", "device_id"},
-        )
-        payload_device_name = get_metric_value(
-            metrics,
-            {"deviceName", "device_name", "name"},
-        )
-        payload_status = get_metric_value(
-            metrics,
-            {"status", "connectionStatus"},
-        )
+    for prefix in DEVICE_ID_PREFIXES:
+        if lowered.startswith(prefix):
+            return normalized[len(prefix):].lower()
 
-        records.append({
-            "record_id": str(record_id),
-            "device_id": str(payload_device_id or record_id),
-            "device_name": payload_device_name,
-            "status": str(payload_status or "unclassified"),
-            "status_source": (
-                "payload"
-                if payload_status is not None
-                else "not_available"
-            ),
-            "cpu_usage": None,
-            "memory_usage": None,
-            "heartbeat_delay": None,
-            "timestamp": timestamp,
-            "company_record": True,
-            "rules_status": "not_configured",
-            "content_format": row.get("cnf"),
-            "parent_container": str(row.get("pi") or ""),
-            "tenant_name": row.get("tenantName"),
-            "app_domain_name": row.get("appDomainName"),
-            "payload_summary": payload_summary,
-            "metrics": metrics,
+    return lowered
+
+
+def company_reference_id(value):
+    if value is None:
+        return ""
+
+    if hasattr(value, "id"):
+        return str(value.id)
+
+    return str(value)
+
+
+def company_aliases(*values):
+    return {
+        normalized
+        for value in values
+        if (normalized := normalize_company_key(value))
+    }
+
+
+def coerce_company_metric_value(value):
+    if not isinstance(value, str):
+        return value
+
+    compact_value = value.strip()
+
+    if not compact_value:
+        return value
+
+    try:
+        if "." in compact_value:
+            return float(compact_value)
+
+        return int(compact_value)
+    except ValueError:
+        return value
+
+
+def metric_catalog_units(rows):
+    units_by_name = {}
+
+    for row in rows:
+        for metric in row.get("telemetry") or []:
+            name = str(metric.get("telemetryName") or "").strip().lower()
+            unit = str(metric.get("uom") or "").strip()
+
+            if not name or not unit:
+                continue
+
+            units_by_name.setdefault(name, set()).add(unit)
+
+    return {
+        name: next(iter(units))
+        for name, units in units_by_name.items()
+        if len(units) == 1
+    }
+
+
+def enrich_company_metrics(metrics, units):
+    enriched = []
+
+    for metric in metrics:
+        name = str(metric.get("name") or "")
+
+        if name.lower() in SEMANTIC_METRIC_NAMES:
+            continue
+
+        value = coerce_company_metric_value(metric.get("value"))
+        enriched.append({
+            **metric,
+            "value": value,
+            "type": describe_value_type(value),
+            "unit": units.get(name.lower(), ""),
         })
 
-    return records
+    return enriched
+
+
+def company_device_record(node, child, identity=None):
+    raw_id = child.get("_id") or child.get("rn") or child.get("dvnm")
+    aliases = company_aliases(
+        child.get("_id"),
+        child.get("rn"),
+        child.get("dvnm"),
+    )
+
+    return {
+        "record_id": str(child.get("rn") or raw_id),
+        "device_id": (
+            str(raw_id)[4:]
+            if str(raw_id).lower().startswith(("dvi-", "dvi_"))
+            else str(raw_id)
+        ),
+        "device_name": child.get("dvnm") or child.get("rn") or raw_id,
+        "status": "unknown",
+        "status_source": "not_available",
+        "timestamp": node.get("lt") or node.get("ct"),
+        "company_record": True,
+        "inventory_source": "devicemgmt.NODE",
+        "node_id": node.get("rn"),
+        "node_type": node.get("nty"),
+        "category": child.get("dty") or node.get("category"),
+        "connectivity": child.get("cnty"),
+        "protocol": child.get("ptl"),
+        "manufacturer": child.get("man"),
+        "model": child.get("mod"),
+        "firmware_version": child.get("fwv"),
+        "software_version": child.get("swv"),
+        "os_version": child.get("osv"),
+        "identity_active": identity.get("active") if identity else None,
+        "identity_category": identity.get("category") if identity else None,
+        "tenant_name": node.get("tenantName"),
+        "app_domain_name": node.get("appDomainName"),
+        "parent_container": "",
+        "content_format": None,
+        "payload_summary": None,
+        "metrics": [],
+        "telemetry_record_count": 0,
+        "rule_count": 0,
+        "rules_status": "available_unmapped",
+        "cpu_usage": None,
+        "memory_usage": None,
+        "heartbeat_delay": None,
+        "_aliases": aliases,
+        "_history": [],
+        "_metric_timestamps": {},
+    }
+
+
+def resolve_company_device(alias_index, aliases):
+    for alias in aliases:
+        device = alias_index.get(alias)
+
+        if device:
+            return device
+
+    return None
+
+
+def load_company_device_read_model(
+    client,
+    cin_limit=DEFAULT_COMPANY_CIN_SCAN_LIMIT,
+):
+    timeout_ms = int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000"))
+    safe_cin_limit = max(1, min(int(cin_limit), 1000))
+    nodes = list(
+        client["devicemgmt"]["NODE"].find(
+            {},
+            {
+                "_id": 0,
+                "rn": 1,
+                "ni": 1,
+                "nty": 1,
+                "category": 1,
+                "ct": 1,
+                "lt": 1,
+                "tenantId": 1,
+                "tenantName": 1,
+                "appDomainId": 1,
+                "appDomainName": 1,
+                "childDeviceInfoEntities": 1,
+            },
+        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    )
+    identities = list(
+        client["authorization"]["IDENTITY"].find(
+            {},
+            {
+                "_id": 0,
+                "name": 1,
+                "userId": 1,
+                "category": 1,
+                "type": 1,
+                "active": 1,
+                "tenantId": 1,
+            },
+        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    )
+    containers = list(
+        client["datamgmt"]["CNT"].find(
+            {},
+            {
+                "_id": 1,
+                "rn": 1,
+                "pi": 1,
+                "cr": 1,
+                "parentContainer": 1,
+            },
+        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    )
+    rules = list(
+        client["datamgmt"]["RULE"].find(
+            {},
+            {
+                "_id": 0,
+                "deviceIds": 1,
+                "name": 1,
+                "status": 1,
+                "severity": 1,
+                "triggerType": 1,
+            },
+        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    )
+    telemetry_catalog = list(
+        client["datamgmt"]["DEVICE_TELEMETRY"].find(
+            {},
+            {"_id": 0, "telemetry": 1},
+        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    )
+    content_instances = list(
+        client["datamgmt"]["CIN"].find(
+            {},
+            {
+                "_id": 0,
+                "rn": 1,
+                "pi": 1,
+                "parentContainer": 1,
+                "ct": 1,
+                "lt": 1,
+                "cnf": 1,
+                "con": 1,
+                "tenantId": 1,
+                "tenantName": 1,
+                "appDomainId": 1,
+                "appDomainName": 1,
+            },
+        )
+        .sort("ct", -1)
+        .max_time_ms(timeout_ms)
+        .limit(safe_cin_limit)
+    )
+
+    identities_by_alias = {}
+
+    for identity in identities:
+        for alias in company_aliases(
+            identity.get("name"),
+            identity.get("userId"),
+        ):
+            identities_by_alias.setdefault(alias, identity)
+
+    devices = []
+    alias_index = {}
+
+    for node in nodes:
+        for child in node.get("childDeviceInfoEntities") or []:
+            identity = resolve_company_device(
+                identities_by_alias,
+                company_aliases(child.get("dvnm"), child.get("_id")),
+            )
+            device = company_device_record(node, child, identity)
+            devices.append(device)
+
+            for alias in device["_aliases"]:
+                alias_index.setdefault(alias, device)
+
+    containers_by_id = {
+        company_reference_id(container.get("_id")): container
+        for container in containers
+    }
+    containers_by_name = {
+        str(container.get("rn")): container
+        for container in containers
+        if container.get("rn")
+    }
+    units = metric_catalog_units(telemetry_catalog)
+    unmapped_telemetry_count = 0
+    command_record_count = 0
+
+    for row in content_instances:
+        parsed_payload = parse_payload_value(row.get("con"))
+
+        if not isinstance(parsed_payload, dict):
+            continue
+
+        is_command_record = bool(
+            parsed_payload.get("commandId")
+            or parsed_payload.get("commandType")
+        )
+
+        if is_command_record:
+            command_record_count += 1
+            continue
+
+        payload_aliases = company_aliases(
+            parsed_payload.get("deviceId"),
+            parsed_payload.get("deviceName"),
+            parsed_payload.get("id"),
+            parsed_payload.get("name"),
+        )
+        device = resolve_company_device(alias_index, payload_aliases)
+        parent_reference = (
+            company_reference_id(row.get("parentContainer"))
+            or str(row.get("pi") or "")
+        )
+        container = (
+            containers_by_id.get(parent_reference)
+            or containers_by_name.get(parent_reference)
+        )
+
+        if not device and container:
+            device = resolve_company_device(
+                alias_index,
+                company_aliases(
+                    container.get("pi"),
+                    container.get("cr"),
+                    container.get("rn"),
+                ),
+            )
+
+        raw_metrics = extract_display_metrics(row.get("con"))
+        metrics = enrich_company_metrics(raw_metrics, units)
+        payload_status = get_metric_value(
+            raw_metrics,
+            {"status", "connectionStatus"},
+        )
+        has_direct_device_identity = bool(
+            parsed_payload.get("deviceId")
+            or parsed_payload.get("deviceName")
+        )
+        if not device and has_direct_device_identity:
+            device_id = (
+                parsed_payload.get("deviceId")
+                or parsed_payload.get("deviceName")
+            )
+            device = {
+                "record_id": str(row.get("rn") or device_id),
+                "device_id": str(device_id),
+                "device_name": (
+                    parsed_payload.get("deviceName")
+                    or parsed_payload.get("deviceId")
+                ),
+                "status": "unknown",
+                "status_source": "not_available",
+                "timestamp": row.get("lt") or row.get("ct"),
+                "company_record": True,
+                "inventory_source": "datamgmt.CIN",
+                "node_id": None,
+                "node_type": None,
+                "category": None,
+                "connectivity": None,
+                "protocol": None,
+                "manufacturer": None,
+                "model": None,
+                "firmware_version": None,
+                "software_version": None,
+                "os_version": None,
+                "identity_active": None,
+                "identity_category": None,
+                "tenant_name": row.get("tenantName"),
+                "app_domain_name": row.get("appDomainName"),
+                "parent_container": str(row.get("pi") or ""),
+                "content_format": row.get("cnf"),
+                "payload_summary": summarize_payload(row.get("con")),
+                "metrics": [],
+                "telemetry_record_count": 0,
+                "rule_count": 0,
+                "rules_status": "available_unmapped",
+                "cpu_usage": None,
+                "memory_usage": None,
+                "heartbeat_delay": None,
+                "_aliases": payload_aliases,
+                "_history": [],
+                "_metric_timestamps": {},
+            }
+            devices.append(device)
+
+            for alias in payload_aliases:
+                alias_index.setdefault(alias, device)
+
+        if not device:
+            if metrics:
+                unmapped_telemetry_count += 1
+
+            continue
+
+        timestamp = row.get("lt") or row.get("ct")
+        device["telemetry_record_count"] += 1
+        device["_history"].append({
+            "record_id": row.get("rn"),
+            "timestamp": timestamp,
+            "status": payload_status,
+            "metrics": metrics,
+            "parent_container": str(row.get("pi") or ""),
+        })
+
+        if timestamp and (
+            not device.get("timestamp")
+            or int(timestamp) > int(device["timestamp"])
+        ):
+            device["timestamp"] = timestamp
+            device["record_id"] = str(row.get("rn") or device["record_id"])
+            device["parent_container"] = str(row.get("pi") or "")
+            device["content_format"] = row.get("cnf")
+            device["payload_summary"] = summarize_payload(row.get("con"))
+            device["tenant_name"] = (
+                row.get("tenantName") or device.get("tenant_name")
+            )
+            device["app_domain_name"] = (
+                row.get("appDomainName") or device.get("app_domain_name")
+            )
+
+        if payload_status is not None and device["status_source"] == "not_available":
+            device["status"] = str(payload_status)
+            device["status_source"] = "payload"
+
+        for metric in metrics:
+            metric_name = metric.get("name")
+
+            if not metric_name:
+                continue
+
+            previous_timestamp = device["_metric_timestamps"].get(metric_name)
+
+            if previous_timestamp is not None and int(previous_timestamp) >= int(timestamp or 0):
+                continue
+
+            device["_metric_timestamps"][metric_name] = timestamp or 0
+            existing_index = next(
+                (
+                    index
+                    for index, existing in enumerate(device["metrics"])
+                    if existing.get("name") == metric_name
+                ),
+                None,
+            )
+
+            if existing_index is None:
+                device["metrics"].append(metric)
+            else:
+                device["metrics"][existing_index] = metric
+
+        device["metrics"] = device["metrics"][:MAX_DISPLAY_METRICS]
+
+    for rule in rules:
+        matched_devices = set()
+
+        for raw_device_id in rule.get("deviceIds") or []:
+            device = resolve_company_device(
+                alias_index,
+                company_aliases(raw_device_id),
+            )
+
+            if device and id(device) not in matched_devices:
+                device["rule_count"] += 1
+                matched_devices.add(id(device))
+
+    for device in devices:
+        device["_history"].sort(
+            key=lambda item: int(item.get("timestamp") or 0),
+        )
+        device.pop("_metric_timestamps", None)
+
+    return {
+        "devices": devices,
+        "inventory_node_count": len(nodes),
+        "identity_count": len(identities),
+        "container_count": len(containers),
+        "rule_count": len(rules),
+        "telemetry_catalog_count": len(telemetry_catalog),
+        "content_instance_count": len(content_instances),
+        "unmapped_telemetry_count": unmapped_telemetry_count,
+        "command_record_count": command_record_count,
+    }
+
+
+def serialize_company_device(device):
+    return {
+        key: value
+        for key, value in device.items()
+        if not key.startswith("_")
+    }
+
+
+def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
+    with get_company_mongo_client() as client:
+        model = load_company_device_read_model(
+            client,
+            max(int(limit), DEFAULT_COMPANY_CIN_SCAN_LIMIT),
+        )
+
+    return [
+        serialize_company_device(device)
+        for device in model["devices"]
+    ][:max(1, min(int(limit), 100))]
+
+
+def get_company_device_history(device_id, limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
+    safe_limit = max(1, min(int(limit), 100))
+
+    with get_company_mongo_client() as client:
+        model = load_company_device_read_model(client)
+
+    target_alias = normalize_company_key(device_id)
+
+    for device in model["devices"]:
+        if target_alias not in device.get("_aliases", set()):
+            continue
+
+        return {
+            "source": "company_mongodb",
+            "device_id": device.get("device_id"),
+            "device_name": device.get("device_name"),
+            "history": device.get("_history", [])[-safe_limit:],
+        }
+
+    return {
+        "source": "company_mongodb",
+        "device_id": device_id,
+        "device_name": None,
+        "history": [],
+    }
 
 
 def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
@@ -701,41 +1182,69 @@ def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
         )
 
     try:
-        records = list_company_operational_records(limit)
+        with get_company_mongo_client() as client:
+            model = load_company_device_read_model(
+                client,
+                max(int(limit), DEFAULT_COMPANY_CIN_SCAN_LIMIT),
+            )
     except Exception as exc:
         return simulator_fallback_snapshot(
             f"Company MongoDB read failed: {exc}"
         )
 
+    records = [
+        serialize_company_device(device)
+        for device in model["devices"]
+    ][:max(1, min(int(limit), 100))]
+
     return {
         "source": "company_mongodb",
         "provenance": {
-            "database": os.getenv("COMPANY_OPERATIONAL_DB", "datamgmt"),
-            "collection": os.getenv(
-                "COMPANY_OPERATIONAL_COLLECTION",
-                "CIN",
-            ),
-            "query": "latest content instances sorted by ct descending",
+            "collections": [
+                "devicemgmt.NODE",
+                "authorization.IDENTITY",
+                "datamgmt.CNT",
+                "datamgmt.CIN",
+                "datamgmt.DEVICE_TELEMETRY",
+                "datamgmt.RULE",
+            ],
+            "query": "bounded device inventory and recent telemetry join",
             "payload_field": "con",
-            "record_id_field": "rn",
-            "parent_field": "pi",
-            "limit": max(1, min(int(limit), 100)),
+            "device_inventory_field": "NODE.childDeviceInfoEntities",
+            "identity_join": "device name",
+            "telemetry_join": "payload identity or CIN/CNT parent ownership",
+            "cin_scan_limit": max(
+                int(limit),
+                DEFAULT_COMPANY_CIN_SCAN_LIMIT,
+            ),
         },
         "selected_source": "company",
         "active_source": "company_mongodb",
-        "rules_status": "not_configured",
+        "rules_status": "available_unmapped",
         "rules_message": (
-            "Company alert rules are not configured yet. These records are "
-            "raw company data summaries and are not classified as alerts."
+            "Company rules were discovered, but their business semantics and "
+            "runtime evaluation are not integrated yet. Raw device status and "
+            "telemetry are not classified as alerts."
         ),
+        "summary": {
+            "device_count": len(records),
+            "inventory_node_count": model["inventory_node_count"],
+            "identity_count": model["identity_count"],
+            "container_count": model["container_count"],
+            "rule_count": model["rule_count"],
+            "telemetry_catalog_count": model["telemetry_catalog_count"],
+            "content_instance_count": model["content_instance_count"],
+            "unmapped_telemetry_count": model["unmapped_telemetry_count"],
+            "command_record_count": model["command_record_count"],
+        },
         "devices": records,
         "alerts": {
             "critical_count": 0,
             "warning_count": 0,
-            "rules_status": "not_configured",
+            "rules_status": "available_unmapped",
             "message": (
-                "Company alert rules are not configured yet. Alert counts "
-                "are intentionally not derived from raw records."
+                "Company rules exist, but this PoC does not yet execute their "
+                "business semantics. Alert counts remain intentionally empty."
             ),
         },
     }
@@ -749,27 +1258,27 @@ def get_company_agent_context(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
 
     records = payload.get("devices") or []
     samples = []
-    seen_device_ids = set()
 
     for record in records:
-        device_id = record.get("device_id")
-
-        if device_id in seen_device_ids:
-            continue
-
-        seen_device_ids.add(device_id)
         metrics = record.get("metrics") or []
         samples.append({
             "record_id": record.get("record_id"),
-            "record_type": "oneM2M content instance",
-            "device_id": device_id,
+            "record_type": "unified company device",
+            "device_id": record.get("device_id"),
             "device_name": record.get("device_name"),
             "latest_payload_status": record.get("status"),
             "status_source": record.get("status_source"),
+            "inventory_source": record.get("inventory_source"),
+            "node_id": record.get("node_id"),
+            "category": record.get("category"),
+            "model": record.get("model"),
+            "protocol": record.get("protocol"),
             "parent_container": record.get("parent_container"),
             "timestamp": record.get("timestamp"),
             "tenant_name": record.get("tenant_name"),
             "app_domain_name": record.get("app_domain_name"),
+            "telemetry_record_count": record.get("telemetry_record_count"),
+            "rule_count": record.get("rule_count"),
             "metric_names": [
                 metric.get("name")
                 for metric in metrics
@@ -784,21 +1293,19 @@ def get_company_agent_context(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
     return {
         "source": payload["source"],
         "provenance": payload.get("provenance"),
+        "summary": payload.get("summary"),
         "record_count": len(records),
-        "distinct_device_count": len({
-            record.get("device_id")
-            for record in records
-            if record.get("device_id")
-        }),
-        "record_type": "oneM2M content instances (CIN)",
+        "distinct_device_count": len(records),
+        "record_type": "unified company devices",
         "rules_status": payload.get("rules_status"),
         "rules_message": payload.get("rules_message"),
-        "classification_status": "not_available",
+        "classification_status": "rules_available_evaluation_pending",
         "interpretation_notes": [
-            "CIN rn values identify content-instance records; device identity is read from CIN.con when available.",
+            "Device inventory is read from devicemgmt.NODE child device entities and augmented with authorization identity metadata.",
+            "Latest status and telemetry are joined from datamgmt.CIN using payload identity or CIN/CNT ownership.",
             "Payload status is a raw device-reported value, not an alert severity.",
-            "No company alert rules are configured, so health or severity cannot be inferred.",
-            "Absence of alert rules is a platform limitation, not evidence of an operational incident.",
+            "Company rules were discovered in datamgmt.RULE, but their business evaluation semantics are not integrated.",
+            "Unmapped telemetry is reported separately and is never assigned to a device by guesswork.",
         ],
         "sample_records": samples,
     }
@@ -866,7 +1373,7 @@ def scan_company_payload_threshold(threshold, limit=MAX_THRESHOLD_SCAN_RECORDS):
 
     return {
         "source": "company_mongodb",
-        "rules_status": "not_configured",
+        "rules_status": "available_unmapped",
         "threshold": threshold,
         "scanned_records": len(rows),
         "parseable_payloads": parseable_payloads,

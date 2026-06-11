@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=11">
+    <link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 
 <body>
@@ -463,7 +463,9 @@
         <div class="device-history-header">
             <div>
                 <h2 id="deviceHistoryTitle">Device History</h2>
-                <p>CPU, memory, and heartbeat delay over recent telemetry records.</p>
+                <p id="deviceHistorySubtitle">
+                    CPU, memory, and heartbeat delay over recent telemetry records.
+                </p>
             </div>
 
             <button onclick="closeDeviceHistory()">
@@ -473,6 +475,7 @@
 
         <div class="device-history-chart-wrapper">
             <canvas id="deviceHistoryChart"></canvas>
+            <div id="deviceHistoryEmpty" class="device-history-empty hidden"></div>
         </div>
     </div>
 </div>
@@ -678,6 +681,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=17"></script>
+<script src="/static/script.js?v=18"></script>
 </body>
 </html>

@@ -1434,6 +1434,7 @@ async function refreshDevices() {
             rules_status: data.rules_status || "unknown",
             reason: data.reason || "",
             rules_message: data.rules_message || "",
+            summary: data.summary || {},
             alerts: data.alerts || {}
         };
         allDevices = data.devices || [];
@@ -1534,6 +1535,15 @@ function updateDataSourceDisplay() {
         note.textContent = (
             currentDataSourceState.rules_message ||
             "Company alert rules are not configured yet. Showing raw company record summaries only."
+        );
+        note.classList.remove("hidden");
+        return;
+    }
+
+    if (rulesStatus === "available_unmapped") {
+        note.textContent = (
+            currentDataSourceState.rules_message ||
+            "Company rules were discovered, but rule evaluation is not integrated yet."
         );
         note.classList.remove("hidden");
         return;
@@ -1659,9 +1669,6 @@ function getCompanyMetric(device, names) {
 }
 
 function getCompanyRecordView(device) {
-    const nameMetric = getCompanyMetric(device, ["deviceName", "device_name", "name"]);
-    const idMetric = getCompanyMetric(device, ["deviceId", "device_id"]);
-    const statusMetric = getCompanyMetric(device, ["status", "connectionStatus"]);
     const semanticNames = new Set([
         "devicename",
         "device_name",
@@ -1673,9 +1680,9 @@ function getCompanyRecordView(device) {
     ]);
 
     return {
-        name: nameMetric?.value || "Unnamed device",
-        id: idMetric?.value || device.device_id || "Unknown ID",
-        status: statusMetric?.value || "unknown",
+        name: device.device_name || "Unnamed device",
+        id: device.device_id || "Unknown ID",
+        status: device.status || "unknown",
         telemetry: (device.metrics || []).filter(metric => (
             !semanticNames.has(String(metric.name || "").toLowerCase())
         ))
@@ -1693,6 +1700,7 @@ function renderCompanyMetrics(metrics) {
                 <span class="metric-chip">
                     <strong>${escapeHtml(metric.name)}</strong>
                     ${escapeHtml(metric.value)}
+                    ${metric.unit ? `<small>${escapeHtml(metric.unit)}</small>` : ""}
                 </span>
             `).join("")}
         </div>
@@ -1707,7 +1715,8 @@ function renderCompanyDataSummary() {
     }
 
     const views = allDevices.map(getCompanyRecordView);
-    const uniqueDevices = new Set(
+    const sourceSummary = currentDataSourceState.summary || {};
+    const uniqueDevices = sourceSummary.device_count || new Set(
         views.map(view => String(view.id)).filter(Boolean)
     ).size;
     const statusCounts = views.reduce((counts, view) => {
@@ -1718,6 +1727,9 @@ function renderCompanyDataSummary() {
     const tenantCount = new Set(
         allDevices.map(device => device.tenant_name).filter(Boolean)
     ).size;
+    const telemetryDevices = allDevices.filter(
+        device => Number(device.telemetry_record_count || 0) > 0
+    ).length;
     const connectedCount = Object.entries(statusCounts)
         .filter(([status]) => status.includes("connected") && !status.includes("disconnected"))
         .reduce((total, [, count]) => total + count, 0);
@@ -1728,12 +1740,12 @@ function renderCompanyDataSummary() {
     summary.innerHTML = `
         <div class="company-summary-stats">
             <div>
-                <span>Records loaded</span>
-                <strong>${allDevices.length}</strong>
+                <span>Inventory devices</span>
+                <strong>${uniqueDevices}</strong>
             </div>
             <div>
-                <span>Unique devices</span>
-                <strong>${uniqueDevices}</strong>
+                <span>With telemetry</span>
+                <strong>${telemetryDevices}</strong>
             </div>
             <div>
                 <span>Connected</span>
@@ -1744,13 +1756,14 @@ function renderCompanyDataSummary() {
                 <strong>${disconnectedCount}</strong>
             </div>
             <div>
-                <span>Tenants</span>
-                <strong>${tenantCount}</strong>
+                <span>Rules discovered</span>
+                <strong>${sourceSummary.rule_count || 0}</strong>
             </div>
         </div>
         <p class="company-rules-notice">
-            Live company records. Alert rules are not configured yet, so connection
-            status is shown as telemetry and is not treated as an operational alert.
+            ${sourceSummary.unmapped_telemetry_count || 0} telemetry records could not
+            be mapped safely. ${tenantCount} tenant${tenantCount === 1 ? "" : "s"} are
+            represented. Rules are visible but are not executed by this PoC yet.
         </p>
     `;
 }
@@ -1789,10 +1802,10 @@ function renderDeviceTable() {
         ? `
             <th>Device</th>
             <th>Connection</th>
-            <th>Telemetry</th>
+            <th>Latest telemetry</th>
+            <th>Inventory</th>
             <th>Last observed</th>
-            <th>Tenant / Domain</th>
-            <th>Source context</th>
+            <th>Rules / History</th>
         `
         : `
             <th>Device ID</th>
@@ -1831,6 +1844,11 @@ function renderDeviceTable() {
         const searchableText = [
             device.device_id,
             device.parent_container,
+            device.device_name,
+            device.node_id,
+            device.category,
+            device.model,
+            device.manufacturer,
             device.app_domain_name,
             device.tenant_name,
             searchableMetrics
@@ -1895,22 +1913,32 @@ function renderDeviceTable() {
                         </span>
                     </td>
                     <td>${renderCompanyMetrics(view.telemetry)}</td>
+                    <td class="company-context-cell">
+                        <span>${escapeHtml(device.category || "Unknown type")}</span>
+                        <small class="device-subtext">
+                            ${escapeHtml([
+                                device.manufacturer,
+                                device.model,
+                                device.protocol
+                            ].filter(Boolean).join(" · ") || "No model metadata")}
+                        </small>
+                        <small class="device-subtext" title="${escapeHtml(device.node_id || "")}">
+                            ${escapeHtml(device.node_id || device.inventory_source || "Telemetry only")}
+                        </small>
+                    </td>
                     <td class="company-time-cell">
                         ${escapeHtml(formatCompanyTimestamp(device.timestamp))}
-                    </td>
-                    <td>
-                        ${escapeHtml(device.tenant_name || "No tenant")}
                         <small class="device-subtext">
-                            ${escapeHtml(device.app_domain_name || "No domain")}
+                            ${Number(device.telemetry_record_count || 0)} records
                         </small>
                     </td>
                     <td class="company-context-cell">
-                        <span title="${escapeHtml(device.device_id || "")}">
-                            Record ${escapeHtml(device.device_id || "—")}
+                        <span>
+                            ${Number(device.rule_count || 0)} mapped rules
                         </span>
-                        <small class="device-subtext" title="${escapeHtml(device.parent_container || "")}">
-                            Parent ${escapeHtml(device.parent_container || "—")}
-                        </small>
+                        <button onclick="showDeviceHistory('${escapeHtml(device.device_id)}')">
+                            History
+                        </button>
                     </td>
                 </tr>
             `;
@@ -3023,7 +3051,9 @@ function renderAlertCenter() {
 
     if (
         currentDataSourceState.selected_source === "company" &&
-        currentDataSourceState.rules_status === "not_configured"
+        ["not_configured", "available_unmapped"].includes(
+            currentDataSourceState.rules_status
+        )
     ) {
         badge.classList.add("hidden");
 
@@ -3033,8 +3063,8 @@ function renderAlertCenter() {
 
         summary.innerHTML = `
             <div class="alert-summary-card rules-pending-alert">
-                <h2>Rules pending</h2>
-                <p>Company alert rules are not configured.</p>
+                <h2>Rule evaluation pending</h2>
+                <p>Company rules are visible, but this PoC does not execute them yet.</p>
             </div>
         `;
         alertList.innerHTML = `
@@ -3042,9 +3072,9 @@ function renderAlertCenter() {
                 <div>
                     <h3>Company DB connected</h3>
                     <p>
-                        Raw company records are available in Devices, but the
-                        platform will not classify warning or critical alerts
-                        until approved business rules or Grafana tools are configured.
+                        Device inventory and telemetry are available in Devices.
+                        Warning and critical counts remain empty until the rule
+                        semantics or Grafana alert tools are integrated.
                     </p>
                 </div>
             </div>
@@ -3493,14 +3523,19 @@ function renderMetricsChart() {
 async function showDeviceHistory(deviceId) {
     const modal = document.getElementById("deviceHistoryModal");
     const title = document.getElementById("deviceHistoryTitle");
+    const subtitle = document.getElementById("deviceHistorySubtitle");
 
     title.textContent = `${deviceId} Telemetry History`;
+    subtitle.textContent = "Loading recent telemetry...";
     modal.classList.remove("hidden");
 
-    const response = await fetch(`/api/telemetry/${deviceId}`);
+    const response = await fetch(`/api/telemetry/${encodeURIComponent(deviceId)}`);
     const data = await response.json();
 
-    renderDeviceHistoryChart(data.history);
+    subtitle.textContent = data.source === "company_mongodb"
+        ? "Raw company telemetry values. Units are shown when present in the telemetry catalog."
+        : "CPU, memory, and heartbeat delay over recent telemetry records.";
+    renderDeviceHistoryChart(data.history, data.source);
 }
 
 function closeDeviceHistory() {
@@ -3508,10 +3543,24 @@ function closeDeviceHistory() {
     modal.classList.add("hidden");
 }
 
-function renderDeviceHistoryChart(history) {
+function renderDeviceHistoryChart(history, source = "simulator") {
     const canvas = document.getElementById("deviceHistoryChart");
+    const emptyState = document.getElementById("deviceHistoryEmpty");
 
-    if (!canvas) {
+    if (!canvas || !emptyState) {
+        return;
+    }
+
+    if (deviceHistoryChart) {
+        deviceHistoryChart.destroy();
+        deviceHistoryChart = null;
+    }
+
+    canvas.classList.remove("hidden");
+    emptyState.classList.add("hidden");
+
+    if (source === "company_mongodb") {
+        renderCompanyDeviceHistory(history, canvas, emptyState);
         return;
     }
 
@@ -3587,12 +3636,6 @@ function renderDeviceHistoryChart(history) {
         ]
     };
 
-    if (deviceHistoryChart) {
-        deviceHistoryChart.data = data;
-        deviceHistoryChart.update();
-        return;
-    }
-
     deviceHistoryChart = new Chart(canvas, {
         type: "line",
         data: data,
@@ -3627,6 +3670,92 @@ function renderDeviceHistoryChart(history) {
                     labels: {
                         color: "#ececec"
                     }
+                }
+            }
+        }
+    });
+}
+
+function renderCompanyDeviceHistory(history, canvas, emptyState) {
+    const safeHistory = Array.isArray(history) ? history : [];
+    const numericMetricNames = [];
+
+    safeHistory.forEach(item => {
+        (item.metrics || []).forEach(metric => {
+            if (
+                ["int", "float"].includes(metric.type) &&
+                !numericMetricNames.includes(metric.name)
+            ) {
+                numericMetricNames.push(metric.name);
+            }
+        });
+    });
+
+    if (numericMetricNames.length === 0) {
+        canvas.classList.add("hidden");
+        emptyState.classList.remove("hidden");
+        emptyState.innerHTML = safeHistory.length
+            ? safeHistory.slice(-12).reverse().map(item => `
+                <div>
+                    <strong>${escapeHtml(formatCompanyTimestamp(item.timestamp))}</strong>
+                    <span>${escapeHtml(item.status || "No numeric telemetry in this record")}</span>
+                </div>
+            `).join("")
+            : "<p>No mapped telemetry history is available for this device.</p>";
+        return;
+    }
+
+    const labels = safeHistory.map(item => (
+        formatCompanyTimestamp(item.timestamp)
+    ));
+    const colors = ["#60a5fa", "#34d399", "#f97316", "#ec4899", "#facc15"];
+    const datasets = numericMetricNames.slice(0, 5).map((name, index) => {
+        let unit = "";
+        const values = safeHistory.map(item => {
+            const metric = (item.metrics || []).find(entry => entry.name === name);
+
+            if (metric?.unit) {
+                unit = metric.unit;
+            }
+
+            return metric ? Number(metric.value) : null;
+        });
+
+        return {
+            label: unit ? `${name} (${unit})` : name,
+            data: values,
+            borderColor: colors[index % colors.length],
+            backgroundColor: "transparent",
+            tension: 0.25,
+            borderWidth: 2,
+            spanGaps: true
+        };
+    });
+
+    deviceHistoryChart = new Chart(canvas, {
+        type: "line",
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: {
+                mode: "index",
+                intersect: false
+            },
+            scales: {
+                x: {
+                    ticks: { color: "#ececec", maxTicksLimit: 8 },
+                    grid: { color: "#2f2f2f" }
+                },
+                y: {
+                    ticks: { color: "#ececec" },
+                    grid: { color: "#2f2f2f" }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: { color: "#ececec" }
                 }
             }
         }

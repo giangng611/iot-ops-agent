@@ -16,11 +16,38 @@ COMPANY_MONGODB_URI=mongodb://readonly_user:[PASSWORD]@company-mongo-host:27017/
 COMPANY_MONGODB_DB=
 COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
 COMPANY_DB_STATEMENT_TIMEOUT_MS=5000
+COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS=120
+COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS=60
 ```
 
 Do not commit real connection strings. Set them in `.env` locally or Render environment variables only.
 
 If both Postgres and MongoDB variables are present, the probe uses MongoDB first.
+
+## Company MongoDB Read Proxy
+
+All Company MongoDB reads pass through `services/company_mongo_proxy.py`.
+The proxy exposes only bounded read operations:
+
+- `find`
+- database and collection discovery
+- collection statistics
+
+It does not expose insert, update, delete, aggregation, or arbitrary database
+commands. Queries always apply a document limit and `maxTimeMS`; server-side
+JavaScript and write-stage operators such as `$where`, `$function`, `$out`,
+and `$merge` are rejected.
+
+The proxy rate limit is process-local and counts MongoDB read operations by
+caller. API reads and LLM tool reads use separate caller keys. One unified
+device-model load currently performs six bounded reads.
+For a multi-instance deployment, enforce an additional shared rate limit at
+the API gateway or replace the in-memory limiter with Redis.
+
+The proxy is an application guardrail, not a substitute for MongoDB
+authorization. `COMPANY_MONGODB_URI` must use a MongoDB account with the
+built-in `read` role only on the required databases. Do not grant `readWrite`,
+`dbAdmin`, or cluster administration roles to the application account.
 
 ## Probe Schema
 
@@ -61,6 +88,8 @@ python3 scripts/probe_company_db.py --inspect-payload datamgmt.CIN --payload-fie
 Guardrails:
 
 - read-only transaction
+- read-only Company MongoDB proxy
+- Company MongoDB operation rate limit
 - statement timeout
 - table and row limits
 - MongoDB `maxTimeMS`

@@ -3227,10 +3227,7 @@ function renderCompanyPocAlerts(badge, summary, alertList) {
             <h2>${warning}</h2>
             <p>Fallback warning</p>
         </div>
-        <div class="alert-summary-card poc-policy-card">
-            <h2>${escapeHtml(currentAlerts.ruleset_version || "PoC")}</h2>
-            <p>Local fallback rules</p>
-        </div>
+
     `;
 
     alertList.innerHTML = `

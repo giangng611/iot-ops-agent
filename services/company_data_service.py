@@ -4,12 +4,12 @@ import json
 
 import psycopg
 from psycopg.rows import dict_row
-from pymongo import MongoClient
 
 from storage.sqlite_store import (
     get_all_latest_devices as get_sqlite_latest_devices,
     get_latest_status as get_sqlite_latest_status,
 )
+from services.company_mongo_proxy import get_company_mongo_read_proxy
 from services.company_poc_rule_service import (
     evaluate_company_poc_rules,
     get_company_poc_rule_catalog,
@@ -96,26 +96,6 @@ def get_company_connection():
         row_factory=dict_row,
         prepare_threshold=None,
     )
-
-
-def get_company_mongo_client():
-    uri = get_company_mongodb_uri()
-
-    if not uri:
-        raise RuntimeError(
-            "COMPANY_MONGODB_URI, COMPANY_MONGO_URI, or "
-            "IOT_PLATFORM_MONGODB_URI is not configured."
-        )
-
-    timeout_ms = int(os.getenv("COMPANY_DB_CONNECT_TIMEOUT_SECONDS", "5")) * 1000
-    client = MongoClient(
-        uri,
-        serverSelectionTimeoutMS=timeout_ms,
-        connectTimeoutMS=timeout_ms,
-        socketTimeoutMS=int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")),
-    )
-    client.admin.command("ping")
-    return client
 
 
 def set_read_only_guardrails(cursor):
@@ -375,23 +355,19 @@ def list_company_mongo_collections(limit=DEFAULT_TABLE_LIMIT):
     safe_limit = max(1, min(int(limit), 100))
     configured_db = get_company_mongodb_db()
 
-    with get_company_mongo_client() as client:
+    with get_company_mongo_read_proxy("company-schema-discovery") as proxy:
         database_names = (
             [configured_db]
             if configured_db
             else [
-                name for name in client.list_database_names()
+                name for name in proxy.list_database_names()
                 if name not in {"admin", "config", "local"}
             ]
         )
         collections = []
 
         for database_name in database_names:
-            database = client[database_name]
-            namespaces = list(database.list_collections(
-                filter={"type": {"$in": ["collection", "view"]}},
-                nameOnly=True,
-            ))
+            namespaces = proxy.list_collections(database_name)
 
             for namespace in namespaces[:safe_limit]:
                 collection_name = namespace["name"]
@@ -399,16 +375,9 @@ def list_company_mongo_collections(limit=DEFAULT_TABLE_LIMIT):
                 stats = {}
 
                 if namespace_type == "collection":
-                    stats = database.command(
-                        "collStats",
+                    stats = proxy.collection_stats(
+                        database_name,
                         collection_name,
-                        scale=1,
-                        maxTimeMS=int(
-                            os.getenv(
-                                "COMPANY_DB_STATEMENT_TIMEOUT_MS",
-                                "5000",
-                            )
-                        ),
                     )
 
                 collections.append({
@@ -434,12 +403,13 @@ def preview_company_mongo_collection(
     validate_identifier(collection_name, "collection name")
     safe_limit = max(1, min(int(limit), MAX_PREVIEW_LIMIT))
 
-    with get_company_mongo_client() as client:
-        collection = client[database_name][collection_name]
-        rows = list(
-            collection.find({}, {"_id": 0})
-            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
-            .limit(safe_limit)
+    with get_company_mongo_read_proxy("company-schema-preview") as proxy:
+        rows = proxy.find(
+            database_name,
+            collection_name,
+            {},
+            {"_id": 0},
+            limit=safe_limit,
         )
 
         return {
@@ -459,12 +429,13 @@ def inspect_company_mongo_collection_schema(
     validate_identifier(collection_name, "collection name")
     safe_limit = max(1, min(int(sample_limit), MAX_SCHEMA_SAMPLE_DOCUMENTS))
 
-    with get_company_mongo_client() as client:
-        collection = client[database_name][collection_name]
-        rows = list(
-            collection.find({}, {"_id": 0})
-            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
-            .limit(safe_limit)
+    with get_company_mongo_read_proxy("company-schema-inspection") as proxy:
+        rows = proxy.find(
+            database_name,
+            collection_name,
+            {},
+            {"_id": 0},
+            limit=safe_limit,
         )
         fields = {}
 
@@ -497,15 +468,13 @@ def inspect_company_mongo_payload_schema(
     validate_identifier(payload_field, "payload field")
     safe_limit = max(1, min(int(sample_limit), MAX_SCHEMA_SAMPLE_DOCUMENTS))
 
-    with get_company_mongo_client() as client:
-        collection = client[database_name][collection_name]
-        rows = list(
-            collection.find(
-                {payload_field: {"$exists": True}},
-                {"_id": 0, payload_field: 1, "cnf": 1},
-            )
-            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
-            .limit(safe_limit)
+    with get_company_mongo_read_proxy("company-payload-inspection") as proxy:
+        rows = proxy.find(
+            database_name,
+            collection_name,
+            {payload_field: {"$exists": True}},
+            {"_id": 0, payload_field: 1, "cnf": 1},
+            limit=safe_limit,
         )
         fields = {}
         parseable_count = 0
@@ -805,96 +774,99 @@ def resolve_company_device(alias_index, aliases):
 
 
 def load_company_device_read_model(
-    client,
+    proxy,
     cin_limit=DEFAULT_COMPANY_CIN_SCAN_LIMIT,
 ):
-    timeout_ms = int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000"))
     safe_cin_limit = max(1, min(int(cin_limit), 1000))
-    nodes = list(
-        client["devicemgmt"]["NODE"].find(
-            {},
-            {
-                "_id": 0,
-                "rn": 1,
-                "ni": 1,
-                "nty": 1,
-                "category": 1,
-                "ct": 1,
-                "lt": 1,
-                "tenantId": 1,
-                "tenantName": 1,
-                "appDomainId": 1,
-                "appDomainName": 1,
-                "childDeviceInfoEntities": 1,
-            },
-        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    nodes = proxy.find(
+        "devicemgmt",
+        "NODE",
+        {},
+        {
+            "_id": 0,
+            "rn": 1,
+            "ni": 1,
+            "nty": 1,
+            "category": 1,
+            "ct": 1,
+            "lt": 1,
+            "tenantId": 1,
+            "tenantName": 1,
+            "appDomainId": 1,
+            "appDomainName": 1,
+            "childDeviceInfoEntities": 1,
+        },
+        limit=MAX_COMPANY_INVENTORY_RECORDS,
     )
-    identities = list(
-        client["authorization"]["IDENTITY"].find(
-            {},
-            {
-                "_id": 0,
-                "name": 1,
-                "userId": 1,
-                "category": 1,
-                "type": 1,
-                "active": 1,
-                "tenantId": 1,
-            },
-        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    identities = proxy.find(
+        "authorization",
+        "IDENTITY",
+        {},
+        {
+            "_id": 0,
+            "name": 1,
+            "userId": 1,
+            "category": 1,
+            "type": 1,
+            "active": 1,
+            "tenantId": 1,
+        },
+        limit=MAX_COMPANY_INVENTORY_RECORDS,
     )
-    containers = list(
-        client["datamgmt"]["CNT"].find(
-            {},
-            {
-                "_id": 1,
-                "rn": 1,
-                "pi": 1,
-                "cr": 1,
-                "parentContainer": 1,
-            },
-        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    containers = proxy.find(
+        "datamgmt",
+        "CNT",
+        {},
+        {
+            "_id": 1,
+            "rn": 1,
+            "pi": 1,
+            "cr": 1,
+            "parentContainer": 1,
+        },
+        limit=MAX_COMPANY_INVENTORY_RECORDS,
     )
-    rules = list(
-        client["datamgmt"]["RULE"].find(
-            {},
-            {
-                "_id": 0,
-                "deviceIds": 1,
-                "name": 1,
-                "status": 1,
-                "severity": 1,
-                "triggerType": 1,
-            },
-        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    rules = proxy.find(
+        "datamgmt",
+        "RULE",
+        {},
+        {
+            "_id": 0,
+            "deviceIds": 1,
+            "name": 1,
+            "status": 1,
+            "severity": 1,
+            "triggerType": 1,
+        },
+        limit=MAX_COMPANY_INVENTORY_RECORDS,
     )
-    telemetry_catalog = list(
-        client["datamgmt"]["DEVICE_TELEMETRY"].find(
-            {},
-            {"_id": 0, "telemetry": 1},
-        ).max_time_ms(timeout_ms).limit(MAX_COMPANY_INVENTORY_RECORDS)
+    telemetry_catalog = proxy.find(
+        "datamgmt",
+        "DEVICE_TELEMETRY",
+        {},
+        {"_id": 0, "telemetry": 1},
+        limit=MAX_COMPANY_INVENTORY_RECORDS,
     )
-    content_instances = list(
-        client["datamgmt"]["CIN"].find(
-            {},
-            {
-                "_id": 0,
-                "rn": 1,
-                "pi": 1,
-                "parentContainer": 1,
-                "ct": 1,
-                "lt": 1,
-                "cnf": 1,
-                "con": 1,
-                "tenantId": 1,
-                "tenantName": 1,
-                "appDomainId": 1,
-                "appDomainName": 1,
-            },
-        )
-        .sort("ct", -1)
-        .max_time_ms(timeout_ms)
-        .limit(safe_cin_limit)
+    content_instances = proxy.find(
+        "datamgmt",
+        "CIN",
+        {},
+        {
+            "_id": 0,
+            "rn": 1,
+            "pi": 1,
+            "parentContainer": 1,
+            "ct": 1,
+            "lt": 1,
+            "cnf": 1,
+            "con": 1,
+            "tenantId": 1,
+            "tenantName": 1,
+            "appDomainId": 1,
+            "appDomainName": 1,
+        },
+        sort=("ct", -1),
+        limit=safe_cin_limit,
     )
 
     identities_by_alias = {}
@@ -1140,9 +1112,9 @@ def serialize_company_device(device):
 
 
 def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
-    with get_company_mongo_client() as client:
+    with get_company_mongo_read_proxy("company-operational-read") as proxy:
         model = load_company_device_read_model(
-            client,
+            proxy,
             max(int(limit), DEFAULT_COMPANY_CIN_SCAN_LIMIT),
         )
 
@@ -1155,8 +1127,8 @@ def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
 def get_company_device_history(device_id, limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
     safe_limit = max(1, min(int(limit), 100))
 
-    with get_company_mongo_client() as client:
-        model = load_company_device_read_model(client)
+    with get_company_mongo_read_proxy("company-device-history") as proxy:
+        model = load_company_device_read_model(proxy)
 
     target_alias = normalize_company_key(device_id)
 
@@ -1179,16 +1151,19 @@ def get_company_device_history(device_id, limit=DEFAULT_OPERATIONAL_RECORD_LIMIT
     }
 
 
-def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
+def get_company_operational_payload(
+    limit=DEFAULT_OPERATIONAL_RECORD_LIMIT,
+    proxy_actor="company-api",
+):
     if company_db_type() != "mongodb":
         return simulator_fallback_snapshot(
             "Company MongoDB URL is not configured."
         )
 
     try:
-        with get_company_mongo_client() as client:
+        with get_company_mongo_read_proxy(proxy_actor) as proxy:
             model = load_company_device_read_model(
-                client,
+                proxy,
                 max(int(limit), DEFAULT_COMPANY_CIN_SCAN_LIMIT),
             )
     except Exception as exc:
@@ -1249,7 +1224,10 @@ def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
 
 
 def get_company_agent_context(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
-    payload = get_company_operational_payload(limit)
+    payload = get_company_operational_payload(
+        limit,
+        proxy_actor="company-llm-tools",
+    )
 
     if payload.get("source") != "company_mongodb":
         return payload
@@ -1347,7 +1325,9 @@ def compact_company_device(device):
 
 
 def get_company_inventory_context(limit=MAX_AGENT_SAMPLE_RECORDS):
-    payload = get_company_operational_payload()
+    payload = get_company_operational_payload(
+        proxy_actor="company-llm-tools",
+    )
 
     if payload.get("source") != "company_mongodb":
         return payload
@@ -1380,7 +1360,9 @@ def get_company_inventory_context(limit=MAX_AGENT_SAMPLE_RECORDS):
 
 
 def get_company_telemetry_coverage_context(limit=MAX_AGENT_SAMPLE_RECORDS):
-    payload = get_company_operational_payload()
+    payload = get_company_operational_payload(
+        proxy_actor="company-llm-tools",
+    )
 
     if payload.get("source") != "company_mongodb":
         return payload
@@ -1428,7 +1410,9 @@ def get_company_telemetry_coverage_context(limit=MAX_AGENT_SAMPLE_RECORDS):
 
 
 def get_company_provisional_alert_context(limit=MAX_AGENT_SAMPLE_RECORDS):
-    payload = get_company_operational_payload()
+    payload = get_company_operational_payload(
+        proxy_actor="company-llm-tools",
+    )
 
     if payload.get("source") != "company_mongodb":
         return payload
@@ -1452,7 +1436,9 @@ def get_company_provisional_alert_context(limit=MAX_AGENT_SAMPLE_RECORDS):
 
 
 def get_company_rule_readiness_context():
-    payload = get_company_operational_payload()
+    payload = get_company_operational_payload(
+        proxy_actor="company-llm-tools",
+    )
 
     if payload.get("source") != "company_mongodb":
         return payload
@@ -1474,7 +1460,9 @@ def get_company_rule_readiness_context():
 
 
 def get_company_disconnected_context(limit=MAX_AGENT_SAMPLE_RECORDS):
-    payload = get_company_operational_payload()
+    payload = get_company_operational_payload(
+        proxy_actor="company-llm-tools",
+    )
 
     if payload.get("source") != "company_mongodb":
         return payload
@@ -1502,7 +1490,9 @@ def get_company_disconnected_context(limit=MAX_AGENT_SAMPLE_RECORDS):
 
 
 def get_company_device_context(identifier):
-    payload = get_company_operational_payload()
+    payload = get_company_operational_payload(
+        proxy_actor="company-llm-tools",
+    )
 
     if payload.get("source") != "company_mongodb":
         return payload
@@ -1542,25 +1532,23 @@ def scan_company_payload_threshold(threshold, limit=MAX_THRESHOLD_SCAN_RECORDS):
     validate_identifier(database_name, "database name")
     validate_identifier(collection_name, "collection name")
 
-    with get_company_mongo_client() as client:
-        collection = client[database_name][collection_name]
-        rows = list(
-            collection.find(
-                {"con": {"$exists": True}},
-                {
-                    "_id": 0,
-                    "rn": 1,
-                    "pi": 1,
-                    "ct": 1,
-                    "lt": 1,
-                    "con": 1,
-                    "tenantName": 1,
-                    "appDomainName": 1,
-                },
-            )
-            .sort("ct", -1)
-            .max_time_ms(int(os.getenv("COMPANY_DB_STATEMENT_TIMEOUT_MS", "5000")))
-            .limit(safe_limit)
+    with get_company_mongo_read_proxy("company-llm-tools") as proxy:
+        rows = proxy.find(
+            database_name,
+            collection_name,
+            {"con": {"$exists": True}},
+            {
+                "_id": 0,
+                "rn": 1,
+                "pi": 1,
+                "ct": 1,
+                "lt": 1,
+                "con": 1,
+                "tenantName": 1,
+                "appDomainName": 1,
+            },
+            sort=("ct", -1),
+            limit=safe_limit,
         )
 
     matches = []

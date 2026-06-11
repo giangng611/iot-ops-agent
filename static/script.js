@@ -1787,6 +1787,9 @@ function updateDeviceControlsForSource() {
     document.querySelectorAll(".simulator-only-control").forEach(control => {
         control.classList.toggle("hidden", companyMode);
     });
+    document.querySelectorAll(".company-only-control").forEach(control => {
+        control.classList.toggle("hidden", !companyMode);
+    });
 
     charts?.classList.toggle("hidden", companyMode);
     summary?.classList.toggle("hidden", !companyMode);
@@ -1810,7 +1813,7 @@ function renderDeviceTable() {
 
     tableHeader.innerHTML = companyMode
         ? `
-            <th>Device</th>
+            <th class="company-device-column">Device</th>
             <th>Connection</th>
             <th>Latest telemetry</th>
             <th>Inventory</th>
@@ -1841,9 +1844,11 @@ function renderDeviceTable() {
 
     const searchValue = document.getElementById("deviceSearch")?.value.toLowerCase() || "";
     const statusValue = companyMode
-        ? "all"
+        ? document.getElementById("companyConnectionFilter")?.value || "all"
         : document.getElementById("statusFilter")?.value || "all";
-    const sortValue = document.getElementById("sortSelect")?.value || "priority";
+    const sortValue = companyMode
+        ? document.getElementById("companySortSelect")?.value || "latest"
+        : document.getElementById("sortSelect")?.value || "priority";
 
     let devices = [...allDevices];
 
@@ -1864,13 +1869,38 @@ function renderDeviceTable() {
             searchableMetrics
         ].join(" ").toLowerCase();
         const matchesSearch = searchableText.includes(searchValue);
-        const matchesStatus = statusValue === "all" || device.status === statusValue;
+        const normalizedStatus = String(device.status || "unknown").toLowerCase();
+        const connectionState = normalizedStatus.includes("disconnected")
+            ? "disconnected"
+            : normalizedStatus.includes("connected")
+                ? "connected"
+                : "unknown";
+        const matchesStatus = statusValue === "all" || (
+            companyMode
+                ? connectionState === statusValue
+                : device.status === statusValue
+        );
 
         return matchesSearch && matchesStatus;
     });
 
     devices.sort((a, b) => {
         if (companyMode) {
+            if (sortValue === "name") {
+                return String(a.device_name || a.device_id || "").localeCompare(
+                    String(b.device_name || b.device_id || "")
+                );
+            }
+
+            if (sortValue === "telemetry") {
+                return Number(b.telemetry_record_count || 0)
+                    - Number(a.telemetry_record_count || 0);
+            }
+
+            if (sortValue === "rules") {
+                return Number(b.rule_count || 0) - Number(a.rule_count || 0);
+            }
+
             return Number(b.timestamp || 0) - Number(a.timestamp || 0);
         }
 
@@ -1912,7 +1942,12 @@ function renderDeviceTable() {
             tableBody.innerHTML += `
                 <tr>
                     <td class="company-device-cell">
-                        <strong>${escapeHtml(view.name)}</strong>
+                        <strong
+                            class="company-device-name"
+                            title="${escapeHtml(view.name)}"
+                        >
+                            ${escapeHtml(view.name)}
+                        </strong>
                         <small class="device-subtext company-id" title="${escapeHtml(view.id)}">
                             ${escapeHtml(view.id)}
                         </small>

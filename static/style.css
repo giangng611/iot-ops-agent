@@ -1310,6 +1310,7 @@ pre {
 
 .devices-table-wrapper {
     max-height: 300px;
+    overflow-x: auto;
     overflow-y: auto;
     border-radius: 14px;
 }
@@ -1425,20 +1426,30 @@ th {
     max-height: min(62vh, 680px);
 }
 
+.company-table-card table {
+    min-width: 1320px;
+}
+
 .company-table-card th,
 .company-table-card td {
     vertical-align: top;
 }
 
+.company-device-column,
 .company-device-cell {
-    min-width: 180px;
+    min-width: 220px;
+    width: 220px;
 }
 
-.company-device-cell > strong {
+.company-device-name {
     color: #f4f4f5;
     display: block;
     font-size: 14px;
     font-weight: 650;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .company-id,
@@ -1453,6 +1464,7 @@ th {
 .company-context-cell {
     color: #d4d4d8;
     font-size: 12px;
+    min-width: 210px;
     max-width: 230px;
 }
 
@@ -1463,7 +1475,22 @@ th {
 .company-time-cell {
     color: #d4d4d8;
     font-size: 13px;
-    min-width: 145px;
+    min-width: 180px;
+}
+
+.company-table-card th:nth-child(2),
+.company-table-card td:nth-child(2) {
+    min-width: 150px;
+}
+
+.company-table-card th:nth-child(3),
+.company-table-card td:nth-child(3) {
+    min-width: 300px;
+}
+
+.company-table-card th:nth-child(6),
+.company-table-card td:nth-child(6) {
+    min-width: 160px;
 }
 
 .connection-badge {
@@ -1498,7 +1525,7 @@ th {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    min-width: 260px;
+    min-width: 280px;
 }
 
 .metric-chip {

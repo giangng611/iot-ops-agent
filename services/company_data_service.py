@@ -26,6 +26,7 @@ DEFAULT_OPERATIONAL_RECORD_LIMIT = 30
 MAX_THRESHOLD_SCAN_RECORDS = 80
 MAX_THRESHOLD_MATCHES = 20
 MAX_DISPLAY_METRICS = 8
+MAX_AGENT_SAMPLE_RECORDS = 5
 
 
 def get_company_db_url():
@@ -602,6 +603,18 @@ def extract_display_metrics(payload):
     return metrics
 
 
+def get_metric_value(metrics, names):
+    accepted_names = {name.lower() for name in names}
+
+    for metric in metrics:
+        metric_name = str(metric.get("name") or "").lower()
+
+        if metric_name in accepted_names:
+            return metric.get("value")
+
+    return None
+
+
 def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
     safe_limit = max(1, min(int(limit), 100))
     database_name = os.getenv("COMPANY_OPERATIONAL_DB", "datamgmt")
@@ -640,10 +653,30 @@ def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
         payload_summary = summarize_payload(row.get("con"))
         record_id = row.get("rn") or f"company-record-{index}"
         timestamp = row.get("lt") or row.get("ct")
+        metrics = extract_display_metrics(row.get("con"))
+        payload_device_id = get_metric_value(
+            metrics,
+            {"deviceId", "device_id"},
+        )
+        payload_device_name = get_metric_value(
+            metrics,
+            {"deviceName", "device_name", "name"},
+        )
+        payload_status = get_metric_value(
+            metrics,
+            {"status", "connectionStatus"},
+        )
 
         records.append({
-            "device_id": str(record_id),
-            "status": "unknown",
+            "record_id": str(record_id),
+            "device_id": str(payload_device_id or record_id),
+            "device_name": payload_device_name,
+            "status": str(payload_status or "unclassified"),
+            "status_source": (
+                "payload"
+                if payload_status is not None
+                else "not_available"
+            ),
             "cpu_usage": None,
             "memory_usage": None,
             "heartbeat_delay": None,
@@ -655,7 +688,7 @@ def list_company_operational_records(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
             "tenant_name": row.get("tenantName"),
             "app_domain_name": row.get("appDomainName"),
             "payload_summary": payload_summary,
-            "metrics": extract_display_metrics(row.get("con")),
+            "metrics": metrics,
         })
 
     return records
@@ -676,6 +709,18 @@ def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
 
     return {
         "source": "company_mongodb",
+        "provenance": {
+            "database": os.getenv("COMPANY_OPERATIONAL_DB", "datamgmt"),
+            "collection": os.getenv(
+                "COMPANY_OPERATIONAL_COLLECTION",
+                "CIN",
+            ),
+            "query": "latest content instances sorted by ct descending",
+            "payload_field": "con",
+            "record_id_field": "rn",
+            "parent_field": "pi",
+            "limit": max(1, min(int(limit), 100)),
+        },
         "selected_source": "company",
         "active_source": "company_mongodb",
         "rules_status": "not_configured",
@@ -693,6 +738,69 @@ def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
                 "are intentionally not derived from raw records."
             ),
         },
+    }
+
+
+def get_company_agent_context(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
+    payload = get_company_operational_payload(limit)
+
+    if payload.get("source") != "company_mongodb":
+        return payload
+
+    records = payload.get("devices") or []
+    samples = []
+    seen_device_ids = set()
+
+    for record in records:
+        device_id = record.get("device_id")
+
+        if device_id in seen_device_ids:
+            continue
+
+        seen_device_ids.add(device_id)
+        metrics = record.get("metrics") or []
+        samples.append({
+            "record_id": record.get("record_id"),
+            "record_type": "oneM2M content instance",
+            "device_id": device_id,
+            "device_name": record.get("device_name"),
+            "latest_payload_status": record.get("status"),
+            "status_source": record.get("status_source"),
+            "parent_container": record.get("parent_container"),
+            "timestamp": record.get("timestamp"),
+            "tenant_name": record.get("tenant_name"),
+            "app_domain_name": record.get("app_domain_name"),
+            "metric_names": [
+                metric.get("name")
+                for metric in metrics
+                if metric.get("name")
+            ],
+            "metrics": metrics,
+        })
+
+        if len(samples) >= MAX_AGENT_SAMPLE_RECORDS:
+            break
+
+    return {
+        "source": payload["source"],
+        "provenance": payload.get("provenance"),
+        "record_count": len(records),
+        "distinct_device_count": len({
+            record.get("device_id")
+            for record in records
+            if record.get("device_id")
+        }),
+        "record_type": "oneM2M content instances (CIN)",
+        "rules_status": payload.get("rules_status"),
+        "rules_message": payload.get("rules_message"),
+        "classification_status": "not_available",
+        "interpretation_notes": [
+            "CIN rn values identify content-instance records; device identity is read from CIN.con when available.",
+            "Payload status is a raw device-reported value, not an alert severity.",
+            "No company alert rules are configured, so health or severity cannot be inferred.",
+            "Absence of alert rules is a platform limitation, not evidence of an operational incident.",
+        ],
+        "sample_records": samples,
     }
 
 

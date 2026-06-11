@@ -26,7 +26,11 @@ import storage.relational_store as relational_store  # noqa: E402
 import services.telegram_service as telegram_service  # noqa: E402
 import routes.telemetry_routes as telemetry_routes  # noqa: E402
 from services.chat_service import normalize_token_usage  # noqa: E402
-from services.company_data_service import extract_display_metrics  # noqa: E402
+from services.company_data_service import (  # noqa: E402
+    extract_display_metrics,
+    get_company_agent_context,
+    get_metric_value,
+)
 from storage.relational_store import (  # noqa: E402
     add_message,
     create_chat,
@@ -425,6 +429,68 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                     "type": "int",
                 },
             ],
+        )
+
+    def test_company_agent_context_does_not_classify_cin_as_devices(self):
+        records = [
+            {
+                "record_id": f"cin-{index}",
+                "device_id": f"device-{index % 2}",
+                "device_name": f"Device {index % 2}",
+                "status": "connected",
+                "status_source": "payload",
+                "parent_container": f"cnt-{index}",
+                "timestamp": index,
+                "tenant_name": "tenant",
+                "app_domain_name": "domain",
+                "metrics": [
+                    {"name": "temperature", "value": 20 + index}
+                ],
+            }
+            for index in range(7)
+        ]
+
+        with patch(
+            "services.company_data_service.get_company_operational_payload",
+            return_value={
+                "source": "company_mongodb",
+                "provenance": {
+                    "database": "datamgmt",
+                    "collection": "CIN",
+                },
+                "devices": records,
+                "rules_status": "not_configured",
+                "rules_message": "Rules are not configured.",
+            },
+        ):
+            context = get_company_agent_context()
+
+        self.assertEqual(context["record_count"], 7)
+        self.assertEqual(
+            context["record_type"],
+            "oneM2M content instances (CIN)",
+        )
+        self.assertEqual(context["distinct_device_count"], 2)
+        self.assertEqual(len(context["sample_records"]), 2)
+        self.assertNotIn("status", context["sample_records"][0])
+        self.assertIn(
+            "device identity is read from CIN.con",
+            context["interpretation_notes"][0],
+        )
+
+    def test_company_metric_identity_values_are_read_from_payload(self):
+        metrics = extract_display_metrics(
+            '{"deviceId":"device-1","deviceName":"Sensor 1",'
+            '"status":"connected"}'
+        )
+
+        self.assertEqual(
+            get_metric_value(metrics, {"deviceId", "device_id"}),
+            "device-1",
+        )
+        self.assertEqual(
+            get_metric_value(metrics, {"status"}),
+            "connected",
         )
 
     def test_profile_usage_stats_include_storage_status(self):

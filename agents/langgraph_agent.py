@@ -11,7 +11,7 @@ from storage.telemetry_store import (
     get_device_telemetry_history
 )
 from services.company_data_service import (
-    get_company_operational_payload,
+    get_company_agent_context,
     scan_company_payload_threshold,
 )
 
@@ -145,7 +145,7 @@ class LangGraphAgent:
                 tool_output = scan_company_payload_threshold(threshold)
 
         elif selected_tool == "get_company_records":
-            tool_output = get_company_operational_payload()
+            tool_output = get_company_agent_context()
 
         elif selected_tool == "get_device_status" and device_id:
             tool_output = get_latest_status(device_id)
@@ -180,7 +180,11 @@ class LangGraphAgent:
             "that approved company alert rules are not configured yet. Do not "
             "classify raw company records as healthy, warning, or critical unless "
             "the tool result already provides that classification. Manual threshold "
-            "scan results are evidence only, not official alerts."
+            "scan results are evidence only, not official alerts. When the source is "
+            "company_mongodb, describe the database and collection from provenance. "
+            "CIN records are content instances, not confirmed devices. Never call "
+            "an unclassified record unhealthy or claim missing alert rules caused an "
+            "incident. Summarize the record count and at most five samples."
         )
         prompt = f"""
     You are an IoT operations assistant.
@@ -324,7 +328,11 @@ class LangGraphAgent:
     approved company alert rules are not configured yet. Do not classify raw
     company records as healthy, warning, or critical unless the tool result
     already provides that classification. Manual threshold scan results are
-    evidence only, not official alerts.
+    evidence only, not official alerts. When the source is company_mongodb,
+    describe the database and collection from provenance. CIN records are
+    content instances, not confirmed devices. Never call an unclassified
+    record unhealthy or claim missing alert rules caused an incident.
+    Summarize the record count and at most five samples.
 
     User request:
     {state["user_input"]}

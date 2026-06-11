@@ -1308,6 +1308,16 @@ pre {
     height: 44px;
 }
 
+.device-controls select {
+    appearance: none;
+    background-color: #212121;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23ececec' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.5 7.5 10 12l4.5-4.5'/%3E%3C/svg%3E");
+    background-position: right 14px center;
+    background-repeat: no-repeat;
+    background-size: 18px 18px;
+    padding: 0 48px 0 16px;
+}
+
 .devices-table-wrapper {
     max-height: 300px;
     overflow-x: auto;
@@ -1427,18 +1437,19 @@ th {
 }
 
 .company-table-card table {
-    min-width: 1320px;
+    table-layout: fixed;
+    width: 100%;
 }
 
 .company-table-card th,
 .company-table-card td {
+    overflow: hidden;
     vertical-align: top;
 }
 
 .company-device-column,
 .company-device-cell {
-    min-width: 220px;
-    width: 220px;
+    width: 19%;
 }
 
 .company-device-name {
@@ -1446,7 +1457,7 @@ th {
     display: block;
     font-size: 14px;
     font-weight: 650;
-    max-width: 220px;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1455,7 +1466,7 @@ th {
 .company-id,
 .company-context-cell span,
 .company-context-cell small {
-    max-width: 210px;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1464,8 +1475,7 @@ th {
 .company-context-cell {
     color: #d4d4d8;
     font-size: 12px;
-    min-width: 210px;
-    max-width: 230px;
+    max-width: none;
 }
 
 .company-context-cell span {
@@ -1475,22 +1485,43 @@ th {
 .company-time-cell {
     color: #d4d4d8;
     font-size: 13px;
-    min-width: 180px;
 }
 
 .company-table-card th:nth-child(2),
 .company-table-card td:nth-child(2) {
-    min-width: 150px;
+    width: 13%;
 }
 
 .company-table-card th:nth-child(3),
 .company-table-card td:nth-child(3) {
-    min-width: 300px;
+    width: 24%;
+}
+
+.company-table-card th:nth-child(4),
+.company-table-card td:nth-child(4) {
+    width: 18%;
+}
+
+.company-table-card th:nth-child(5),
+.company-table-card td:nth-child(5) {
+    width: 14%;
 }
 
 .company-table-card th:nth-child(6),
 .company-table-card td:nth-child(6) {
-    min-width: 160px;
+    width: 12%;
+}
+
+.company-actions-cell {
+    white-space: normal;
+}
+
+.company-actions-cell > span {
+    margin-bottom: 10px;
+}
+
+.company-actions-cell button {
+    margin: 0;
 }
 
 .connection-badge {
@@ -1525,18 +1556,21 @@ th {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    min-width: 280px;
+    min-width: 0;
+    width: 100%;
 }
 
 .metric-chip {
     background: #27272a;
     border: 1px solid #3f3f46;
     border-radius: 6px;
+    box-sizing: border-box;
     color: #e4e4e7;
     display: inline-flex;
     font-size: 12px;
     gap: 6px;
-    max-width: 240px;
+    max-width: 100%;
+    overflow: hidden;
     padding: 5px 7px;
 }
 

@@ -1977,7 +1977,7 @@ function renderDeviceTable() {
                             ${Number(device.telemetry_record_count || 0)} records
                         </small>
                     </td>
-                    <td class="company-context-cell">
+                    <td class="company-context-cell company-actions-cell">
                         <span>
                             ${Number(device.rule_count || 0)} mapped rules
                         </span>

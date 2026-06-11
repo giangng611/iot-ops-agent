@@ -1226,6 +1226,12 @@ pre {
     color: #fde68a;
 }
 
+.source-badge.provisional_poc {
+    background: #3b2108;
+    border-color: #b45309;
+    color: #fef3c7;
+}
+
 .source-badge.simulator,
 .source-badge.simulator_fallback {
     background: #082f49;
@@ -1611,6 +1617,40 @@ th {
 
 .rules-pending-alert h2 {
     font-size: 28px;
+}
+
+.poc-policy-card h2 {
+    font-size: 18px;
+}
+
+.poc-alert-disclaimer {
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    border: 1px solid #7c4a16;
+    border-radius: 8px;
+    color: #fde68a;
+    background: #2a1a08;
+}
+
+.poc-alert-heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.poc-alert-heading h3 {
+    margin: 0;
+}
+
+.poc-alert-badge {
+    padding: 3px 8px;
+    border: 1px solid #a16207;
+    border-radius: 999px;
+    color: #fde68a;
+    background: #422006;
+    font-size: 12px;
+    font-weight: 700;
 }
 
 .alert-list {

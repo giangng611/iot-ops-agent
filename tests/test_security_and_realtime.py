@@ -25,6 +25,7 @@ import storage.postgres_store as postgres_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
 import services.telegram_service as telegram_service  # noqa: E402
 import routes.telemetry_routes as telemetry_routes  # noqa: E402
+from agents.langgraph_agent import LangGraphAgent  # noqa: E402
 from services.chat_service import normalize_token_usage  # noqa: E402
 from services.company_data_service import (  # noqa: E402
     enrich_company_metrics,
@@ -32,6 +33,10 @@ from services.company_data_service import (  # noqa: E402
     get_company_agent_context,
     get_metric_value,
     normalize_company_key,
+)
+from services.company_poc_rule_service import (  # noqa: E402
+    POC_RULE_DISCLAIMER,
+    evaluate_company_poc_rules,
 )
 from storage.relational_store import (  # noqa: E402
     add_message,
@@ -548,7 +553,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         )
         self.assertEqual(
             context["classification_status"],
-            "rules_available_evaluation_pending",
+            "provisional_poc_rules_active",
         )
 
     def test_company_metric_identity_values_are_read_from_payload(self):
@@ -571,6 +576,87 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             normalize_company_key("dvi-S123"),
             "s123",
         )
+
+    def test_company_poc_rules_generate_traceable_alerts(self):
+        alerts = evaluate_company_poc_rules([
+            {
+                "device_id": "device-1",
+                "device_name": "Boiler sensor",
+                "status": "disconnected",
+                "timestamp": 123,
+                "inventory_source": "devicemgmt.NODE",
+                "telemetry_record_count": 5,
+                "metrics": [
+                    {
+                        "name": "temperature",
+                        "value": 72,
+                        "type": "int",
+                        "unit": "oC",
+                    },
+                    {
+                        "name": "tags[0].rssi",
+                        "value": -75,
+                        "type": "int",
+                        "unit": "",
+                    },
+                ],
+            }
+        ])
+
+        self.assertEqual(alerts["rules_status"], "provisional_poc")
+        self.assertFalse(alerts["official"])
+        self.assertEqual(alerts["critical_count"], 2)
+        self.assertEqual(alerts["warning_count"], 1)
+        self.assertEqual(alerts["message"], POC_RULE_DISCLAIMER)
+        self.assertTrue(all(
+            alert["policy"] == "provisional_fallback"
+            for alert in alerts["active_alerts"]
+        ))
+        self.assertTrue(all(
+            alert["evidence"].get("value") is not None
+            for alert in alerts["active_alerts"]
+        ))
+
+    def test_langgraph_routes_company_demo_prompts_to_specific_tools(self):
+        agent = LangGraphAgent.__new__(LangGraphAgent)
+        cases = [
+            (
+                "company provisional alerts with evidence",
+                "get_company_provisional_alerts",
+            ),
+            (
+                "company telemetry coverage and unmapped records",
+                "get_company_telemetry_coverage",
+            ),
+            (
+                "company rule readiness and Grafana gaps",
+                "get_company_rule_readiness",
+            ),
+            (
+                "company disconnected devices",
+                "get_company_disconnected_devices",
+            ),
+            (
+                "company inventory and node overview",
+                "get_company_inventory",
+            ),
+            (
+                "company device SmartAsset_9b47fedc",
+                "get_company_device",
+            ),
+            (
+                "company fleet snapshot",
+                "get_company_fleet_summary",
+            ),
+        ]
+
+        for prompt, expected_tool in cases:
+            result = agent.select_tool_node({
+                "user_input": prompt,
+                "data_source": "company",
+                "steps": [],
+            })
+            self.assertEqual(result["selected_tool"], expected_tool)
         self.assertEqual(
             normalize_company_key("S123"),
             "s123",
@@ -859,6 +945,11 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 "alarms",
                 "diagnose",
                 "heartbeat",
+                "companyfleet",
+                "coverage",
+                "pocalerts",
+                "disconnected",
+                "ruleready",
                 "help",
             },
         )

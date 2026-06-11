@@ -10,6 +10,10 @@ from storage.sqlite_store import (
     get_all_latest_devices as get_sqlite_latest_devices,
     get_latest_status as get_sqlite_latest_status,
 )
+from services.company_poc_rule_service import (
+    evaluate_company_poc_rules,
+    get_company_poc_rule_catalog,
+)
 
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -1196,6 +1200,7 @@ def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
         serialize_company_device(device)
         for device in model["devices"]
     ][:max(1, min(int(limit), 100))]
+    alerts = evaluate_company_poc_rules(records)
 
     return {
         "source": "company_mongodb",
@@ -1220,11 +1225,12 @@ def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
         },
         "selected_source": "company",
         "active_source": "company_mongodb",
-        "rules_status": "available_unmapped",
+        "rules_status": "provisional_poc",
+        "official_rules_status": "discovered_unmapped",
         "rules_message": (
-            "Company rules were discovered, but their business semantics and "
-            "runtime evaluation are not integrated yet. Raw device status and "
-            "telemetry are not classified as alerts."
+            "PoC fallback rules are active for the demo. Company rules were "
+            "discovered, but their business semantics and Grafana evaluation "
+            "are not integrated yet."
         ),
         "summary": {
             "device_count": len(records),
@@ -1238,15 +1244,7 @@ def get_company_operational_payload(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
             "command_record_count": model["command_record_count"],
         },
         "devices": records,
-        "alerts": {
-            "critical_count": 0,
-            "warning_count": 0,
-            "rules_status": "available_unmapped",
-            "message": (
-                "Company rules exist, but this PoC does not yet execute their "
-                "business semantics. Alert counts remain intentionally empty."
-            ),
-        },
+        "alerts": alerts,
     }
 
 
@@ -1294,20 +1292,245 @@ def get_company_agent_context(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
         "source": payload["source"],
         "provenance": payload.get("provenance"),
         "summary": payload.get("summary"),
+        "alerts": {
+            **{
+                key: payload.get("alerts", {}).get(key)
+                for key in (
+                    "critical_count",
+                    "warning_count",
+                    "total_count",
+                    "rules_status",
+                    "policy",
+                    "official",
+                    "ruleset_version",
+                    "message",
+                )
+            },
+            "samples": (payload.get("alerts", {}).get("active_alerts") or [])[
+                :MAX_AGENT_SAMPLE_RECORDS
+            ],
+        },
         "record_count": len(records),
         "distinct_device_count": len(records),
         "record_type": "unified company devices",
         "rules_status": payload.get("rules_status"),
         "rules_message": payload.get("rules_message"),
-        "classification_status": "rules_available_evaluation_pending",
+        "classification_status": "provisional_poc_rules_active",
         "interpretation_notes": [
             "Device inventory is read from devicemgmt.NODE child device entities and augmented with authorization identity metadata.",
             "Latest status and telemetry are joined from datamgmt.CIN using payload identity or CIN/CNT ownership.",
             "Payload status is a raw device-reported value, not an alert severity.",
+            "Displayed alerts come from provisional PoC rules, not from official company or Grafana evaluation.",
             "Company rules were discovered in datamgmt.RULE, but their business evaluation semantics are not integrated.",
             "Unmapped telemetry is reported separately and is never assigned to a device by guesswork.",
         ],
         "sample_records": samples,
+    }
+
+
+def compact_company_device(device):
+    return {
+        "device_id": device.get("device_id"),
+        "device_name": device.get("device_name"),
+        "status": device.get("status"),
+        "status_source": device.get("status_source"),
+        "node_id": device.get("node_id"),
+        "category": device.get("category"),
+        "manufacturer": device.get("manufacturer"),
+        "model": device.get("model"),
+        "protocol": device.get("protocol"),
+        "timestamp": device.get("timestamp"),
+        "telemetry_record_count": device.get("telemetry_record_count"),
+        "rule_count": device.get("rule_count"),
+        "metrics": device.get("metrics"),
+    }
+
+
+def get_company_inventory_context(limit=MAX_AGENT_SAMPLE_RECORDS):
+    payload = get_company_operational_payload()
+
+    if payload.get("source") != "company_mongodb":
+        return payload
+
+    devices = payload.get("devices") or []
+    inventory_devices = [
+        device for device in devices
+        if device.get("inventory_source") == "devicemgmt.NODE"
+    ]
+    telemetry_only_devices = [
+        device for device in devices
+        if device.get("inventory_source") == "datamgmt.CIN"
+    ]
+
+    return {
+        "source": payload["source"],
+        "tool": "get_company_inventory",
+        "summary": payload.get("summary"),
+        "inventory_device_count": len(inventory_devices),
+        "telemetry_only_device_count": len(telemetry_only_devices),
+        "samples": [
+            compact_company_device(device)
+            for device in inventory_devices[:max(1, min(int(limit), 10))]
+        ],
+        "note": (
+            "Inventory comes from devicemgmt.NODE. Telemetry-only identities "
+            "are retained separately rather than being silently discarded."
+        ),
+    }
+
+
+def get_company_telemetry_coverage_context(limit=MAX_AGENT_SAMPLE_RECORDS):
+    payload = get_company_operational_payload()
+
+    if payload.get("source") != "company_mongodb":
+        return payload
+
+    devices = payload.get("devices") or []
+    with_telemetry = [
+        device for device in devices
+        if device.get("telemetry_record_count")
+    ]
+    without_telemetry = [
+        device for device in devices
+        if not device.get("telemetry_record_count")
+    ]
+    metric_coverage = {}
+
+    for device in with_telemetry:
+        for metric in device.get("metrics") or []:
+            name = metric.get("name")
+
+            if name:
+                metric_coverage[name] = metric_coverage.get(name, 0) + 1
+
+    return {
+        "source": payload["source"],
+        "tool": "get_company_telemetry_coverage",
+        "device_count": len(devices),
+        "devices_with_telemetry": len(with_telemetry),
+        "inventory_only_devices": len(without_telemetry),
+        "unmapped_telemetry_count": payload.get("summary", {}).get(
+            "unmapped_telemetry_count",
+            0,
+        ),
+        "top_metric_fields": [
+            {"name": name, "device_count": count}
+            for name, count in sorted(
+                metric_coverage.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:10]
+        ],
+        "sample_devices_with_telemetry": [
+            compact_company_device(device)
+            for device in with_telemetry[:max(1, min(int(limit), 10))]
+        ],
+    }
+
+
+def get_company_provisional_alert_context(limit=MAX_AGENT_SAMPLE_RECORDS):
+    payload = get_company_operational_payload()
+
+    if payload.get("source") != "company_mongodb":
+        return payload
+
+    alerts = payload.get("alerts") or {}
+    return {
+        "source": payload["source"],
+        "tool": "get_company_provisional_alerts",
+        "rules_status": payload.get("rules_status"),
+        "official_rules_status": payload.get("official_rules_status"),
+        "critical_count": alerts.get("critical_count", 0),
+        "warning_count": alerts.get("warning_count", 0),
+        "total_count": alerts.get("total_count", 0),
+        "ruleset_version": alerts.get("ruleset_version"),
+        "official": False,
+        "alerts": (alerts.get("active_alerts") or [])[
+            :max(1, min(int(limit), 10))
+        ],
+        "disclaimer": alerts.get("message"),
+    }
+
+
+def get_company_rule_readiness_context():
+    payload = get_company_operational_payload()
+
+    if payload.get("source") != "company_mongodb":
+        return payload
+
+    return {
+        "source": payload["source"],
+        "tool": "get_company_rule_readiness",
+        "company_rules_discovered": payload.get("summary", {}).get(
+            "rule_count",
+            0,
+        ),
+        "official_rules_status": payload.get("official_rules_status"),
+        "poc_rules": get_company_poc_rule_catalog(),
+        "next_integration": (
+            "Confirm datamgmt.RULE enum semantics and connect the authoritative "
+            "Grafana alert source before promoting PoC alerts."
+        ),
+    }
+
+
+def get_company_disconnected_context(limit=MAX_AGENT_SAMPLE_RECORDS):
+    payload = get_company_operational_payload()
+
+    if payload.get("source") != "company_mongodb":
+        return payload
+
+    disconnected = [
+        compact_company_device(device)
+        for device in payload.get("devices") or []
+        if str(device.get("status") or "").lower() in {
+            "disconnected",
+            "offline",
+        }
+    ]
+
+    return {
+        "source": payload["source"],
+        "tool": "get_company_disconnected_devices",
+        "count": len(disconnected),
+        "devices": disconnected[:max(1, min(int(limit), 10))],
+        "classification": "raw_device_status",
+        "note": (
+            "Disconnected status is device-reported evidence. Critical alert "
+            "labels shown by the PoC come from provisional local rules."
+        ),
+    }
+
+
+def get_company_device_context(identifier):
+    payload = get_company_operational_payload()
+
+    if payload.get("source") != "company_mongodb":
+        return payload
+
+    target = normalize_company_key(identifier)
+    matches = []
+
+    for device in payload.get("devices") or []:
+        aliases = company_aliases(
+            device.get("device_id"),
+            device.get("device_name"),
+            device.get("node_id"),
+        )
+
+        if target in aliases:
+            matches.append(compact_company_device(device))
+
+    return {
+        "source": payload["source"],
+        "tool": "get_company_device",
+        "query": identifier,
+        "match_count": len(matches),
+        "devices": matches[:MAX_AGENT_SAMPLE_RECORDS],
+        "alerts": [
+            alert
+            for alert in payload.get("alerts", {}).get("active_alerts") or []
+            if normalize_company_key(alert.get("device_id")) == target
+        ][:MAX_AGENT_SAMPLE_RECORDS],
     }
 
 

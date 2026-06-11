@@ -139,5 +139,35 @@ Before this becomes an operational dashboard, confirm:
 - rule status, severity, trigger, and filter enum semantics
 - whether Grafana remains the authoritative alert execution source
 
-Until that contract exists, the platform reports rules as discovered with
-evaluation pending and does not produce warning or critical counts.
+Until that contract exists, official company rule evaluation remains pending.
+Any warning or critical count shown by the PoC comes only from the provisional
+local ruleset described below.
+
+## Provisional PoC Alert Flow
+
+For demonstrations, the platform runs a separate fallback ruleset named
+`company-poc-v1`. These findings are deliberately isolated from the discovered
+company rules and are always marked `official: false`.
+
+Current provisional rules:
+
+- explicit payload status `disconnected` or `offline` -> critical
+- temperature fields `temp`, `temperature`, or `NhietDo` >= 50 -> warning
+- the same temperature fields >= 70 -> critical
+- RSSI <= -70 -> warning
+- RSSI <= -85 -> critical
+
+Every finding includes the rule ID, device, raw evidence, threshold, source
+collection, ruleset version, and disclaimer. Temperature units and business
+thresholds still require company confirmation.
+
+The intended end-to-end demo flow is:
+
+```text
+Company prompt
+  -> LangGraph selects a company-specific tool
+  -> bounded unified device/telemetry read model
+  -> provisional PoC rule evaluation
+  -> evidence-backed chat answer and Alerts UI
+  -> explicit handoff gap to official company rules or Grafana
+```

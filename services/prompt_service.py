@@ -56,6 +56,62 @@ DEFAULT_PROMPTS = [
         "category": "Operations",
         "is_default": 1,
     },
+    {
+        "id": "company-1",
+        "title": "Company Fleet Snapshot",
+        "command": "/company fleet snapshot",
+        "category": "Company PoC",
+        "is_default": 1,
+    },
+    {
+        "id": "company-2",
+        "title": "Company Device Inventory",
+        "command": "/company inventory and node overview",
+        "category": "Company PoC",
+        "is_default": 1,
+    },
+    {
+        "id": "company-3",
+        "title": "Telemetry Coverage",
+        "command": "/company telemetry coverage and unmapped records",
+        "category": "Company PoC",
+        "is_default": 1,
+    },
+    {
+        "id": "company-4",
+        "title": "Provisional PoC Alerts",
+        "command": "/company provisional alerts with evidence",
+        "category": "Company PoC",
+        "is_default": 1,
+    },
+    {
+        "id": "company-5",
+        "title": "Disconnected Company Devices",
+        "command": "/company disconnected devices",
+        "category": "Company PoC",
+        "is_default": 1,
+    },
+    {
+        "id": "company-6",
+        "title": "High Temperature Findings",
+        "command": "/company temperature alerts and measured values",
+        "category": "Company PoC",
+        "is_default": 1,
+    },
+    {
+        "id": "company-7",
+        "title": "Rule Integration Readiness",
+        "command": "/company rule readiness and Grafana gaps",
+        "category": "Company PoC",
+        "is_default": 1,
+    },
+    {
+        "id": "company-8",
+        "title": "Inspect Company Device",
+        "command": "/company device SmartAsset_9b47fedc",
+        "category": "Company PoC",
+        "is_default": 1,
+    },
 ]
 
 

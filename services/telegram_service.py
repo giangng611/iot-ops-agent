@@ -22,6 +22,11 @@ TELEGRAM_COMMANDS = [
     {"command": "alarms", "description": "Show devices with alarms"},
     {"command": "diagnose", "description": "Diagnose the system or a device"},
     {"command": "heartbeat", "description": "Check delayed heartbeats"},
+    {"command": "companyfleet", "description": "Company fleet snapshot"},
+    {"command": "coverage", "description": "Company telemetry coverage"},
+    {"command": "pocalerts", "description": "Provisional company PoC alerts"},
+    {"command": "disconnected", "description": "Disconnected company devices"},
+    {"command": "ruleready", "description": "Company rule integration readiness"},
     {"command": "help", "description": "Show available commands"},
 ]
 TELEGRAM_COMMAND_PROMPTS = {
@@ -29,6 +34,11 @@ TELEGRAM_COMMAND_PROMPTS = {
     "unhealthy": "check all unhealthy devices",
     "alarms": "show devices with alarms",
     "heartbeat": "check devices with delayed heartbeat",
+    "companyfleet": "company fleet snapshot",
+    "coverage": "company telemetry coverage and unmapped records",
+    "pocalerts": "company provisional alerts with evidence",
+    "disconnected": "company disconnected devices",
+    "ruleready": "company rule readiness and Grafana gaps",
 }
 
 
@@ -156,8 +166,14 @@ def build_help_text():
         "/unhealthy - Devices needing attention",
         "/alarms - Current device alarms",
         "/heartbeat - Delayed heartbeat check",
+        "/companyfleet - Company inventory and telemetry snapshot",
+        "/coverage - Company telemetry coverage",
+        "/pocalerts - Provisional PoC alerts with evidence",
+        "/disconnected - Company devices reporting disconnected",
+        "/ruleready - Company rule and Grafana integration gaps",
         "/diagnose - Diagnose the whole system",
-        "/diagnose gateway-001 - Diagnose one device",
+        "/diagnose gateway-001 - Diagnose one simulator device",
+        "/diagnose SmartAsset_9b47fedc - Inspect one company device",
     ])
 
 

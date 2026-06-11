@@ -12,6 +12,12 @@ from storage.telemetry_store import (
 )
 from services.company_data_service import (
     get_company_agent_context,
+    get_company_device_context,
+    get_company_disconnected_context,
+    get_company_inventory_context,
+    get_company_provisional_alert_context,
+    get_company_rule_readiness_context,
+    get_company_telemetry_coverage_context,
     scan_company_payload_threshold,
 )
 
@@ -93,8 +99,81 @@ class LangGraphAgent:
             )
         ):
             selected_tool = "scan_company_threshold"
+        elif data_source == "company" and any(
+            keyword in user_input
+            for keyword in (
+                "provisional alert",
+                "poc alert",
+                "alarm",
+                "alert",
+                "cảnh báo",
+                "canh bao",
+                "risk",
+            )
+        ):
+            selected_tool = "get_company_provisional_alerts"
+        elif data_source == "company" and any(
+            keyword in user_input
+            for keyword in (
+                "coverage",
+                "telemetry coverage",
+                "unmapped",
+                "không map",
+                "khong map",
+                "metric",
+            )
+        ):
+            selected_tool = "get_company_telemetry_coverage"
+        elif data_source == "company" and any(
+            keyword in user_input
+            for keyword in (
+                "rule readiness",
+                "rule catalog",
+                "rules",
+                "grafana",
+                "luật",
+                "luat",
+            )
+        ):
+            selected_tool = "get_company_rule_readiness"
+        elif data_source == "company" and any(
+            keyword in user_input
+            for keyword in (
+                "disconnected",
+                "offline",
+                "mất kết nối",
+                "mat ket noi",
+            )
+        ):
+            selected_tool = "get_company_disconnected_devices"
+        elif (
+            data_source == "company"
+            and self.extract_company_device_identifier(user_input)
+            and any(
+                keyword in user_input
+                for keyword in (
+                    "device",
+                    "diagnose",
+                    "thiết bị",
+                    "thiet bi",
+                )
+            )
+        ):
+            selected_tool = "get_company_device"
+        elif data_source == "company" and any(
+            keyword in user_input
+            for keyword in (
+                "inventory",
+                "node",
+                "identity",
+                "device list",
+                "danh sách thiết bị",
+                "danh sach thiet bi",
+            )
+        ):
+            selected_tool = "get_company_inventory"
         elif data_source == "company":
-            selected_tool = "get_company_records"
+            selected_tool = "get_company_fleet_summary"
         elif "history" in user_input or "trend" in user_input:
             selected_tool = "get_device_history"
         elif "diagnose" in user_input and self.extract_device_id(user_input):
@@ -144,7 +223,26 @@ class LangGraphAgent:
             else:
                 tool_output = scan_company_payload_threshold(threshold)
 
-        elif selected_tool == "get_company_records":
+        elif selected_tool == "get_company_provisional_alerts":
+            tool_output = get_company_provisional_alert_context()
+
+        elif selected_tool == "get_company_telemetry_coverage":
+            tool_output = get_company_telemetry_coverage_context()
+
+        elif selected_tool == "get_company_rule_readiness":
+            tool_output = get_company_rule_readiness_context()
+
+        elif selected_tool == "get_company_disconnected_devices":
+            tool_output = get_company_disconnected_context()
+
+        elif selected_tool == "get_company_inventory":
+            tool_output = get_company_inventory_context()
+
+        elif selected_tool == "get_company_device":
+            identifier = self.extract_company_device_identifier(user_input)
+            tool_output = get_company_device_context(identifier)
+
+        elif selected_tool == "get_company_fleet_summary":
             tool_output = get_company_agent_context()
 
         elif selected_tool == "get_device_status" and device_id:
@@ -179,8 +277,10 @@ class LangGraphAgent:
             "If the tool result says rules_status is not_configured, be explicit "
             "that approved company alert rules are not configured yet. "
             "If rules_status is available_unmapped, say that company rules were "
-            "discovered but their evaluation semantics are not integrated. Do not "
-            "classify raw company records as healthy, warning, or critical unless "
+            "discovered but their evaluation semantics are not integrated. "
+            "If rules_status is provisional_poc, clearly label every alert as a "
+            "PoC fallback alert, not an official company or Grafana alert. "
+            "Do not classify raw company records as healthy, warning, or critical unless "
             "the tool result already provides that classification. Manual threshold "
             "scan results are evidence only, not official alerts. When the source is "
             "company_mongodb, describe the bounded collections from provenance. "
@@ -331,8 +431,10 @@ class LangGraphAgent:
     If the tool result says rules_status is not_configured, be explicit that
     approved company alert rules are not configured yet.
     If rules_status is available_unmapped, say that company rules were
-    discovered but their evaluation semantics are not integrated. Do not classify
-    company records as healthy, warning, or critical unless the tool result
+    discovered but their evaluation semantics are not integrated.
+    If rules_status is provisional_poc, clearly label every alert as a
+    PoC fallback alert, not an official company or Grafana alert.
+    Do not classify company records as healthy, warning, or critical unless the tool result
     already provides that classification. Manual threshold scan results are
     evidence only, not official alerts. When the source is company_mongodb,
     describe the bounded collections from provenance. Treat unified devices as
@@ -380,6 +482,41 @@ class LangGraphAgent:
                 return token.strip()
 
         return None
+
+    def extract_company_device_identifier(self, text):
+        cleaned = re.sub(r"[/,:]", " ", text)
+        tokens = [
+            token.strip("()[]{}")
+            for token in cleaned.split()
+            if token.strip("()[]{}")
+        ]
+        ignored = {
+            "company",
+            "device",
+            "diagnose",
+            "check",
+            "show",
+            "inspect",
+            "thiết",
+            "bị",
+            "thiet",
+            "bi",
+        }
+
+        for token in reversed(tokens):
+            lowered = token.lower()
+
+            if lowered in ignored:
+                continue
+
+            if (
+                lowered.startswith(("s", "dvi-", "dvi_", "nod_"))
+                or "_" in token
+                or "-" in token
+            ):
+                return token
+
+        return tokens[-1] if tokens else ""
 
     def extract_threshold(self, text):
         matches = re.findall(r"-?\d+(?:\.\d+)?", text)

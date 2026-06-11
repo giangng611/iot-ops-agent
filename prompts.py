@@ -76,22 +76,24 @@ Title: Summarize fleet risk
 """
 
 DIAGNOSIS_OUTPUT_FORMAT = """
-Always format the final answer exactly as:
+Write the final answer as clear conversational plain text.
 
-### Operational Diagnosis
+Use these four sections:
 
-#### 1. Summary
+1. Summary
 Provide a concise operational summary.
 
-#### 2. Evidence
+2. Evidence
 List affected devices, telemetry values, alarms, and observations.
 
-#### 3. Likely Cause
+3. Likely Cause
 Explain the most likely root cause.
 
-#### 4. Suggested Next Action
+4. Suggested Next Action
 Provide actionable remediation recommendations.
 
 Do not skip sections.
 Do not rename section titles.
+Do not use Markdown headings, bold markers, code fences, or tables.
+Keep the tone direct, helpful, and easy to read in a chat message.
 """

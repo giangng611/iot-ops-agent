@@ -307,6 +307,21 @@ function escapeHtml(value) {
         .replace(/'/g, "&#39;");
 }
 
+function formatConversationalText(value) {
+    return String(value ?? "")
+        .replace(/\r\n/g, "\n")
+        .replace(/^\s*```[^\n]*$/gm, "")
+        .replace(/^\s*#{1,6}\s*/gm, "")
+        .replace(/\*\*(.*?)\*\*/g, "$1")
+        .replace(/__(.*?)__/g, "$1")
+        .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2")
+        .replace(/`([^`\n]+)`/g, "$1")
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
+        .replace(/^\s*[-*]\s+/gm, "• ")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
 function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -2028,6 +2043,7 @@ async function renderAssistantMessage(
     retryPrompt = null,
     tokenUsage = null
 ) {
+    const displayMessage = formatConversationalText(message);
     const chatMessages = document.getElementById("chatMessages");
     const reasoningId = `reasoning-${Date.now()}-${Math.random()}`;
     const messageId = `assistant-message-${Date.now()}-${Math.random()}`;
@@ -2035,7 +2051,7 @@ async function renderAssistantMessage(
 
     window[reasoningId] = reasoningSteps;
     assistantMessageActionStore[messageId] = {
-        answer: message,
+        answer: displayMessage,
         retryPrompt: retryPrompt
     };
     const tokenUsageLabel = formatTokenUsage(tokenUsage);
@@ -2049,7 +2065,7 @@ async function renderAssistantMessage(
                 </div>
 
                 <div class="message-bubble assistant-bubble">
-                    <pre class="typing-output">${shouldType ? "" : escapeHtml(message)}</pre>
+                    <pre class="typing-output">${shouldType ? "" : escapeHtml(displayMessage)}</pre>
                 </div>
 
                 <div class="assistant-actions">
@@ -2091,7 +2107,7 @@ async function renderAssistantMessage(
     const latestOutput = outputs[outputs.length - 1];
 
     if (shouldType) {
-        await typeTextIntoElementPromise(latestOutput, message, 8);
+        await typeTextIntoElementPromise(latestOutput, displayMessage, 8);
     }
 
     if (shouldPinScroll) {

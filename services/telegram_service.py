@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -15,6 +16,20 @@ MAX_TELEGRAM_MESSAGE_CHARS = 3900
 _telegram_update_lock = threading.Lock()
 _telegram_updates_inflight = set()
 _telegram_updates_processed = OrderedDict()
+TELEGRAM_COMMANDS = [
+    {"command": "overview", "description": "Summarize system health"},
+    {"command": "unhealthy", "description": "List unhealthy devices"},
+    {"command": "alarms", "description": "Show devices with alarms"},
+    {"command": "diagnose", "description": "Diagnose the system or a device"},
+    {"command": "heartbeat", "description": "Check delayed heartbeats"},
+    {"command": "help", "description": "Show available commands"},
+]
+TELEGRAM_COMMAND_PROMPTS = {
+    "overview": "overview system health",
+    "unhealthy": "check all unhealthy devices",
+    "alarms": "show devices with alarms",
+    "heartbeat": "check devices with delayed heartbeat",
+}
 
 
 def claim_telegram_update(update):
@@ -135,13 +150,14 @@ def telegram_user_is_allowed(telegram_user_id):
 
 def build_help_text():
     return "\n".join([
-        "IoT Ops Agent commands:",
-        "/overview system health",
-        "/check all unhealthy devices",
-        "/show devices with alarms",
-        "/diagnose system issue",
-        "/check devices with delayed heartbeat",
-        "/diagnose gateway-001",
+        "What would you like to check?",
+        "",
+        "/overview - System health summary",
+        "/unhealthy - Devices needing attention",
+        "/alarms - Current device alarms",
+        "/heartbeat - Delayed heartbeat check",
+        "/diagnose - Diagnose the whole system",
+        "/diagnose gateway-001 - Diagnose one device",
     ])
 
 
@@ -149,7 +165,34 @@ def normalize_telegram_prompt(text):
     if text in {"/", "/start", "/help"}:
         return None, build_help_text()
 
+    command_text, _, arguments = text.partition(" ")
+    command = command_text.split("@", 1)[0].lstrip("/").lower()
+
+    if command in TELEGRAM_COMMAND_PROMPTS:
+        return TELEGRAM_COMMAND_PROMPTS[command], None
+
+    if command == "diagnose":
+        target = arguments.strip()
+        return (
+            f"diagnose {target}" if target else "diagnose system issue",
+            None,
+        )
+
     return text, None
+
+
+def format_conversational_text(text):
+    value = str(text or "").replace("\r\n", "\n")
+    value = re.sub(r"^\s*```[^\n]*$", "", value, flags=re.MULTILINE)
+    value = re.sub(r"^\s*#{1,6}\s*", "", value, flags=re.MULTILINE)
+    value = re.sub(r"\*\*(.*?)\*\*", r"\1", value)
+    value = re.sub(r"__(.*?)__", r"\1", value)
+    value = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", value)
+    value = re.sub(r"`([^`\n]+)`", r"\1", value)
+    value = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", value)
+    value = re.sub(r"^\s*[-*]\s+", "• ", value, flags=re.MULTILINE)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    return value.strip()
 
 
 def split_telegram_text(text):
@@ -352,9 +395,8 @@ def process_telegram_update(
                     merge_stream_event(steps, stream_event)
 
                     if stream_event.get("type") == "final":
-                        final_answer = (
-                            stream_event.get("final_answer")
-                            or final_answer
+                        final_answer = format_conversational_text(
+                            stream_event.get("final_answer") or final_answer
                         )
                         token_usage = add_telegram_runtime_metadata(
                             stream_event.get("token_usage")
@@ -462,3 +504,9 @@ def build_set_webhook_payload(public_base_url):
         payload["secret_token"] = secret_token
 
     return payload
+
+
+def build_set_commands_payload():
+    return {
+        "commands": json.dumps(TELEGRAM_COMMANDS),
+    }

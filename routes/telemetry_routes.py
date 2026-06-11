@@ -1,3 +1,4 @@
+import os
 import threading
 
 from flask import Blueprint, jsonify, request, session
@@ -31,11 +32,19 @@ def remember_user_data_source(user_id, selected_source):
 
 
 def get_user_selected_data_source(user_id):
+    default_source = os.getenv(
+        "TELEGRAM_DEFAULT_DATA_SOURCE",
+        "simulator",
+    ).strip().lower()
+
+    if default_source not in {"simulator", "company"}:
+        default_source = "simulator"
+
     if user_id is None:
-        return "simulator"
+        return default_source
 
     with _user_data_source_lock:
-        return _user_data_sources.get(int(user_id), "simulator")
+        return _user_data_sources.get(int(user_id), default_source)
 
 
 @telemetry_bp.route("/api/devices", methods=["GET"])

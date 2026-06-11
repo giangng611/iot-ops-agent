@@ -532,7 +532,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             self.assertTrue(mock_post.called)
             sent_payload = mock_post.call_args.kwargs["json"]
             self.assertEqual(sent_payload["chat_id"], 123)
-            self.assertIn("/diagnose system issue", sent_payload["text"])
+            self.assertIn("/diagnose gateway-001", sent_payload["text"])
         finally:
             os.environ.pop("TELEGRAM_BOT_TOKEN", None)
             os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
@@ -607,7 +607,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "answered")
                 self.assertTrue(payload["history_chat_id"])
                 mock_run_stream.assert_called_once_with(
-                    "/overview system health",
+                    "overview system health",
                     data_source="company",
                 )
 
@@ -646,6 +646,56 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
                 os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
                 os.environ.pop("TELEGRAM_HISTORY_USER_ID", None)
+
+    def test_telegram_commands_map_to_agent_prompts(self):
+        self.assertEqual(
+            telegram_service.normalize_telegram_prompt("/overview"),
+            ("overview system health", None),
+        )
+        self.assertEqual(
+            telegram_service.normalize_telegram_prompt(
+                "/diagnose gateway-001"
+            ),
+            ("diagnose gateway-001", None),
+        )
+        self.assertEqual(
+            telegram_service.normalize_telegram_prompt(
+                "/alarms@iot_ops_agent_bot"
+            ),
+            ("show devices with alarms", None),
+        )
+
+    def test_assistant_markdown_is_formatted_as_conversational_text(self):
+        formatted = telegram_service.format_conversational_text(
+            "### Operational Diagnosis\n\n"
+            "#### 1. Summary\n"
+            "**gateway-001** needs attention.\n\n"
+            "- CPU is `92%`\n"
+            "- Check [Grafana](https://grafana.example.com)"
+        )
+
+        self.assertNotIn("#", formatted)
+        self.assertNotIn("**", formatted)
+        self.assertNotIn("`", formatted)
+        self.assertIn("1. Summary", formatted)
+        self.assertIn("• CPU is 92%", formatted)
+
+    def test_telegram_command_payload_contains_supported_commands(self):
+        payload = telegram_service.build_set_commands_payload()
+        commands = json.loads(payload["commands"])
+        command_names = {item["command"] for item in commands}
+
+        self.assertEqual(
+            command_names,
+            {
+                "overview",
+                "unhealthy",
+                "alarms",
+                "diagnose",
+                "heartbeat",
+                "help",
+            },
+        )
 
     @patch("services.telegram_service.requests.post")
     def test_telegram_duplicate_update_is_answered_once(self, mock_post):
@@ -689,7 +739,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                     "duplicate",
                 )
                 mock_run_stream.assert_called_once_with(
-                    "/overview system health",
+                    "overview system health",
                     data_source="simulator",
                 )
                 self.assertEqual(mock_post.call_count, 1)
@@ -789,6 +839,16 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             app_module.get_user_selected_data_source(user["id"]),
             "company",
         )
+
+    def test_telegram_data_source_can_default_to_company(self):
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_DEFAULT_DATA_SOURCE": "company"},
+        ):
+            self.assertEqual(
+                app_module.get_user_selected_data_source(999999),
+                "company",
+            )
 
     def test_storage_status_api_reports_backend_shape(self):
         user = self.create_user_once("storage-api-user", "storage-pass")

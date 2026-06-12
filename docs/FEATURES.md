@@ -6,7 +6,8 @@ IoT Ops Agent combines realtime IoT monitoring, AI-assisted diagnostics, persist
 
 ## Realtime AI Operations Workspace
 
-The home workspace provides an AI-powered operations console for interacting with the simulated IoT fleet.
+The home workspace provides an AI-powered operations console for interacting
+with either simulator telemetry or the read-only Company DB source.
 
 Features include:
 
@@ -24,6 +25,7 @@ Features include:
 - AI-generated chat titles
 - pinned and searchable conversations
 - busy-state protection during agent execution
+- explicit source selection and visible simulator fallback
 
 <p align="center">
   <img src="../screenshots/dashboard.png" width="1000">
@@ -53,7 +55,7 @@ The reasoning drawer displays:
 
 ## Device Fleet Monitoring
 
-The Devices tab provides realtime fleet visibility for the simulated IoT environment.
+The Devices tab supports simulator and Company DB views.
 
 Features include:
 
@@ -66,6 +68,8 @@ Features include:
 - direct device diagnosis
 - telemetry history inspection
 - realtime SocketIO updates
+- Company DB connection filtering and sorting
+- company inventory, latest telemetry, history, and provisional rule context
 
 <p align="center">
   <img src="../screenshots/devices-tab.png" width="1000">
@@ -224,29 +228,24 @@ The project includes a benchmark workflow for comparing orchestration runtimes a
 
 Currently evaluated runtimes include:
 
+- IOA v1 · Custom Python
 - IOA v2 · Custom Python
 - IOA v2 · LangChain
 - IOA v2 · LangGraph
 - IOA v2 · n8n
 - IOA v2 · Dify
 
-Benchmark dimensions include:
-
-- operational accuracy
-- telemetry/tool grounding
-- reasoning clarity
-- runtime observability
-- development complexity
-- integration speed
-- ecosystem maturity
-- maintainability
-- latency
-
-Runtime benchmark results are stored in CSV format and summarized in the benchmarking documentation.
+The current benchmark stores raw answers, reference context, trace evidence,
+latency, status, and token usage when available. A separate blind AI judge
+scores factual correctness, evidence grounding, task completion,
+actionability, and source discipline. Engineering tradeoffs are evaluated
+separately.
 
 Assistant responses display a token usage badge when the selected runtime returns model usage metadata. Runtime traces also include workflow maps so Custom Python, LangChain, LangGraph, n8n, and Dify execution paths can be compared visually.
 
-Dify is available as a self-hosted chatflow runtime. It receives the same operational context as n8n, returns structured operational diagnoses through the Dify Chat Messages API, and surfaces UI-visible app-level reasoning traces in local testing.
+Dify is available as a self-hosted chatflow runtime. Flask packages the
+selected operational context for Dify, normalizes its response, and surfaces
+app-level reasoning steps when the Chatflow returns them.
 
 ---
 
@@ -254,22 +253,9 @@ Dify is available as a self-hosted chatflow runtime. It receives the same operat
 
 The project is structured as a deployable full-stack demo application.
 
-Current deployment architecture includes:
+Current deployment architecture includes Flask, Flask-SocketIO, OpenAI,
+optional MongoDB telemetry, optional Supabase/Postgres app data, SQLite local
+fallback, Render support, and environment-based secrets.
 
-- Flask backend
-- Flask-SocketIO realtime communication
-- SQLite demo database
-- OpenAI API integration
-- Render deployment support
-- environment-variable based secrets
-- seeded telemetry data on startup
-- protected demo signup through access code
-
-Future production improvements may include:
-
-- PostgreSQL or Supabase migration
-- persistent cloud storage
-- stronger rate limiting
-- admin dashboard
-- production-grade authentication
-- external alert notification channels
+Company MongoDB access is network-dependent and is normally exercised from a
+local or VPN-connected runtime rather than the public demo.

@@ -68,7 +68,7 @@ pip install -r requirements.txt
 ### Start Command
 
 ```bash
-python3 app.py
+python app.py
 ```
 
 ### Runtime
@@ -103,13 +103,17 @@ APP_DB_FALLBACK_ENABLED=false
 SUPABASE_DB_URL=your_supabase_transaction_pooler_url
 POSTGRES_POOL_MIN_SIZE=1
 POSTGRES_POOL_MAX_SIZE=5
+APP_TIMEZONE=Asia/Ho_Chi_Minh
 ACCESS_CODE=your_access_code
 ```
+
+Add `N8N_WEBHOOK_URL` only when the deployed service can reach an n8n
+webhook. A localhost webhook is not reachable from a separate Render service.
 
 Add these only if the deployed app should call a reachable Dify instance:
 
 ```env
-DIFY_API_URL=http://localhost/v1/chat-messages
+DIFY_API_URL=https://your-dify-host/v1/chat-messages
 DIFY_API_KEY=your_dify_app_api_key
 DIFY_USER=iot-ops-agent-ui
 ```
@@ -125,7 +129,30 @@ These variables are required for:
 * Supabase/Postgres app-data storage
 * app-data fallback policy
 * protected account registration
+
 Optional Dify variables are required only for `IOA v2 · Dify`.
+
+Optional Telegram variables:
+
+```env
+PUBLIC_BASE_URL=https://iot-ops-agent.onrender.com
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_WEBHOOK_SECRET=...
+TELEGRAM_ALLOWED_USER_IDS=
+TELEGRAM_HISTORY_USER_ID=
+TELEGRAM_DEFAULT_DATA_SOURCE=simulator
+```
+
+Company MongoDB variables should be configured only when the Render service
+can reach the company network:
+
+```env
+COMPANY_MONGODB_URI=...
+COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
+COMPANY_DB_STATEMENT_TIMEOUT_MS=5000
+COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS=120
+COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS=60
+```
 
 Do not commit secrets into GitHub.
 
@@ -159,20 +186,20 @@ switching traffic to it.
 Apply Supabase/Postgres app-data schema:
 
 ```bash
-python3 scripts/apply_supabase_schema.py
+python -m scripts.apply_supabase_schema
 ```
 
 If you are migrating existing local app data:
 
 ```bash
-python3 scripts/migrate_sqlite_app_data_to_supabase.py --apply
-python3 scripts/verify_supabase_app_data_migration.py
+python -m scripts.migrate_sqlite_app_data_to_supabase --apply
+python -m scripts.verify_supabase_app_data_migration
 ```
 
 Prepare MongoDB telemetry indexes:
 
 ```bash
-python3 scripts/ensure_mongodb_indexes.py
+python -m scripts.ensure_mongodb_indexes
 ```
 
 Do not commit generated local SQLite database files for production
@@ -201,7 +228,7 @@ ENABLE_EMBEDDED_TELEMETRY=false
 ```
 
 ```bash
-python3 simulator.py
+python simulator.py
 ```
 
 The simulator powers:
@@ -260,7 +287,7 @@ errors instead of silently writing new rows to SQLite.
 
 Supabase RLS is enabled for all app-data tables, with direct access revoked
 from the `anon` and `authenticated` roles. Run
-`python3 scripts/check_supabase_rls.py` after applying migrations. If
+`python -m scripts.check_supabase_rls` after applying migrations. If
 browser-side Supabase clients are added, define per-user policies and grant
 only the required operations before exposing publishable keys.
 
@@ -341,8 +368,8 @@ configured telemetry backend.
 For MongoDB telemetry mode, verify:
 
 ```bash
-python3 scripts/check_mongodb_telemetry.py --limit 5
-python3 scripts/check_app_storage_status.py
+python -m scripts.check_mongodb_telemetry --limit 5
+python -m scripts.check_app_storage_status
 ```
 
 ---

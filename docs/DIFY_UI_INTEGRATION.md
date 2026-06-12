@@ -102,7 +102,7 @@ The Flask backend sends a Dify Chat Messages API request with:
 }
 ```
 
-The operational context includes:
+For the simulator source, the operational context includes:
 
 ```json
 {
@@ -114,6 +114,10 @@ The operational context includes:
   "target_device_history": []
 }
 ```
+
+When Company DB is active, the same field contains bounded company
+operational context. If Company MongoDB is unavailable, Flask packages
+simulator fallback context and identifies the active source.
 
 Dify can return either normal text or JSON text. If the answer contains:
 
@@ -145,32 +149,15 @@ Expected behavior:
 
 ---
 
-## Local Evaluation Result
+## Evaluation Status
 
-Dify was tested locally through the UI with shared operational prompts:
+Dify is available in the shared runner through `dify_api` mode. Historical
+manual scores are not current runtime-selection evidence. Use the frozen prompt
+and blind judge flow in [Benchmarking](BENCHMARKING.md).
 
-* `/overview system health`
-* `/check all unhealthy devices`
-* `/diagnose system issue`
-* gateway heartbeat-delay investigation
-* active sensor alert correlation
-* maintenance priority planning
-
-Average Dify scores from manually scored rows:
-
-| Metric | Score |
-| ------ | ----: |
-| Accuracy | 4.0 |
-| Tool Usage | 4.17 |
-| Reasoning Clarity | 4.0 |
-| Observability | 3.83 |
-| Development Complexity | 4.0 |
-| Integration Speed | 5.0 |
-| Ecosystem | 4.0 |
-| Maintainability | 4.0 |
-| Avg Latency | 8.06s |
-
-Dify showed strong fit for chatbot-style operational diagnosis because it produced thoughtful structured answers and required less manual workflow configuration than n8n for text responses. In the maintenance-priority prompt run, Dify had n8n-like latency, short app-level observations, no streamed answer preview, and token usage roughly in the LangChain range.
+Dify reasoning steps are app-level or model-generated unless the Chatflow
+explicitly invokes and returns real tool events. Trace length alone is not
+evidence of database tool use.
 
 ---
 

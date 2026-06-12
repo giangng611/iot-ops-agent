@@ -4,7 +4,9 @@ This project keeps the company operational DB separate from the app-data DB.
 
 `SUPABASE_DB_URL` stores IoT Ops Agent platform data such as users, chats, messages, and prompts.
 
-`COMPANY_DB_URL` or `COMPANY_MONGODB_URI` is reserved for the real operational data source used by LangGraph tools.
+`COMPANY_DB_URL` or `COMPANY_MONGODB_URI` is reserved for the real operational
+data source. The current unified device adapter uses MongoDB; Company Postgres
+remains a schema-probing path.
 
 ## Environment
 
@@ -52,7 +54,7 @@ built-in `read` role only on the required databases. Do not grant `readWrite`,
 ## Probe Schema
 
 ```bash
-python3 scripts/probe_company_db.py --table-limit 20
+python -m scripts.probe_company_db --table-limit 20
 ```
 
 If no company DB URL is present or the company DB is unavailable, the script returns a simulator fallback snapshot.
@@ -62,27 +64,27 @@ If no company DB URL is present or the company DB is unavailable, the script ret
 Use low limits only:
 
 ```bash
-python3 scripts/probe_company_db.py --preview public.devices --preview-limit 5
+python -m scripts.probe_company_db --preview public.devices --preview-limit 5
 ```
 
 For MongoDB, use `database.collection`:
 
 ```bash
-python3 scripts/probe_company_db.py --preview operations.devices --preview-limit 5
+python -m scripts.probe_company_db --preview operations.devices --preview-limit 5
 ```
 
 To inspect MongoDB field paths without printing values:
 
 ```bash
-python3 scripts/probe_company_db.py --inspect datamgmt.CNT --preview-limit 10
-python3 scripts/probe_company_db.py --inspect datamgmt.CIN --preview-limit 10
+python -m scripts.probe_company_db --inspect datamgmt.CNT --preview-limit 10
+python -m scripts.probe_company_db --inspect datamgmt.CIN --preview-limit 10
 ```
 
 To inspect a JSON payload field such as oneM2M `CIN.con` without printing
 payload values:
 
 ```bash
-python3 scripts/probe_company_db.py --inspect-payload datamgmt.CIN --payload-field con --preview-limit 20
+python -m scripts.probe_company_db --inspect-payload datamgmt.CIN --payload-field con --preview-limit 20
 ```
 
 Guardrails:
@@ -120,15 +122,19 @@ Simulator
 Company DB
 ```
 
-When Company DB is selected, the backend reads raw company MongoDB operational records and marks:
+When Company DB is selected and reachable, the backend reports:
 
 ```json
 {
-  "rules_status": "not_configured"
+  "source": "company_mongodb",
+  "rules_status": "provisional_poc",
+  "official_rules_status": "discovered_unmapped"
 }
 ```
 
-The Alerts screen must not derive warning or critical alerts from raw company records until approved business rules or Grafana tools are available.
+Warning and critical counts come only from the isolated `company-poc-v1`
+fallback ruleset and are labeled non-official. Discovered company rules are
+not executed or reinterpreted.
 
 If the company database is unavailable, the API returns an explicit simulator fallback state instead of silently pretending the data is real.
 
@@ -194,9 +200,14 @@ The intended end-to-end demo flow is:
 
 ```text
 Company prompt
-  -> LangGraph selects a company-specific tool
+  -> source resolver chooses Company DB or simulator fallback
+  -> selected web runtime receives bounded company evidence
+  -> Custom Python or LangGraph selects a focused read-only tool
   -> bounded unified device/telemetry read model
   -> provisional PoC rule evaluation
   -> evidence-backed chat answer and Alerts UI
   -> explicit handoff gap to official company rules or Grafana
 ```
+
+LangChain, n8n, and Dify receive bounded company context packaged by Flask.
+Telegram uses LangGraph and follows its remembered or default source.

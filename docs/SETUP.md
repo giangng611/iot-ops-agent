@@ -75,11 +75,30 @@ APP_DB_FALLBACK_ENABLED=true
 SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:6543/postgres
 POSTGRES_POOL_MIN_SIZE=1
 POSTGRES_POOL_MAX_SIZE=5
+POSTGRES_POOL_TIMEOUT_SECONDS=5
+POSTGRES_CONNECT_TIMEOUT_SECONDS=5
+POSTGRES_STATEMENT_TIMEOUT_MS=4000
+POSTGRES_LOCK_TIMEOUT_MS=3000
+POSTGRES_CIRCUIT_BREAKER_SECONDS=30
+APP_TIMEZONE=Asia/Ho_Chi_Minh
 ACCESS_CODE=your_access_code_here
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 DIFY_API_URL=http://localhost/v1/chat-messages
 DIFY_API_KEY=your_dify_app_api_key_here
 DIFY_USER=iot-ops-agent-ui
+PUBLIC_BASE_URL=http://127.0.0.1:5001
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_WEBHOOK_SECRET=
+TELEGRAM_ALLOWED_USER_IDS=
+TELEGRAM_HISTORY_USER_ID=
+TELEGRAM_UPDATE_RETENTION_SECONDS=86400
+TELEGRAM_DEFAULT_DATA_SOURCE=simulator
+COMPANY_MONGODB_URI=
+COMPANY_MONGODB_DB=
+COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
+COMPANY_DB_STATEMENT_TIMEOUT_MS=5000
+COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS=120
+COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS=60
 ```
 
 ### Generate a Flask Secret Key
@@ -123,15 +142,26 @@ This creates the required SQLite tables for:
 
 ---
 
-## 5. Start Telemetry Simulator
+## 5. Start Telemetry
 
-Open a terminal and run:
+The default `ENABLE_EMBEDDED_TELEMETRY=true` setting makes Flask generate
+simulator telemetry before each Socket.IO broadcast. A second process is not
+required.
+
+To use the standalone simulator, change:
+
+```env
+ENABLE_EMBEDDED_TELEMETRY=false
+```
+
+Then open another terminal and run:
 
 ```bash
 python simulator.py
 ```
 
-The simulator continuously generates telemetry for 10 virtual IoT devices.
+The standalone simulator continuously generates telemetry for 10 virtual IoT
+devices.
 
 Generated telemetry includes:
 
@@ -159,7 +189,7 @@ After MongoDB is running and the simulator has inserted at least one batch,
 verify the MongoDB copy:
 
 ```bash
-python scripts/check_mongodb_telemetry.py --limit 5
+python -m scripts.check_mongodb_telemetry --limit 5
 ```
 
 The output should show a non-zero `count` and recent telemetry documents.
@@ -175,7 +205,7 @@ TELEMETRY_WRITE_BACKEND=mongodb  # write new telemetry only to MongoDB
 Verify the active write backend:
 
 ```bash
-python scripts/check_telemetry_write_backend.py
+python -m scripts.check_telemetry_write_backend
 ```
 
 When `TELEMETRY_WRITE_BACKEND=mongodb`, the SQLite telemetry count should stay
@@ -188,7 +218,7 @@ Phase B adds read-only MongoDB telemetry APIs while keeping the existing
 SQLite dashboard and agent context unchanged.
 
 ```bash
-python scripts/check_mongodb_api.py --device-id sensor-001 --limit 5
+python -m scripts.check_mongodb_api --device-id sensor-001 --limit 5
 ```
 
 The script checks:
@@ -225,7 +255,7 @@ visible during testing.
 Verify the active read source:
 
 ```bash
-python scripts/check_telemetry_read_source.py
+python -m scripts.check_telemetry_read_source
 ```
 
 ### Optional: Prepare MongoDB Telemetry Indexes
@@ -233,7 +263,7 @@ python scripts/check_telemetry_read_source.py
 Phase D adds MongoDB indexes for the telemetry read path.
 
 ```bash
-python scripts/ensure_mongodb_indexes.py
+python -m scripts.ensure_mongodb_indexes
 ```
 
 The script creates or verifies:
@@ -257,13 +287,13 @@ existing SQLite telemetry rows into MongoDB.
 Preview the number of SQLite telemetry rows:
 
 ```bash
-python scripts/backfill_sqlite_telemetry_to_mongodb.py --dry-run
+python -m scripts.backfill_sqlite_telemetry_to_mongodb --dry-run
 ```
 
 Run the backfill:
 
 ```bash
-python scripts/backfill_sqlite_telemetry_to_mongodb.py --batch-size 500
+python -m scripts.backfill_sqlite_telemetry_to_mongodb --batch-size 500
 ```
 
 The backfill is idempotent. It stores migrated rows with:
@@ -310,25 +340,25 @@ python -m pip install -r requirements.txt
 Check the connection:
 
 ```bash
-python scripts/check_supabase_postgres.py
+python -m scripts.check_supabase_postgres
 ```
 
 Apply the app-data schema:
 
 ```bash
-python scripts/apply_supabase_schema.py
+python -m scripts.apply_supabase_schema
 ```
 
 Preview SQLite app-data counts:
 
 ```bash
-python scripts/migrate_sqlite_app_data_to_supabase.py
+python -m scripts.migrate_sqlite_app_data_to_supabase
 ```
 
 Run the migration:
 
 ```bash
-python scripts/migrate_sqlite_app_data_to_supabase.py --apply
+python -m scripts.migrate_sqlite_app_data_to_supabase --apply
 ```
 
 This migration preserves integer IDs so existing chat/message/prompt
@@ -342,13 +372,13 @@ After switching app data to Supabase/Postgres, verify the active app-data
 backend and telemetry source:
 
 ```bash
-python scripts/check_app_storage_status.py
+python -m scripts.check_app_storage_status
 ```
 
 Verify migrated app-data integrity:
 
 ```bash
-python scripts/verify_supabase_app_data_migration.py
+python -m scripts.verify_supabase_app_data_migration
 ```
 
 When `APP_DB_BACKEND=supabase`, the app writes users, chats, messages, and
@@ -372,7 +402,7 @@ to use its direct Postgres connection; browser-side Data API access is denied
 by default. Verify the deployed security state with:
 
 ```bash
-python scripts/check_supabase_rls.py
+python -m scripts.check_supabase_rls
 ```
 
 If browser-side Supabase access is added later, design per-user policies and
@@ -423,6 +453,33 @@ Once the simulator and Flask app are running:
 * alerts appear in realtime
 * SocketIO pushes live device updates
 * AI diagnostics can analyze operational conditions
+
+---
+
+## Optional Company DB Source
+
+Configure a read-only Company MongoDB account:
+
+```env
+COMPANY_MONGODB_URI=mongodb://readonly_user:password@company-host:27017/?authSource=admin
+COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
+COMPANY_DB_STATEMENT_TIMEOUT_MS=5000
+COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS=120
+COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS=60
+```
+
+Start Flask from a machine that can reach the company network, then select
+`Company DB` in the Profile runtime drawer. The UI reports
+`company_mongodb` when active and `simulator_fallback` when the read fails.
+
+Probe the schema without exposing unrestricted database access:
+
+```bash
+python -m scripts.probe_company_db --table-limit 20
+```
+
+See [Company DB Discovery](COMPANY_DB_DISCOVERY.md) for the bounded read model,
+proxy restrictions, and provisional PoC rules.
 
 ---
 
@@ -510,7 +567,9 @@ Then run:
 /overview system health
 ```
 
-Dify should return a structured operational diagnosis and a UI-visible reasoning trace. Local testing showed at least three reasoning iterations per Dify execution.
+Dify should return a structured operational diagnosis and a UI-visible
+app-level trace when the configured Chatflow returns steps. Trace length
+depends on the Dify workflow and must not be treated as proof of tool use.
 
 ---
 
@@ -536,8 +595,9 @@ Verify that `.env` exists in the project root and includes:
 OPENAI_API_KEY=...
 FLASK_SECRET_KEY=...
 ACCESS_CODE=...
-DIFY_API_KEY=...
 ```
+
+`DIFY_API_KEY` is required only when using the Dify runtime.
 
 Restart the Flask application after updating environment variables.
 

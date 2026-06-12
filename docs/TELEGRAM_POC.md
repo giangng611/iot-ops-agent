@@ -6,8 +6,9 @@ The Telegram PoC adds Telegram as a second chat client for the existing IoT Ops 
 Telegram message
 → Flask /api/telegram/webhook
 → IOA v2 · LangGraph
-→ final answer only
-→ Telegram reply
+→ reasoning persistence/events when configured
+→ formatted final answer
+→ Telegram reply + optional web synchronization
 ```
 
 The web app and existing diagnosis endpoints remain unchanged.
@@ -32,7 +33,7 @@ TELEGRAM_DEFAULT_DATA_SOURCE=simulator
 After deploying and setting the environment variables, run:
 
 ```bash
-python3 scripts/configure_telegram_webhook.py
+python -m scripts.configure_telegram_webhook
 ```
 
 This registers the webhook and the Telegram `/` command menu:
@@ -53,6 +54,11 @@ Supported commands:
 /alarms
 /diagnose
 /heartbeat
+/companyfleet
+/coverage
+/pocalerts
+/disconnected
+/ruleready
 /help
 ```
 
@@ -62,7 +68,9 @@ Supported commands:
 /diagnose gateway-001
 ```
 
-Any other text is sent to the existing LangGraph runtime and the bot replies with only the final answer.
+Any other text is sent to the existing LangGraph runtime. Telegram receives
+the formatted final answer. With `TELEGRAM_HISTORY_USER_ID`, the platform also
+stores and emits the reasoning steps and token metadata.
 
 ## Test Company DB Through Localhost
 
@@ -70,7 +78,7 @@ Telegram requires a public HTTPS webhook, so it cannot call `localhost`
 directly. Use a temporary Cloudflare tunnel:
 
 ```bash
-python3 app.py
+python app.py
 cloudflared tunnel --url http://127.0.0.1:5001
 ```
 
@@ -78,34 +86,37 @@ Copy the generated `https://...trycloudflare.com` URL, then point Telegram to
 the local app:
 
 ```bash
-python3 scripts/configure_telegram_webhook.py \
+python -m scripts.configure_telegram_webhook \
   --base-url https://your-tunnel.trycloudflare.com
 ```
 
-Keep both processes running. Open the local platform, select `Company DB`, and
-then send a Telegram command. The local Flask process will handle the webhook
-and query the company MongoDB through the machine's internal network access.
+Keep both processes running. Open the local platform as the user identified by
+`TELEGRAM_HISTORY_USER_ID`, select `Company DB`, and then send a Telegram
+command. The source choice is remembered in process for that user.
 
 For a demo that should start on company data before the UI is opened, launch
 the local app with:
 
 ```bash
-TELEGRAM_DEFAULT_DATA_SOURCE=company PORT=5001 python3 app.py
+TELEGRAM_DEFAULT_DATA_SOURCE=company PORT=5002 python app.py
 ```
 
-Once the user changes the data source in the UI, that session choice takes
-priority over the default.
+Once the mapped user changes the source in the UI, that in-process choice
+takes priority. After an app restart, the default is used until the UI source
+is remembered again.
 
 After testing, restore the deployed webhook:
 
 ```bash
-python3 scripts/configure_telegram_webhook.py \
+python -m scripts.configure_telegram_webhook \
   --base-url https://iot-ops-agent.onrender.com
 ```
 
 ## Notes
 
-The current Render deployment can run this PoC without localhost-only n8n or Dify dependencies because Telegram calls Flask directly and Flask calls the in-process LangGraph agent.
+The current Render deployment can run this PoC without n8n or Dify because
+Telegram calls Flask directly and Flask calls the in-process LangGraph agent.
+Company answers still require the Flask runtime to reach Company MongoDB.
 
 The local tunnel is intended for a controlled PoC only. The temporary URL
 changes whenever the quick tunnel restarts.

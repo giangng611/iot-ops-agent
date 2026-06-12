@@ -1,6 +1,7 @@
 # IoT Ops Agent
 
-AI-powered IoT observability platform with realtime telemetry simulation, operational alert management, AI-assisted diagnostics, and orchestration runtime benchmarking.
+AI-powered IoT operations PoC with simulator telemetry, bounded read-only
+Company MongoDB access, AI-assisted diagnosis, and runtime benchmarking.
 
 ---
 
@@ -17,7 +18,10 @@ AI-powered IoT observability platform with realtime telemetry simulation, operat
 
 # Overview
 
-IoT Ops Agent is a full-stack simulated IoT operations platform designed to monitor virtual device fleets, stream realtime telemetry, detect operational anomalies, and diagnose infrastructure issues using LLM-powered reasoning agents.
+IoT Ops Agent is a full-stack IoT operations PoC that can use either a
+simulated fleet or a bounded read-only Company MongoDB source. It combines
+telemetry monitoring, provisional operational alerts, and LLM-assisted
+diagnosis behind one web workspace.
 
 The platform combines:
 
@@ -55,27 +59,20 @@ The project currently supports multiple orchestration runtimes:
 * orchestration runtime benchmarking
 * streamed reasoning traces
 * benchmark execution logging
+* explicit Simulator / Company DB source selection and fallback
+* read-only Company MongoDB proxy with bounded queries and rate limiting
 
 ---
 
 # Architecture
 
 ```text
-Simulated IoT Devices
-          ↓
-Telemetry Simulator
-          ↓
-MongoDB Telemetry Store
-          ↓
-Supabase/Postgres App Data Store
-          ↓
-SQLite Legacy/Fallback Store
-          ↓
-Flask + SocketIO Backend
-          ↓
-AI Orchestration Layer
-          ↓
-Realtime Dashboard UI
+Simulator telemetry ─┐
+                     ├─> Flask + Socket.IO -> AI runtimes -> Web UI / Telegram
+Company MongoDB ─────┘
+
+App data: Supabase/Postgres, with optional SQLite fallback
+Simulator telemetry: MongoDB or SQLite, selected by environment
 ```
 
 ---
@@ -129,7 +126,8 @@ Current benchmark dimensions include:
 Raw executions and AI-judged results are stored separately so provisional or
 manually assigned scores are not presented as measured evidence.
 
-The current benchmark compares Custom Python, LangChain, LangGraph, n8n, and Dify across shared operational prompts, including custom prompt workflows created from the Prompts tab.
+The benchmark runner compares Custom Python, LangChain, LangGraph, n8n, and
+Dify across the versioned prompt set in `eval/prompts_phase1.json`.
 
 See the [Benchmarking Guide](docs/BENCHMARKING.md) for details.
 
@@ -192,6 +190,12 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret
 TELEGRAM_ALLOWED_USER_IDS=
 TELEGRAM_HISTORY_USER_ID=
+TELEGRAM_DEFAULT_DATA_SOURCE=simulator
+COMPANY_MONGODB_URI=
+COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
+COMPANY_DB_STATEMENT_TIMEOUT_MS=5000
+COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS=120
+COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS=60
 ```
 
 ---
@@ -204,11 +208,12 @@ python init_db.py
 
 ---
 
-## 5. Start Telemetry Simulator
+## 5. Start Telemetry
 
-```bash
-python simulator.py
-```
+With `ENABLE_EMBEDDED_TELEMETRY=true`, Flask generates simulator telemetry
+itself. To use the standalone simulator instead, set
+`ENABLE_EMBEDDED_TELEMETRY=false` and run `python simulator.py` in another
+terminal.
 
 ---
 
@@ -228,7 +233,9 @@ http://127.0.0.1:5001
 
 # Deployment Notes
 
-The application is currently structured for Render deployment.
+The public demo is structured for Render deployment. Company MongoDB access
+usually requires a local/VPN-connected runtime or a deployment with network
+access to the company database.
 
 Environment variables should be configured through the deployment provider instead of committing secrets directly into the repository.
 
@@ -245,6 +252,7 @@ Environment variables should be configured through the deployment provider inste
 * [Features](docs/FEATURES.md)
 * [Benchmarking](docs/BENCHMARKING.md)
 * [Company Agent Scope](docs/COMPANY_AGENT_SCOPE.md)
+* [Deployment](docs/DEPLOYMENT.md)
 * [n8n UI Integration](docs/N8N_UI_INTEGRATION.md)
 * [Dify UI Integration](docs/DIFY_UI_INTEGRATION.md)
 * [Telegram PoC](docs/TELEGRAM_POC.md)
@@ -261,15 +269,17 @@ Run the focused backend safety checks:
 python -m unittest tests/test_security_and_realtime.py
 ```
 
-The suite covers protected API access, chat ownership, diagnosis request
-limits, storage status payloads, Telegram webhook behavior, and embedded
-realtime telemetry health.
+Run the full suite:
+
+```bash
+python -m unittest discover -s tests
+```
 
 Storage checks:
 
 ```bash
-python scripts/check_app_storage_status.py
-python scripts/verify_supabase_app_data_migration.py
+python -m scripts.check_app_storage_status
+python -m scripts.verify_supabase_app_data_migration
 ```
 
 ---

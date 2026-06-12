@@ -78,15 +78,10 @@ Completed local runtime evaluations:
 * IOA v2 · n8n
 * IOA v2 · Dify
 
-The current benchmark compares these runtimes across shared operational prompts, including fleet overview, unhealthy-device detection, root-cause diagnosis, gateway heartbeat investigation, and active sensor alert correlation.
-
-Dify was added as a self-hosted Chatflow runtime and tested locally through the IoT Ops Agent UI. It produced structured operational diagnoses with UI-visible reasoning traces, usually 3-5 investigation iterations, and an average latency of about 8 seconds in local runs.
-
-Current runtime evaluation observations:
-
-* Dify is the strongest chatbot-native runtime tested so far because it provides app structure, API access, model/provider configuration, and strong output quality with low workflow configuration overhead.
-* n8n remains a strong workflow automation runtime for visual integrations and external workflow execution.
-* Custom Python and LangGraph remain useful baselines for deeper reasoning-loop control and observability.
+The benchmark runner and blind AI-as-judge pipeline are implemented. The next
+evaluation milestone is to rerun all candidates against frozen company-task
+snapshots and report critical errors separately from averages. Historical
+manual scores are not considered current runtime-selection evidence.
 
 Potential future runtime candidates:
 
@@ -151,7 +146,7 @@ Future authentication improvements may include:
 * API rate limiting
 * account recovery systems
 * multi-user access controls
-* session management improvements
+* shared/distributed API and Company DB rate limiting
 
 ---
 
@@ -174,7 +169,9 @@ Potential UI and UX improvements:
 
 IoT Ops Agent is designed as a simulated AI-assisted operations platform that can evolve toward real-world operational observability systems.
 
-The long-term goal is to transform the platform from a telemetry simulation environment into an AI operational copilot capable of supporting real infrastructure workflows.
+The long-term goal is to transform the current PoC into one source-aware,
+auditable company operational agent that synchronizes approved systems behind
+typed tools and policy controls.
 
 Potential production use cases include:
 

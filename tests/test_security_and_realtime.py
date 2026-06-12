@@ -839,6 +839,74 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         )
         simulator_stream.assert_not_called()
 
+    def test_custom_agent_collects_tool_evidence_before_early_final(self):
+        agent = app_module.ioa_v2_agent
+
+        with (
+            patch.object(agent, "extract_target", return_value="SYSTEM"),
+            patch.object(
+                agent,
+                "choose_next_step",
+                side_effect=[
+                    "FINAL ANSWER: unsupported early answer",
+                    "FINAL ANSWER: grounded answer",
+                ],
+            ),
+            patch.object(
+                agent,
+                "execute_tool",
+                return_value={"total_devices": 10},
+            ) as execute_tool,
+            patch.object(agent, "save_to_history"),
+        ):
+            result = agent.run("show fleet health")
+
+        self.assertEqual(result["final_answer"], "grounded answer")
+        self.assertEqual(len(result["steps"]), 1)
+        self.assertEqual(
+            result["steps"][0]["action"],
+            "check_system_overview",
+        )
+        execute_tool.assert_called_once_with(
+            "check_system_overview",
+            "SYSTEM",
+        )
+
+    def test_custom_agent_stream_emits_forced_tool_trace(self):
+        agent = app_module.ioa_v2_agent
+
+        with (
+            patch.object(agent, "extract_target", return_value="sensor-001"),
+            patch.object(
+                agent,
+                "choose_next_step",
+                side_effect=[
+                    "FINAL ANSWER: unsupported early answer",
+                    "FINAL ANSWER: grounded answer",
+                ],
+            ),
+            patch.object(
+                agent,
+                "execute_tool",
+                return_value={"device_id": "sensor-001"},
+            ),
+            patch.object(agent, "save_to_history"),
+        ):
+            events = list(agent.run_stream("diagnose sensor-001"))
+
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["thought", "observation", "final"],
+        )
+        self.assertEqual(
+            events[0]["action"],
+            "check_device_status",
+        )
+        self.assertEqual(
+            events[1]["observation"]["output"]["device_id"],
+            "sensor-001",
+        )
+
     def test_company_metric_identity_values_are_read_from_payload(self):
         metrics = extract_display_metrics(
             '{"deviceId":"device-1","deviceName":"Sensor 1",'

@@ -80,11 +80,13 @@ def run_local_agent(mode, agent, prompt):
         return {
             "answer": result.get("final_answer", ""),
             "steps": result.get("steps", []),
+            "token_usage": result.get("token_usage"),
         }
 
     return {
         "answer": result,
         "steps": [],
+        "token_usage": None,
     }
 
 
@@ -104,6 +106,7 @@ def run_n8n_webhook(prompt):
     return {
         "answer": data.get("response") or data.get("text") or json.dumps(data),
         "steps": data.get("steps", []),
+        "token_usage": data.get("token_usage"),
     }
 
 def build_eval_operational_context():
@@ -184,6 +187,7 @@ def run_dify_api(prompt):
     return {
         "answer": data.get("answer") or json.dumps(data),
         "steps": data.get("metadata", {}).get("workflow_run_id", ""),
+        "token_usage": data.get("metadata", {}).get("usage"),
     }
 
 
@@ -245,16 +249,19 @@ def main():
     for mode in modes:
         for item in prompts:
             prompt = item["prompt"]
+            reference_context = build_eval_operational_context()
             started = time.time()
             status = "success"
             error = ""
             answer = ""
             steps = []
+            token_usage = None
 
             try:
                 result = run_mode(mode, agents, prompt)
                 answer = result["answer"]
                 steps = result["steps"]
+                token_usage = result.get("token_usage")
             except Exception as exc:
                 status = "error"
                 error = str(exc)
@@ -270,7 +277,17 @@ def main():
                 "status": status,
                 "latency_seconds": latency_seconds,
                 "step_count": step_count,
+                "token_usage_json": json.dumps(
+                    token_usage,
+                    ensure_ascii=False,
+                ),
                 "answer_preview": answer.replace("\n", " ")[:400],
+                "answer": answer,
+                "steps_json": json.dumps(steps, ensure_ascii=False),
+                "reference_context_json": json.dumps(
+                    reference_context,
+                    ensure_ascii=False,
+                ),
                 "error": error,
                 "expected_focus": "; ".join(item.get("expected_focus", [])),
             }

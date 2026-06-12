@@ -74,6 +74,12 @@ class IOAV2Agent:
             )
 
             if model_output.startswith("FINAL ANSWER:"):
+                if not observations:
+                    observations.append(
+                        self.collect_required_evidence(target)
+                    )
+                    continue
+
                 final_answer = self.clean_final_answer(model_output)
                 self.save_to_history(user_input, final_answer)
 
@@ -86,6 +92,11 @@ class IOAV2Agent:
             thought, action = self.parse_action(model_output)
 
             if not action:
+                if not observations:
+                    observations.append(
+                        self.collect_required_evidence(target)
+                    )
+
                 final_answer = self.generate_final_answer(
                     user_input=user_input,
                     observations=observations
@@ -212,6 +223,22 @@ class IOAV2Agent:
             )
 
             if model_output.startswith("FINAL ANSWER:"):
+                if not observations:
+                    observation = self.collect_required_evidence(target)
+                    observations.append(observation)
+                    yield {
+                        "type": "thought",
+                        "iteration": observation["iteration"],
+                        "thought": observation["thought"],
+                        "action": observation["action"],
+                    }
+                    yield {
+                        "type": "observation",
+                        "iteration": observation["iteration"],
+                        "observation": observation,
+                    }
+                    continue
+
                 final_answer = self.clean_final_answer(model_output)
 
                 self.save_to_history(user_input, final_answer)
@@ -227,6 +254,21 @@ class IOAV2Agent:
             thought, action = self.parse_action(model_output)
 
             if not action:
+                if not observations:
+                    observation = self.collect_required_evidence(target)
+                    observations.append(observation)
+                    yield {
+                        "type": "thought",
+                        "iteration": observation["iteration"],
+                        "thought": observation["thought"],
+                        "action": observation["action"],
+                    }
+                    yield {
+                        "type": "observation",
+                        "iteration": observation["iteration"],
+                        "observation": observation,
+                    }
+
                 final_answer = self.generate_final_answer(
                     user_input=user_input,
                     observations=observations
@@ -465,6 +507,21 @@ class IOAV2Agent:
             }
 
         return TOOLS[action](target)
+
+    def collect_required_evidence(self, target):
+        action = (
+            "check_system_overview"
+            if target == "SYSTEM"
+            else "check_device_status"
+        )
+        return self.build_observation(
+            iteration=1,
+            thought=(
+                "Collect telemetry evidence before producing a final answer."
+            ),
+            action=action,
+            output=self.execute_tool(action, target),
+        )
 
     def build_observation(self, iteration, thought, action, output):
         return {

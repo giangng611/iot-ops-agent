@@ -562,32 +562,22 @@ def log_n8n_benchmark(user_input, latency_seconds, status, step_count, error=Non
 
 def log_dify_benchmark(user_input, latency_seconds, status, step_count, error=None):
     notes = (
-        f"Automatic provisional benchmark capture from UI execution through Dify API. "
-        f"status={status}; step_count={step_count}"
+        f"Automatic execution capture from UI through Dify API. "
+        f"status={status}; step_count={step_count}; "
+        "answer quality pending blind AI judge"
     )
 
     if error:
         notes = f"{notes}; error={error[:300]}"
 
-    if status == "success":
-        accuracy_score = 3
-        tool_usage_score = 3
-        reasoning_clarity_score = 3
-        observability_score = 3
-    else:
-        accuracy_score = 0
-        tool_usage_score = 0
-        reasoning_clarity_score = 0
-        observability_score = 0
-
     log_benchmark_result(
         mode="IOA v2 · Dify",
         prompt=user_input,
         latency_seconds=latency_seconds,
-        accuracy_score=accuracy_score,
-        tool_usage_score=tool_usage_score,
-        reasoning_clarity_score=reasoning_clarity_score,
-        observability_score=observability_score,
+        accuracy_score=0,
+        tool_usage_score=0,
+        reasoning_clarity_score=0,
+        observability_score=0,
         development_complexity_score=4,
         integration_speed_score=4,
         ecosystem_score=4,

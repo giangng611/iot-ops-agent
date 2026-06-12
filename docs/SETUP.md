@@ -13,11 +13,41 @@ cd iot-ops-agent
 
 ---
 
-## 2. Install Dependencies
+## 2. Create a Python Environment
+
+Python 3.11 or 3.12 is recommended. Create and activate a project-local
+virtual environment before installing dependencies.
+
+### Windows PowerShell
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+If PowerShell blocks the activation script, use Command Prompt:
+
+```bat
+py -3.12 -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+### macOS or Linux
 
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
+
+Windows commonly uses `py` or `python`, while macOS commonly uses `python3`
+to create the environment. After activation, the remaining commands in this
+guide use `python` on every operating system.
 
 ---
 
@@ -55,7 +85,7 @@ DIFY_USER=iot-ops-agent-ui
 ### Generate a Flask Secret Key
 
 ```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 Do not commit `.env` to GitHub.
@@ -80,7 +110,7 @@ Environment variables are required for:
 ## 4. Initialize Database
 
 ```bash
-python3 init_db.py
+python init_db.py
 ```
 
 This creates the required SQLite tables for:
@@ -98,7 +128,7 @@ This creates the required SQLite tables for:
 Open a terminal and run:
 
 ```bash
-python3 simulator.py
+python simulator.py
 ```
 
 The simulator continuously generates telemetry for 10 virtual IoT devices.
@@ -129,7 +159,7 @@ After MongoDB is running and the simulator has inserted at least one batch,
 verify the MongoDB copy:
 
 ```bash
-python3 scripts/check_mongodb_telemetry.py --limit 5
+python scripts/check_mongodb_telemetry.py --limit 5
 ```
 
 The output should show a non-zero `count` and recent telemetry documents.
@@ -145,7 +175,7 @@ TELEMETRY_WRITE_BACKEND=mongodb  # write new telemetry only to MongoDB
 Verify the active write backend:
 
 ```bash
-python3 scripts/check_telemetry_write_backend.py
+python scripts/check_telemetry_write_backend.py
 ```
 
 When `TELEMETRY_WRITE_BACKEND=mongodb`, the SQLite telemetry count should stay
@@ -158,7 +188,7 @@ Phase B adds read-only MongoDB telemetry APIs while keeping the existing
 SQLite dashboard and agent context unchanged.
 
 ```bash
-python3 scripts/check_mongodb_api.py --device-id sensor-001 --limit 5
+python scripts/check_mongodb_api.py --device-id sensor-001 --limit 5
 ```
 
 The script checks:
@@ -195,7 +225,7 @@ visible during testing.
 Verify the active read source:
 
 ```bash
-python3 scripts/check_telemetry_read_source.py
+python scripts/check_telemetry_read_source.py
 ```
 
 ### Optional: Prepare MongoDB Telemetry Indexes
@@ -203,7 +233,7 @@ python3 scripts/check_telemetry_read_source.py
 Phase D adds MongoDB indexes for the telemetry read path.
 
 ```bash
-python3 scripts/ensure_mongodb_indexes.py
+python scripts/ensure_mongodb_indexes.py
 ```
 
 The script creates or verifies:
@@ -227,13 +257,13 @@ existing SQLite telemetry rows into MongoDB.
 Preview the number of SQLite telemetry rows:
 
 ```bash
-python3 scripts/backfill_sqlite_telemetry_to_mongodb.py --dry-run
+python scripts/backfill_sqlite_telemetry_to_mongodb.py --dry-run
 ```
 
 Run the backfill:
 
 ```bash
-python3 scripts/backfill_sqlite_telemetry_to_mongodb.py --batch-size 500
+python scripts/backfill_sqlite_telemetry_to_mongodb.py --batch-size 500
 ```
 
 The backfill is idempotent. It stores migrated rows with:
@@ -274,31 +304,31 @@ POSTGRES_POOL_MAX_SIZE=5
 Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 Check the connection:
 
 ```bash
-python3 scripts/check_supabase_postgres.py
+python scripts/check_supabase_postgres.py
 ```
 
 Apply the app-data schema:
 
 ```bash
-python3 scripts/apply_supabase_schema.py
+python scripts/apply_supabase_schema.py
 ```
 
 Preview SQLite app-data counts:
 
 ```bash
-python3 scripts/migrate_sqlite_app_data_to_supabase.py
+python scripts/migrate_sqlite_app_data_to_supabase.py
 ```
 
 Run the migration:
 
 ```bash
-python3 scripts/migrate_sqlite_app_data_to_supabase.py --apply
+python scripts/migrate_sqlite_app_data_to_supabase.py --apply
 ```
 
 This migration preserves integer IDs so existing chat/message/prompt
@@ -312,13 +342,13 @@ After switching app data to Supabase/Postgres, verify the active app-data
 backend and telemetry source:
 
 ```bash
-python3 scripts/check_app_storage_status.py
+python scripts/check_app_storage_status.py
 ```
 
 Verify migrated app-data integrity:
 
 ```bash
-python3 scripts/verify_supabase_app_data_migration.py
+python scripts/verify_supabase_app_data_migration.py
 ```
 
 When `APP_DB_BACKEND=supabase`, the app writes users, chats, messages, and
@@ -342,7 +372,7 @@ to use its direct Postgres connection; browser-side Data API access is denied
 by default. Verify the deployed security state with:
 
 ```bash
-python3 scripts/check_supabase_rls.py
+python scripts/check_supabase_rls.py
 ```
 
 If browser-side Supabase access is added later, design per-user policies and
@@ -356,7 +386,7 @@ key.
 Open another terminal and run:
 
 ```bash
-python3 app.py
+python app.py
 ```
 
 Open the application:
@@ -367,7 +397,7 @@ http://127.0.0.1:5001
 
 ---
 
-## 7. Create Account & Login
+## 8. Create Account & Login
 
 On first launch:
 
@@ -384,7 +414,7 @@ The platform supports:
 
 ---
 
-## 8. Realtime Dashboard Behavior
+## 9. Realtime Dashboard Behavior
 
 Once the simulator and Flask app are running:
 
@@ -491,7 +521,7 @@ Dify should return a structured operational diagnosis and a UI-visible reasoning
 Run:
 
 ```bash
-python3 init_db.py
+python init_db.py
 ```
 
 Make sure the command is executed from the project root.

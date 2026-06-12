@@ -4,6 +4,70 @@ This document explains how benchmarking is performed inside IoT Ops Agent when e
 
 ---
 
+# Current Evaluation Protocol
+
+The benchmark separates answer quality from engineering characteristics.
+Runtime selection must not be based on manually assigned aggregate scores.
+
+## 1. Freeze the Task and Evidence
+
+Each runtime receives the same prompt. The runner captures an
+operational-context snapshot immediately before each execution and stores the
+full answer, tool trace, latency, status, expected focus, and reference
+context. For a formal comparison, pause telemetry writes or restore the same
+database snapshot before each runtime so the evidence is identical.
+
+```bash
+python scripts/evaluate_local_runtimes.py
+```
+
+## 2. Measure Objective Runtime Signals
+
+The runner records directly measurable values:
+
+* success or error status
+* end-to-end latency
+* trace step count
+* full answer and tool evidence
+* token usage when the runtime exposes it
+
+These values are not inferred by an LLM.
+
+## 3. Blind AI-as-Judge Scoring
+
+The judge sees the task, expected focus, frozen context, and answer. The
+runtime label is deliberately excluded from the judge prompt.
+
+```bash
+python scripts/judge_runtime_results.py --repetitions 3
+```
+
+The judge scores only:
+
+* factual correctness
+* evidence grounding
+* task completion
+* actionability
+* source discipline
+
+Formal comparisons should use a fixed judge model and prompt, at least three
+repetitions with median aggregation, randomized runtime order, and a small
+human-reviewed calibration sample. Critical errors must be reported separately
+instead of being hidden inside an average.
+
+Engineering criteria such as implementation effort, ecosystem maturity, and
+maintainability belong in a separate architecture decision record. They are
+not answer-quality scores.
+
+> The manual score tables later in this document are historical PoC notes.
+> They are not current selection evidence and must be regenerated with the
+> protocol above before being presented as benchmark results.
+
+See [Company Operational Agent Scope](COMPANY_AGENT_SCOPE.md) for the business
+problem and production boundary that the benchmark should evaluate.
+
+---
+
 # Purpose
 
 The benchmarking system is designed to compare:

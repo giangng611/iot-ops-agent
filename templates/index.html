@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=13">
+    <link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 
 <body>
@@ -221,6 +221,50 @@
 
                         <option value="timestamp">
                             Sort by latest timestamp
+                        </option>
+                    </select>
+
+                    <select
+                        id="companyConnectionFilter"
+                        class="company-only-control hidden"
+                        onchange="renderDeviceTable()"
+                    >
+                        <option value="all">
+                            All connections
+                        </option>
+
+                        <option value="connected">
+                            Connected
+                        </option>
+
+                        <option value="disconnected">
+                            Disconnected
+                        </option>
+
+                        <option value="unknown">
+                            Unknown
+                        </option>
+                    </select>
+
+                    <select
+                        id="companySortSelect"
+                        class="company-only-control hidden"
+                        onchange="renderDeviceTable()"
+                    >
+                        <option value="latest">
+                            Latest observed
+                        </option>
+
+                        <option value="name">
+                            Device name A-Z
+                        </option>
+
+                        <option value="telemetry">
+                            Most telemetry
+                        </option>
+
+                        <option value="rules">
+                            Most mapped rules
                         </option>
                     </select>
 

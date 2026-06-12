@@ -120,17 +120,14 @@ The platform includes a benchmarking system for comparing orchestration runtimes
 
 Current benchmark dimensions include:
 
-* operational accuracy
-* telemetry grounding
-* reasoning clarity
-* runtime observability
-* workflow trace visibility
-* token usage visibility
-* integration complexity
-* ecosystem support
-* development speed
+* blind AI-judged answer quality against frozen operational context
+* factual correctness and telemetry grounding
+* task completion, actionability, and source discipline
+* measured latency, execution success, and trace visibility
+* separately documented engineering and ecosystem tradeoffs
 
-Benchmark results are automatically logged into CSV execution records for evaluation and aggregation.
+Raw executions and AI-judged results are stored separately so provisional or
+manually assigned scores are not presented as measured evidence.
 
 The current benchmark compares Custom Python, LangChain, LangGraph, n8n, and Dify across shared operational prompts, including custom prompt workflows created from the Prompts tab.
 
@@ -149,11 +146,26 @@ cd iot-ops-agent
 
 ---
 
-## 2. Install Dependencies
+## 2. Create a Python Environment
+
+Windows PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+macOS or Linux:
 
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
+
+Python 3.11 or 3.12 is recommended. After the environment is activated, use
+`python` for the remaining commands on every operating system.
 
 ---
 
@@ -187,7 +199,7 @@ TELEGRAM_HISTORY_USER_ID=
 ## 4. Initialize Database
 
 ```bash
-python3 init_db.py
+python init_db.py
 ```
 
 ---
@@ -195,7 +207,7 @@ python3 init_db.py
 ## 5. Start Telemetry Simulator
 
 ```bash
-python3 simulator.py
+python simulator.py
 ```
 
 ---
@@ -203,7 +215,7 @@ python3 simulator.py
 ## 6. Start Flask Application
 
 ```bash
-python3 app.py
+python app.py
 ```
 
 Open the application:
@@ -232,6 +244,7 @@ Environment variables should be configured through the deployment provider inste
 * [Architecture](docs/ARCHITECTURE.md)
 * [Features](docs/FEATURES.md)
 * [Benchmarking](docs/BENCHMARKING.md)
+* [Company Agent Scope](docs/COMPANY_AGENT_SCOPE.md)
 * [n8n UI Integration](docs/N8N_UI_INTEGRATION.md)
 * [Dify UI Integration](docs/DIFY_UI_INTEGRATION.md)
 * [Telegram PoC](docs/TELEGRAM_POC.md)
@@ -245,7 +258,7 @@ Environment variables should be configured through the deployment provider inste
 Run the focused backend safety checks:
 
 ```bash
-python3 -m unittest tests/test_security_and_realtime.py
+python -m unittest tests/test_security_and_realtime.py
 ```
 
 The suite covers protected API access, chat ownership, diagnosis request
@@ -255,8 +268,8 @@ realtime telemetry health.
 Storage checks:
 
 ```bash
-python3 scripts/check_app_storage_status.py
-python3 scripts/verify_supabase_app_data_migration.py
+python scripts/check_app_storage_status.py
+python scripts/verify_supabase_app_data_migration.py
 ```
 
 ---

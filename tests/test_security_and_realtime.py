@@ -24,6 +24,7 @@ import storage.mongo_store as mongo_store  # noqa: E402
 import storage.postgres_store as postgres_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
 import services.telegram_service as telegram_service  # noqa: E402
+import services.diagnose_service as diagnose_service  # noqa: E402
 import routes.telemetry_routes as telemetry_routes  # noqa: E402
 from agents.langgraph_agent import LangGraphAgent  # noqa: E402
 from services.chat_service import normalize_token_usage  # noqa: E402
@@ -555,6 +556,288 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             context["classification_status"],
             "provisional_poc_rules_active",
         )
+
+    def test_agent_source_resolver_uses_company_only_when_active(self):
+        company_context = {
+            "source": "company_mongodb",
+            "record_count": 3,
+            "sample_records": [{"device_id": "company-device-1"}],
+        }
+
+        with patch(
+            "services.diagnose_service.get_company_agent_context",
+            return_value=company_context,
+        ):
+            resolved = diagnose_service.resolve_agent_operational_context(
+                "company"
+            )
+
+        self.assertEqual(resolved["active_source"], "company_mongodb")
+        self.assertIs(resolved["operational_context"], company_context)
+
+        with patch(
+            "services.diagnose_service.get_company_agent_context",
+            return_value={
+                "source": "simulator_fallback",
+                "reason": "company DB disconnected",
+            },
+        ):
+            fallback = diagnose_service.resolve_agent_operational_context(
+                "company"
+            )
+
+        self.assertEqual(fallback["active_source"], "simulator_fallback")
+        self.assertIsNone(fallback["operational_context"])
+        self.assertEqual(
+            fallback["fallback_reason"],
+            "company DB disconnected",
+        )
+
+    def test_n8n_payload_uses_resolved_company_context(self):
+        company_context = {
+            "source": "company_mongodb",
+            "record_count": 1,
+            "sample_records": [{"device_id": "company-device-1"}],
+        }
+        payload = diagnose_service.build_n8n_payload(
+            "show fleet status",
+            {
+                "selected_source": "company",
+                "active_source": "company_mongodb",
+                "operational_context": company_context,
+                "fallback_reason": None,
+            },
+        )
+
+        self.assertIs(payload["operational_context"], company_context)
+        self.assertEqual(payload["active_source"], "company_mongodb")
+        self.assertIn(
+            "authoritative data source",
+            payload["system_prompt"],
+        )
+
+    def test_all_sync_agent_modes_receive_resolved_company_source(self):
+        user = self.create_user_once("all-company-agents", "company-pass")
+        self.login_as(user)
+        company_context = {
+            "source": "company_mongodb",
+            "record_count": 2,
+            "sample_records": [{"device_id": "company-device-1"}],
+        }
+        resolution = {
+            "selected_source": "company",
+            "active_source": "company_mongodb",
+            "operational_context": company_context,
+            "fallback_reason": None,
+        }
+
+        with (
+            patch(
+                "routes.diagnose_routes.resolve_agent_operational_context",
+                return_value=resolution,
+            ),
+            patch.object(
+                app_module.ioa_v1_agent,
+                "run_with_operational_context",
+                return_value={"final_answer": "v1 company"},
+            ) as ioa_v1_company,
+            patch.object(
+                app_module.ioa_v2_agent,
+                "run_with_operational_context",
+                return_value={
+                    "final_answer": "v2 company",
+                    "steps": [],
+                },
+            ) as ioa_v2_company,
+            patch.object(
+                app_module.langchain_agent,
+                "run",
+                return_value={
+                    "final_answer": "langchain company",
+                    "steps": [],
+                },
+            ) as langchain_run,
+            patch.object(
+                app_module.langgraph_agent,
+                "run",
+                return_value={
+                    "final_answer": "langgraph company",
+                    "steps": [],
+                },
+            ) as langgraph_run,
+            patch(
+                "routes.diagnose_routes.call_n8n_agent",
+                return_value={
+                    "final_answer": "n8n company",
+                    "steps": [],
+                },
+            ) as n8n_run,
+            patch(
+                "routes.diagnose_routes.call_dify_agent",
+                return_value={
+                    "final_answer": "dify company",
+                    "steps": [],
+                },
+            ) as dify_run,
+        ):
+            for mode in (
+                "ioa_v1_custom",
+                "ioa_v2_custom",
+                "ioa_v2_langchain",
+                "ioa_v2_langgraph",
+                "ioa_v2_n8n",
+                "ioa_v2_dify",
+            ):
+                with self.subTest(mode=mode):
+                    response = self.client.post(
+                        "/api/diagnose",
+                        json={
+                            "message": "show company fleet",
+                            "mode": mode,
+                            "data_source": "company",
+                        },
+                    )
+                    self.assertEqual(response.status_code, 200)
+
+        ioa_v1_company.assert_called_once_with(
+            "show company fleet",
+            company_context,
+        )
+        ioa_v2_company.assert_called_once_with(
+            "show company fleet",
+            company_context,
+        )
+        langchain_run.assert_called_once_with(
+            "show company fleet",
+            operational_context=company_context,
+        )
+        langgraph_run.assert_called_once_with(
+            "show company fleet",
+            data_source="company",
+        )
+        n8n_run.assert_called_once_with(
+            "show company fleet",
+            source_resolution=resolution,
+        )
+        dify_run.assert_called_once_with(
+            "show company fleet",
+            source_resolution=resolution,
+        )
+
+    def test_disconnected_company_source_routes_agents_to_simulator(self):
+        user = self.create_user_once("fallback-agents", "fallback-pass")
+        self.login_as(user)
+        resolution = {
+            "selected_source": "company",
+            "active_source": "simulator_fallback",
+            "operational_context": None,
+            "fallback_reason": "company DB disconnected",
+        }
+
+        with (
+            patch(
+                "routes.diagnose_routes.resolve_agent_operational_context",
+                return_value=resolution,
+            ),
+            patch.object(
+                app_module.ioa_v2_agent,
+                "run",
+                return_value={
+                    "final_answer": "simulator answer",
+                    "steps": [],
+                },
+            ) as simulator_run,
+            patch.object(
+                app_module.ioa_v2_agent,
+                "run_with_operational_context",
+            ) as company_run,
+            patch.object(
+                app_module.langgraph_agent,
+                "run",
+                return_value={
+                    "final_answer": "simulator graph answer",
+                    "steps": [],
+                },
+            ) as langgraph_run,
+        ):
+            response = self.client.post(
+                "/api/diagnose",
+                json={
+                    "message": "show fleet",
+                    "mode": "ioa_v2_custom",
+                    "data_source": "company",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+
+            response = self.client.post(
+                "/api/diagnose",
+                json={
+                    "message": "show fleet",
+                    "mode": "ioa_v2_langgraph",
+                    "data_source": "company",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+
+        simulator_run.assert_called_once_with("show fleet")
+        company_run.assert_not_called()
+        langgraph_run.assert_called_once_with(
+            "show fleet",
+            data_source="simulator",
+        )
+
+    def test_streaming_custom_agent_uses_active_company_context(self):
+        user = self.create_user_once("stream-company-agent", "stream-pass")
+        self.login_as(user)
+        company_context = {
+            "source": "company_mongodb",
+            "record_count": 1,
+        }
+        resolution = {
+            "selected_source": "company",
+            "active_source": "company_mongodb",
+            "operational_context": company_context,
+            "fallback_reason": None,
+        }
+
+        with (
+            patch(
+                "routes.diagnose_routes.resolve_agent_operational_context",
+                return_value=resolution,
+            ),
+            patch.object(
+                app_module.ioa_v2_agent,
+                "run_stream_with_operational_context",
+                return_value=iter([{
+                    "type": "final",
+                    "final_answer": "company stream answer",
+                }]),
+            ) as company_stream,
+            patch.object(
+                app_module.ioa_v2_agent,
+                "run_stream",
+            ) as simulator_stream,
+        ):
+            response = self.client.post(
+                "/api/diagnose-stream",
+                json={
+                    "message": "show company fleet",
+                    "mode": "ioa_v2_custom",
+                    "data_source": "company",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "company stream answer",
+            response.get_data(as_text=True),
+        )
+        company_stream.assert_called_once_with(
+            "show company fleet",
+            company_context,
+        )
+        simulator_stream.assert_not_called()
 
     def test_company_metric_identity_values_are_read_from_payload(self):
         metrics = extract_display_metrics(

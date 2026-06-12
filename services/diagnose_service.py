@@ -4,7 +4,8 @@ import os
 import requests
 
 from benchmark_logger import log_benchmark_result
-from prompts import DIAGNOSIS_OUTPUT_FORMAT
+from prompts import COMPANY_CONTEXT_INSTRUCTION, DIAGNOSIS_OUTPUT_FORMAT
+from services.company_data_service import get_company_agent_context
 from storage.telemetry_store import (
     get_all_latest_devices,
     get_device_telemetry_history,
@@ -104,10 +105,48 @@ def extract_device_id_from_text(text):
 
     return None
 
-def build_n8n_payload(user_input):
-    target_device = extract_device_id_from_text(user_input)
 
+def resolve_agent_operational_context(selected_source):
+    normalized_source = str(selected_source or "simulator").strip().lower()
+
+    if normalized_source != "company":
+        return {
+            "selected_source": "simulator",
+            "active_source": get_telemetry_source(),
+            "operational_context": None,
+            "fallback_reason": None,
+        }
+
+    company_context = get_company_agent_context()
+
+    if company_context.get("source") == "company_mongodb":
+        return {
+            "selected_source": "company",
+            "active_source": "company_mongodb",
+            "operational_context": company_context,
+            "fallback_reason": None,
+        }
+
+    return {
+        "selected_source": "company",
+        "active_source": "simulator_fallback",
+        "operational_context": None,
+        "fallback_reason": company_context.get("reason"),
+    }
+
+
+def build_simulator_operational_context(user_input, source_resolution=None):
+    target_device = extract_device_id_from_text(user_input)
     operational_context = {
+        "selected_source": (
+            source_resolution or {}
+        ).get("selected_source", "simulator"),
+        "active_source": (
+            source_resolution or {}
+        ).get("active_source", get_telemetry_source()),
+        "fallback_reason": (
+            source_resolution or {}
+        ).get("fallback_reason"),
         "telemetry_source": get_telemetry_source(),
         "latest_devices": get_all_latest_devices(),
         "system_overview": check_system_overview(),
@@ -125,15 +164,43 @@ def build_n8n_payload(user_input):
             get_device_telemetry_history(target_device)
         )
 
+    return operational_context
+
+
+def build_n8n_payload(
+    user_input,
+    source_resolution=None,
+):
+    source_resolution = source_resolution or resolve_agent_operational_context(
+        "simulator"
+    )
+    operational_context = source_resolution.get("operational_context")
+
+    if operational_context is None:
+        operational_context = build_simulator_operational_context(
+            user_input,
+            source_resolution,
+        )
+
+    company_active = (
+        source_resolution.get("active_source") == "company_mongodb"
+    )
     system_prompt = (
-        "You are an IoT operations assistant. Use only the telemetry "
-        "and operational context provided in this payload. Do not invent "
-        "device IDs, telemetry values, alarms, or logs. Heartbeat delay "
-        "values are measured in seconds. For gateway heartbeat-delay "
-        "investigations, use 300 seconds as the default threshold unless "
-        "the user provides a different threshold in seconds. If a user says "
-        "ms or milliseconds, state that the available telemetry is stored "
-        "in seconds and evaluate the stored second-based values."
+        (
+            COMPANY_CONTEXT_INSTRUCTION
+            if company_active
+            else (
+                "Use only the simulator telemetry and operational context "
+                "provided in this payload. Do not invent device IDs, "
+                "telemetry values, alarms, or logs. Heartbeat delay values "
+                "are measured in seconds. For gateway heartbeat-delay "
+                "investigations, use 300 seconds as the default threshold "
+                "unless the user provides a different threshold in seconds. "
+                "If a user says ms or milliseconds, state that the available "
+                "telemetry is stored in seconds and evaluate the stored "
+                "second-based values."
+            )
+        )
     )
 
     llm_prompt = f"""
@@ -171,6 +238,8 @@ Return a valid JSON object only:
         "prompt": user_input,
         "source": "iot-ops-agent-ui",
         "runtime": "n8n",
+        "selected_source": source_resolution.get("selected_source"),
+        "active_source": source_resolution.get("active_source"),
         "system_prompt": system_prompt,
         "n8n_llm_prompt": llm_prompt,
         "diagnosis_output_format": DIAGNOSIS_OUTPUT_FORMAT,
@@ -187,7 +256,7 @@ Return a valid JSON object only:
         }
     }
 
-def call_n8n_agent(user_input):
+def call_n8n_agent(user_input, source_resolution=None):
     webhook_url = (
         os.getenv("N8N_WEBHOOK_URL")
         or os.getenv("EVAL_N8N_WEBHOOK_URL")
@@ -201,7 +270,7 @@ def call_n8n_agent(user_input):
 
     response = requests.post(
         webhook_url,
-        json=build_n8n_payload(user_input),
+        json=build_n8n_payload(user_input, source_resolution),
         timeout=90
     )
     response.raise_for_status()
@@ -257,8 +326,8 @@ def call_n8n_agent(user_input):
         )
     }
 
-def build_dify_payload(user_input):
-    n8n_payload = build_n8n_payload(user_input)
+def build_dify_payload(user_input, source_resolution=None):
+    n8n_payload = build_n8n_payload(user_input, source_resolution)
     operational_context = n8n_payload["operational_context"]
 
     return {
@@ -275,7 +344,7 @@ def build_dify_payload(user_input):
         "user": os.getenv("DIFY_USER", "iot-ops-agent-ui")
     }
 
-def call_dify_agent(user_input):
+def call_dify_agent(user_input, source_resolution=None):
     api_url = (
         os.getenv("DIFY_API_URL")
         or os.getenv("EVAL_DIFY_API_URL")
@@ -294,7 +363,7 @@ def call_dify_agent(user_input):
     response = requests.post(
         api_url,
         headers={"Authorization": f"Bearer {api_key}"},
-        json=build_dify_payload(user_input),
+        json=build_dify_payload(user_input, source_resolution),
         timeout=120
     )
     response.raise_for_status()

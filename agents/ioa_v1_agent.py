@@ -1,7 +1,12 @@
 import json
 
 from tools import TOOLS
-from prompts import SYSTEM_PROMPT, TOOL_SELECTION_PROMPT
+from prompts import (
+    COMPANY_CONTEXT_INSTRUCTION,
+    DIAGNOSIS_OUTPUT_FORMAT,
+    SYSTEM_PROMPT,
+    TOOL_SELECTION_PROMPT,
+)
 
 
 class IOAV1Agent:
@@ -155,4 +160,33 @@ Return only the device ID.
         return {
             "final_answer": answer,
             "token_usage": self.get_token_usage()
+        }
+
+    def run_with_operational_context(self, user_input, operational_context):
+        self.reset_token_usage()
+        response = self.client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"{COMPANY_CONTEXT_INSTRUCTION}\n"
+                        f"{DIAGNOSIS_OUTPUT_FORMAT}"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"User request:\n{user_input}\n\n"
+                        "Company operational context JSON:\n"
+                        f"{json.dumps(operational_context, indent=2)}"
+                    ),
+                },
+            ],
+        )
+        self.record_token_usage(response)
+        answer = response.choices[0].message.content
+        return {
+            "final_answer": answer,
+            "token_usage": self.get_token_usage(),
         }

@@ -13,6 +13,7 @@ from services.diagnose_service import (
     log_n8n_benchmark,
     normalize_dify_steps,
     normalize_n8n_steps,
+    resolve_agent_operational_context,
 )
 
 
@@ -154,10 +155,24 @@ def create_diagnose_blueprint(runtime):
                 "selected_data_source",
                 "simulator",
             ))
+            source_resolution = resolve_agent_operational_context(data_source)
+            company_context = source_resolution.get("operational_context")
+            effective_data_source = (
+                "company"
+                if source_resolution.get("active_source") == "company_mongodb"
+                else "simulator"
+            )
             start_time = time.time()
 
             if mode == "ioa_v1_custom":
-                result = ioa_v1_agent.run(user_input)
+                result = (
+                    ioa_v1_agent.run_with_operational_context(
+                        user_input,
+                        company_context,
+                    )
+                    if company_context is not None
+                    else ioa_v1_agent.run(user_input)
+                )
 
                 latency_seconds = round(
                     time.time() - start_time,
@@ -189,7 +204,10 @@ def create_diagnose_blueprint(runtime):
                 })
 
             if mode == "ioa_v2_langgraph":
-                result = langgraph_agent.run(user_input, data_source=data_source)
+                result = langgraph_agent.run(
+                    user_input,
+                    data_source=effective_data_source,
+                )
 
                 latency_seconds = round(
                     time.time() - start_time,
@@ -221,7 +239,10 @@ def create_diagnose_blueprint(runtime):
                 })
 
             if mode == "ioa_v2_langchain":
-                result = langchain_agent.run(user_input)
+                result = langchain_agent.run(
+                    user_input,
+                    operational_context=company_context,
+                )
 
                 latency_seconds = round(
                     time.time() - start_time,
@@ -254,7 +275,10 @@ def create_diagnose_blueprint(runtime):
 
             if mode == "ioa_v2_n8n":
                 try:
-                    result = call_n8n_agent(user_input)
+                    result = call_n8n_agent(
+                        user_input,
+                        source_resolution=source_resolution,
+                    )
                     steps = normalize_n8n_steps(result)
                     latency_seconds = round(
                         time.time() - start_time,
@@ -291,7 +315,10 @@ def create_diagnose_blueprint(runtime):
 
             if mode == "ioa_v2_dify":
                 try:
-                    result = call_dify_agent(user_input)
+                    result = call_dify_agent(
+                        user_input,
+                        source_resolution=source_resolution,
+                    )
                     steps = normalize_dify_steps(result)
                     latency_seconds = round(
                         time.time() - start_time,
@@ -326,7 +353,14 @@ def create_diagnose_blueprint(runtime):
                     )
                 })
 
-            result = ioa_v2_agent.run(user_input)
+            result = (
+                ioa_v2_agent.run_with_operational_context(
+                    user_input,
+                    company_context,
+                )
+                if company_context is not None
+                else ioa_v2_agent.run(user_input)
+            )
 
             latency_seconds = round(
                 time.time() - start_time,
@@ -378,6 +412,13 @@ def create_diagnose_blueprint(runtime):
             "selected_data_source",
             "simulator",
         ))
+        source_resolution = resolve_agent_operational_context(data_source)
+        company_context = source_resolution.get("operational_context")
+        effective_data_source = (
+            "company"
+            if source_resolution.get("active_source") == "company_mongodb"
+            else "simulator"
+        )
         start_time = time.time()
 
         def generate():
@@ -385,7 +426,7 @@ def create_diagnose_blueprint(runtime):
                 if mode == "ioa_v2_langgraph":
                     for event in langgraph_agent.run_stream(
                         user_input,
-                        data_source=data_source,
+                        data_source=effective_data_source,
                     ):
                         if event.get("type") == "final":
                             event["token_usage"] = add_runtime_metadata(
@@ -451,7 +492,10 @@ def create_diagnose_blueprint(runtime):
                         }
                     })}\n\n"
 
-                    result = langchain_agent.run(user_input)
+                    result = langchain_agent.run(
+                        user_input,
+                        operational_context=company_context,
+                    )
 
                     latency_seconds = round(time.time() - start_time, 2)
 
@@ -550,7 +594,10 @@ def create_diagnose_blueprint(runtime):
                             }
                         })}\n\n"
 
-                        result = call_n8n_agent(user_input)
+                        result = call_n8n_agent(
+                            user_input,
+                            source_resolution=source_resolution,
+                        )
                         normalized_steps = normalize_n8n_steps(result)
 
                         latency_seconds = round(time.time() - start_time, 2)
@@ -655,7 +702,10 @@ def create_diagnose_blueprint(runtime):
                             }
                         })}\n\n"
 
-                        result = call_dify_agent(user_input)
+                        result = call_dify_agent(
+                            user_input,
+                            source_resolution=source_resolution,
+                        )
                         steps = normalize_dify_steps(result)
 
                         latency_seconds = round(time.time() - start_time, 2)
@@ -731,7 +781,35 @@ def create_diagnose_blueprint(runtime):
 
                     return
 
-                for event in ioa_v2_agent.run_stream(user_input):
+                if mode == "ioa_v1_custom":
+                    result = (
+                        ioa_v1_agent.run_with_operational_context(
+                            user_input,
+                            company_context,
+                        )
+                        if company_context is not None
+                        else ioa_v1_agent.run(user_input)
+                    )
+                    yield f"data: {json.dumps({
+                        'type': 'final',
+                        'final_answer': result['final_answer'],
+                        'token_usage': add_runtime_metadata(
+                            result.get('token_usage'),
+                            mode
+                        )
+                    })}\n\n"
+                    return
+
+                stream = (
+                    ioa_v2_agent.run_stream_with_operational_context(
+                        user_input,
+                        company_context,
+                    )
+                    if company_context is not None
+                    else ioa_v2_agent.run_stream(user_input)
+                )
+
+                for event in stream:
                     if event.get("type") == "final":
                         event["token_usage"] = add_runtime_metadata(
                             event.get("token_usage"),

@@ -1,7 +1,9 @@
+import json
+
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
-from prompts import DIAGNOSIS_OUTPUT_FORMAT
+from prompts import COMPANY_CONTEXT_INSTRUCTION, DIAGNOSIS_OUTPUT_FORMAT
 
 from storage.telemetry_store import (
     get_all_latest_devices,
@@ -41,6 +43,7 @@ class LangChainAgent:
             model="gpt-4o-mini",
             temperature=0.2
         )
+        self.model = model
 
         self.agent = create_agent(
             model=model,
@@ -110,7 +113,49 @@ and device telemetry history before producing the final answer.
             "source": "langchain_message_metadata"
         }
 
-    def run(self, user_input):
+    def run(self, user_input, operational_context=None):
+        if operational_context is not None:
+            response = self.model.invoke([
+                {
+                    "role": "system",
+                    "content": (
+                        f"{COMPANY_CONTEXT_INSTRUCTION}\n"
+                        f"{DIAGNOSIS_OUTPUT_FORMAT}"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"User request:\n{user_input}\n\n"
+                        "Company operational context:\n"
+                        f"{json.dumps(operational_context, indent=2)}"
+                    ),
+                },
+            ])
+            token_usage = self.extract_message_token_usage(response)
+            return {
+                "final_answer": response.content,
+                "token_usage": (
+                    {**token_usage, "source": "langchain_message_metadata"}
+                    if token_usage
+                    else None
+                ),
+                "steps": [{
+                    "iteration": 1,
+                    "thought": "Use the selected Company DB operational context.",
+                    "action": "read_company_operational_context",
+                    "workflow": {
+                        "framework": "LangChain",
+                        "node_id": "company_context",
+                        "node_label": "Company context",
+                    },
+                    "output": {
+                        "source": operational_context.get("source"),
+                        "record_count": operational_context.get("record_count"),
+                    },
+                }],
+            }
+
         result = self.agent.invoke({
             "messages": [
                 {

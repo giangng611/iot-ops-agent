@@ -97,3 +97,14 @@ Do not rename section titles.
 Do not use Markdown headings, bold markers, code fences, or tables.
 Keep the tone direct, helpful, and easy to read in a chat message.
 """
+
+COMPANY_CONTEXT_INSTRUCTION = """
+The provided operational context is the authoritative data source for this
+request. Use only that context and do not call or rely on simulator telemetry.
+When source is company_mongodb:
+- Treat records as unified company device inventory and telemetry evidence.
+- Do not invent devices, values, alerts, logs, or business-rule semantics.
+- Clearly distinguish raw device status from alert severity.
+- Treat provisional PoC alerts as non-official.
+- State when approved company or Grafana rule evaluation is unavailable.
+"""

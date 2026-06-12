@@ -1,9 +1,12 @@
 import json
 
 from tools import TOOLS
-from prompts import IOA_V2_AGENT_PROMPT
+from prompts import (
+    COMPANY_CONTEXT_INSTRUCTION,
+    DIAGNOSIS_OUTPUT_FORMAT,
+    IOA_V2_AGENT_PROMPT,
+)
 from storage.telemetry_store import get_all_latest_devices
-from prompts import DIAGNOSIS_OUTPUT_FORMAT
 
 
 SYSTEM_LEVEL_TOOLS = [
@@ -144,6 +147,54 @@ class IOAV2Agent:
             "final_answer": final_answer,
             "steps": observations,
             "token_usage": self.get_token_usage()
+        }
+
+    def run_with_operational_context(self, user_input, operational_context):
+        self.reset_token_usage()
+        final_answer = self.generate_context_answer(
+            user_input,
+            operational_context,
+        )
+        return {
+            "final_answer": final_answer,
+            "steps": [{
+                "iteration": 1,
+                "thought": "Use the selected Company DB operational context.",
+                "action": "read_company_operational_context",
+                "output": {
+                    "source": operational_context.get("source"),
+                    "record_count": operational_context.get("record_count"),
+                    "rules_status": operational_context.get("rules_status"),
+                },
+            }],
+            "token_usage": self.get_token_usage(),
+        }
+
+    def run_stream_with_operational_context(
+        self,
+        user_input,
+        operational_context,
+    ):
+        result = self.run_with_operational_context(
+            user_input,
+            operational_context,
+        )
+        step = result["steps"][0]
+        yield {
+            "type": "thought",
+            "iteration": step["iteration"],
+            "thought": step["thought"],
+            "action": step["action"],
+        }
+        yield {
+            "type": "observation",
+            "iteration": step["iteration"],
+            "observation": step,
+        }
+        yield {
+            "type": "final",
+            "final_answer": result["final_answer"],
+            "token_usage": result.get("token_usage"),
         }
 
     def run_stream(self, user_input):
@@ -449,6 +500,27 @@ class IOAV2Agent:
         )
         self.record_token_usage(response)
 
+        return response.choices[0].message.content.strip()
+
+    def generate_context_answer(self, user_input, operational_context):
+        prompt = f"""
+    You are an IoT operations AI agent.
+
+    {COMPANY_CONTEXT_INSTRUCTION}
+
+    {DIAGNOSIS_OUTPUT_FORMAT}
+
+    User request:
+    {user_input}
+
+    Company operational context:
+    {json.dumps(operational_context, indent=2)}
+    """
+        response = self.client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "system", "content": prompt}],
+        )
+        self.record_token_usage(response)
         return response.choices[0].message.content.strip()
 
     def clean_final_answer(self, model_output):

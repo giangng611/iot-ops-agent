@@ -1,4 +1,5 @@
 import json
+import re
 
 from tools import TOOLS
 from prompts import (
@@ -7,12 +8,34 @@ from prompts import (
     IOA_V2_AGENT_PROMPT,
 )
 from storage.telemetry_store import get_all_latest_devices
+from services.company_data_service import (
+    get_company_device_context,
+    get_company_disconnected_context,
+    get_company_inventory_context,
+    get_company_rule_readiness_context,
+    get_company_telemetry_coverage_context,
+    scan_company_payload_threshold,
+)
 
 
 SYSTEM_LEVEL_TOOLS = [
     "check_system_overview",
     "check_system_alarms"
 ]
+COMPANY_CONTEXT_TOOLS = {
+    "inspect_company_fleet_summary",
+    "inspect_company_device_samples",
+    "inspect_company_alerts",
+    "inspect_company_provenance",
+}
+COMPANY_DB_TOOLS = {
+    "get_company_inventory",
+    "get_company_telemetry_coverage",
+    "get_company_rule_readiness",
+    "get_company_disconnected_devices",
+    "get_company_device",
+    "scan_company_threshold",
+}
 
 
 class IOAV2Agent:
@@ -162,22 +185,34 @@ class IOAV2Agent:
 
     def run_with_operational_context(self, user_input, operational_context):
         self.reset_token_usage()
-        final_answer = self.generate_context_answer(
+        observations = [
+            self.build_company_context_observation(operational_context)
+        ]
+        action = self.choose_company_tool(
             user_input,
             operational_context,
         )
+        observations.append(
+            self.build_observation(
+                iteration=2,
+                thought=self.company_tool_thought(action),
+                action=action,
+                output=self.execute_company_tool(
+                    action,
+                    user_input,
+                    operational_context,
+                ),
+            )
+        )
+        final_answer = self.generate_context_answer(
+            user_input,
+            operational_context,
+            observations,
+        )
+        self.save_to_history(user_input, final_answer)
         return {
             "final_answer": final_answer,
-            "steps": [{
-                "iteration": 1,
-                "thought": "Use the selected Company DB operational context.",
-                "action": "read_company_operational_context",
-                "output": {
-                    "source": operational_context.get("source"),
-                    "record_count": operational_context.get("record_count"),
-                    "rules_status": operational_context.get("rules_status"),
-                },
-            }],
+            "steps": observations,
             "token_usage": self.get_token_usage(),
         }
 
@@ -186,26 +221,40 @@ class IOAV2Agent:
         user_input,
         operational_context,
     ):
-        result = self.run_with_operational_context(
+        self.reset_token_usage()
+        observations = [
+            self.build_company_context_observation(operational_context)
+        ]
+
+        for step in observations:
+            yield self.company_thought_event(step)
+            yield self.company_observation_event(step)
+
+        action = self.choose_company_tool(user_input, operational_context)
+        targeted_observation = self.build_observation(
+            iteration=2,
+            thought=self.company_tool_thought(action),
+            action=action,
+            output=self.execute_company_tool(
+                action,
+                user_input,
+                operational_context,
+            ),
+        )
+        observations.append(targeted_observation)
+        yield self.company_thought_event(targeted_observation)
+        yield self.company_observation_event(targeted_observation)
+
+        final_answer = self.generate_context_answer(
             user_input,
             operational_context,
+            observations,
         )
-        step = result["steps"][0]
-        yield {
-            "type": "thought",
-            "iteration": step["iteration"],
-            "thought": step["thought"],
-            "action": step["action"],
-        }
-        yield {
-            "type": "observation",
-            "iteration": step["iteration"],
-            "observation": step,
-        }
+        self.save_to_history(user_input, final_answer)
         yield {
             "type": "final",
-            "final_answer": result["final_answer"],
-            "token_usage": result.get("token_usage"),
+            "final_answer": final_answer,
+            "token_usage": self.get_token_usage(),
         }
 
     def run_stream(self, user_input):
@@ -559,7 +608,276 @@ class IOAV2Agent:
 
         return response.choices[0].message.content.strip()
 
-    def generate_context_answer(self, user_input, operational_context):
+    def build_company_context_observation(self, operational_context):
+        return self.build_observation(
+            iteration=1,
+            thought=(
+                "Verify the active Company MongoDB snapshot and its "
+                "read-only provenance before selecting focused evidence."
+            ),
+            action="read_company_operational_context",
+            output={
+                "source": operational_context.get("source"),
+                "record_count": operational_context.get("record_count"),
+                "rules_status": operational_context.get("rules_status"),
+                "provenance": operational_context.get("provenance"),
+            },
+        )
+
+    def choose_company_tool(self, user_input, operational_context):
+        prompt = f"""
+    You are selecting one read-only Company DB evidence tool.
+
+    User request:
+    {user_input}
+
+    Available snapshot fields:
+    {json.dumps({
+        "record_count": operational_context.get("record_count"),
+        "has_summary": bool(operational_context.get("summary")),
+        "has_alerts": bool(operational_context.get("alerts")),
+        "sample_count": len(
+            operational_context.get("sample_records") or []
+        ),
+    }, indent=2)}
+
+    Choose exactly one tool:
+    - inspect_company_fleet_summary
+    - inspect_company_device_samples
+    - inspect_company_alerts
+    - inspect_company_provenance
+    - get_company_inventory
+    - get_company_telemetry_coverage
+    - get_company_rule_readiness
+    - get_company_disconnected_devices
+    - get_company_device
+    - scan_company_threshold
+
+    Use get_company_device only when the request names a device.
+    Use scan_company_threshold only when the request includes a numeric
+    greater-than or above threshold.
+    Return only the tool name.
+    """
+        response = self.client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "system", "content": prompt}],
+        )
+        self.record_token_usage(response)
+        action = response.choices[0].message.content.strip()
+        allowed_tools = COMPANY_CONTEXT_TOOLS | COMPANY_DB_TOOLS
+
+        if (
+            action == "get_company_device"
+            and not self.extract_company_identifier(user_input)
+        ):
+            return self.fallback_company_tool(user_input)
+
+        if (
+            action == "scan_company_threshold"
+            and self.extract_threshold(user_input) is None
+        ):
+            return self.fallback_company_tool(user_input)
+
+        if action in allowed_tools:
+            return action
+
+        return self.fallback_company_tool(user_input)
+
+    def fallback_company_tool(self, user_input):
+        lowered = user_input.lower()
+
+        if self.extract_threshold(user_input) is not None and any(
+            marker in lowered
+            for marker in ("greater than", "above", ">", "lớn hơn", "vượt")
+        ):
+            return "scan_company_threshold"
+
+        keyword_tools = (
+            (
+                ("disconnected", "offline", "mất kết nối", "mat ket noi"),
+                "get_company_disconnected_devices",
+            ),
+            (
+                ("coverage", "unmapped", "metric", "telemetry coverage"),
+                "get_company_telemetry_coverage",
+            ),
+            (
+                ("rule", "grafana", "luật", "luat"),
+                "get_company_rule_readiness",
+            ),
+            (
+                ("alert", "alarm", "cảnh báo", "canh bao"),
+                "inspect_company_alerts",
+            ),
+            (
+                ("inventory", "node", "device list", "danh sách"),
+                "get_company_inventory",
+            ),
+        )
+
+        for keywords, action in keyword_tools:
+            if any(keyword in lowered for keyword in keywords):
+                return action
+
+        if self.extract_company_identifier(user_input):
+            return "get_company_device"
+
+        return "inspect_company_fleet_summary"
+
+    def execute_company_tool(
+        self,
+        action,
+        user_input,
+        operational_context,
+    ):
+        if action == "inspect_company_fleet_summary":
+            return {
+                "source": operational_context.get("source"),
+                "record_count": operational_context.get("record_count"),
+                "distinct_device_count": operational_context.get(
+                    "distinct_device_count"
+                ),
+                "summary": operational_context.get("summary"),
+                "classification_status": operational_context.get(
+                    "classification_status"
+                ),
+                "rules_status": operational_context.get("rules_status"),
+            }
+
+        if action == "inspect_company_device_samples":
+            return {
+                "source": operational_context.get("source"),
+                "samples": operational_context.get("sample_records") or [],
+            }
+
+        if action == "inspect_company_alerts":
+            return {
+                "source": operational_context.get("source"),
+                "alerts": operational_context.get("alerts"),
+                "rules_status": operational_context.get("rules_status"),
+                "rules_message": operational_context.get("rules_message"),
+            }
+
+        if action == "inspect_company_provenance":
+            return {
+                "source": operational_context.get("source"),
+                "provenance": operational_context.get("provenance"),
+                "interpretation_notes": operational_context.get(
+                    "interpretation_notes"
+                ),
+            }
+
+        try:
+            if action == "get_company_inventory":
+                return get_company_inventory_context()
+            if action == "get_company_telemetry_coverage":
+                return get_company_telemetry_coverage_context()
+            if action == "get_company_rule_readiness":
+                return get_company_rule_readiness_context()
+            if action == "get_company_disconnected_devices":
+                return get_company_disconnected_context()
+            if action == "get_company_device":
+                identifier = self.extract_company_identifier(user_input)
+                if not identifier:
+                    return {
+                        "source": operational_context.get("source"),
+                        "error": "No company device identifier was detected.",
+                    }
+                return get_company_device_context(identifier)
+            if action == "scan_company_threshold":
+                threshold = self.extract_threshold(user_input)
+                if threshold is None:
+                    return {
+                        "source": operational_context.get("source"),
+                        "error": "No numeric threshold was detected.",
+                    }
+                return scan_company_payload_threshold(threshold)
+        except Exception as exc:
+            return {
+                "source": operational_context.get("source"),
+                "tool": action,
+                "error": f"Company DB tool failed: {exc}",
+            }
+
+        return {
+            "source": operational_context.get("source"),
+            "error": f"Unsupported Company DB tool: {action}",
+        }
+
+    def company_tool_thought(self, action):
+        return (
+            "Collect focused Company DB evidence with the read-only "
+            f"{action} tool before producing the answer."
+        )
+
+    def company_thought_event(self, observation):
+        return {
+            "type": "thought",
+            "iteration": observation["iteration"],
+            "thought": observation["thought"],
+            "action": observation["action"],
+        }
+
+    def company_observation_event(self, observation):
+        return {
+            "type": "observation",
+            "iteration": observation["iteration"],
+            "observation": observation,
+        }
+
+    def extract_company_identifier(self, user_input):
+        tokens = [
+            token.strip("()[]{}.,:/")
+            for token in user_input.split()
+            if token.strip("()[]{}.,:/")
+        ]
+        ignored = {
+            "company",
+            "device",
+            "diagnose",
+            "check",
+            "show",
+            "inspect",
+            "thiết",
+            "bị",
+            "thiet",
+            "bi",
+        }
+
+        for token in reversed(tokens):
+            lowered = token.lower()
+            if lowered in ignored:
+                continue
+            if (
+                (
+                    lowered.startswith("s")
+                    and any(character.isdigit() for character in token)
+                )
+                or lowered.startswith(("dvi-", "dvi_", "nod_"))
+                or "_" in token
+                or "-" in token
+            ):
+                return token
+
+        return ""
+
+    def extract_threshold(self, user_input):
+        matches = re.findall(r"-?\d+(?:\.\d+)?", user_input)
+
+        if not matches:
+            return None
+
+        try:
+            return float(matches[-1])
+        except ValueError:
+            return None
+
+    def generate_context_answer(
+        self,
+        user_input,
+        operational_context,
+        observations,
+    ):
         prompt = f"""
     You are an IoT operations AI agent.
 
@@ -570,8 +888,17 @@ class IOAV2Agent:
     User request:
     {user_input}
 
-    Company operational context:
-    {json.dumps(operational_context, indent=2)}
+    Company DB observations:
+    {json.dumps(observations, indent=2)}
+
+    The source snapshot metadata is:
+    {json.dumps({
+        "source": operational_context.get("source"),
+        "rules_status": operational_context.get("rules_status"),
+    }, indent=2)}
+
+    Base the answer only on the collected observations. If a focused tool
+    returned an error, state that the evidence could not be retrieved.
     """
         response = self.client.chat.completions.create(
             model="gpt-4.1-mini",

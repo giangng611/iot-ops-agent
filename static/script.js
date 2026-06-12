@@ -131,7 +131,7 @@ socket.on("telegram_reasoning_event", (data) => {
             latestReasoningSteps.push(step);
         }
 
-        if (reasoningDrawerOpen) {
+        if (isLiveReasoningDrawerOpen()) {
             enqueueReasoningThoughtAction(step);
         }
     }
@@ -144,7 +144,7 @@ socket.on("telegram_reasoning_event", (data) => {
         if (step) {
             step.output = event.observation?.output;
 
-            if (reasoningDrawerOpen) {
+            if (isLiveReasoningDrawerOpen()) {
                 enqueueReasoningObservation(step);
             }
         }
@@ -188,7 +188,7 @@ socket.on("telegram_chat_completed", async (data) => {
 
         workflowFinalized = true;
 
-        if (reasoningDrawerOpen) {
+        if (isLiveReasoningDrawerOpen()) {
             renderReasoningStepsStatic(reasoningSteps, true);
         }
 
@@ -240,6 +240,7 @@ let latestReasoningSteps = [];
 let displayedWorkflowSteps = [];
 let workflowNodeStatusMemory = {};
 let reasoningDrawerOpen = false;
+let activeReasoningViewId = null;
 let workflowPanelOpen = false;
 let workflowFinalized = false;
 let currentAlerts = {
@@ -268,6 +269,35 @@ let assistantMessageActionStore = {};
 let userMessageActionStore = {};
 let workflowNodeDetailStore = {};
 let selectedDataSource = "simulator";
+const LIVE_REASONING_VIEW_ID = "__live_reasoning_trace__";
+
+function isLiveReasoningDrawerOpen() {
+    return (
+        reasoningDrawerOpen &&
+        activeReasoningViewId === LIVE_REASONING_VIEW_ID
+    );
+}
+
+function resetReasoningWorkflowView() {
+    workflowNodeStatusMemory = {};
+    workflowNodeDetailStore = {};
+    closeWorkflowNodeDetail();
+}
+
+function resetLiveReasoningRun() {
+    latestReasoningSteps = [];
+    displayedWorkflowSteps = [];
+    workflowNodeStatusMemory = {};
+    workflowFinalized = false;
+    pendingFinalAnswer = null;
+    latestTokenUsage = null;
+    reasoningTypingQueue = Promise.resolve();
+
+    if (isLiveReasoningDrawerOpen()) {
+        resetReasoningWorkflowView();
+        renderReasoningStepsStatic([], false);
+    }
+}
 let currentDataSourceState = {
     selected_source: "simulator",
     active_source: "simulator",
@@ -914,7 +944,6 @@ async function sendMessage() {
     }
 
     isAgentRunning = true;
-    latestReasoningSteps = [];
     const input = document.getElementById("messageInput");
     const loading = document.getElementById("loading");
     const suggestions = document.getElementById("promptSuggestions");
@@ -936,6 +965,8 @@ async function sendMessage() {
         isAgentRunning = false;
         return;
     }
+
+    resetLiveReasoningRun();
 
     input.value = "";
     input.disabled = true;
@@ -1039,14 +1070,6 @@ async function sendMessage() {
 }
 
 async function sendStreamMessage(message) {
-    latestReasoningSteps = [];
-    displayedWorkflowSteps = [];
-    workflowNodeStatusMemory = {};
-    workflowFinalized = false;
-    pendingFinalAnswer = null;
-    latestTokenUsage = null;
-    reasoningTypingQueue = Promise.resolve();
-
     const response = await fetch("/api/diagnose-stream", {
         method: "POST",
         headers: {
@@ -1090,7 +1113,7 @@ async function sendStreamMessage(message) {
                 latestReasoningSteps.push(step);
             }
 
-            if (reasoningDrawerOpen) {
+            if (isLiveReasoningDrawerOpen()) {
                 enqueueReasoningThoughtAction(step);
             }
 
@@ -1105,7 +1128,7 @@ async function sendStreamMessage(message) {
             if (latestStep) {
                 latestStep.output = event.observation.output;
 
-                if (reasoningDrawerOpen) {
+                if (isLiveReasoningDrawerOpen()) {
                     enqueueReasoningObservation(latestStep);
                 }
             }
@@ -2284,10 +2307,16 @@ async function copyTextToClipboard(text) {
 function openReasoningDrawer(reasoningId = null) {
     const drawer = document.getElementById("reasoningDrawer");
     const mainArea = document.querySelector(".main-area");
+    const nextViewId = reasoningId || LIVE_REASONING_VIEW_ID;
+
+    if (activeReasoningViewId !== nextViewId) {
+        resetReasoningWorkflowView();
+    }
 
     drawer.classList.remove("hidden");
     mainArea.classList.add("reasoning-open");
     reasoningDrawerOpen = true;
+    activeReasoningViewId = nextViewId;
 
     if (reasoningId) {
         const steps = Array.isArray(window[reasoningId])
@@ -2297,7 +2326,10 @@ function openReasoningDrawer(reasoningId = null) {
         return;
     }
 
-    renderReasoningStepsStatic(latestReasoningSteps, workflowFinalized);
+    renderReasoningStepsStatic(
+        latestReasoningSteps,
+        isAgentRunning ? false : workflowFinalized
+    );
 
     latestReasoningSteps.forEach(step => {
         const stepElement = document.getElementById(`reasoning-step-${step.iteration}`);
@@ -2313,6 +2345,7 @@ function closeReasoningDrawer() {
     const mainArea = document.querySelector(".main-area");
 
     reasoningDrawerOpen = false;
+    activeReasoningViewId = null;
 
     drawer.classList.add("hidden");
     mainArea.classList.remove("reasoning-open");
@@ -3018,7 +3051,7 @@ function getWorkflowNodeSummary(node, matchingStep) {
 }
 
 function updateReasoningWorkflowMap(steps, finalized = workflowFinalized) {
-    if (!reasoningDrawerOpen) {
+    if (!isLiveReasoningDrawerOpen()) {
         return;
     }
 
@@ -3031,6 +3064,23 @@ function updateReasoningWorkflowMap(steps, finalized = workflowFinalized) {
 
 function enqueueReasoningThoughtAction(step) {
     reasoningTypingQueue = reasoningTypingQueue.then(() => {
+        if (!isLiveReasoningDrawerOpen()) {
+            const existingIndex = displayedWorkflowSteps.findIndex(item =>
+                item.iteration === step.iteration
+            );
+
+            if (existingIndex >= 0) {
+                displayedWorkflowSteps[existingIndex] = {
+                    ...displayedWorkflowSteps[existingIndex],
+                    ...step
+                };
+            } else {
+                displayedWorkflowSteps.push({ ...step });
+            }
+
+            return;
+        }
+
         const stepElement = createReasoningStepElement(step);
 
         const thoughtElement = stepElement.querySelector(".reasoning-thought");
@@ -3063,6 +3113,20 @@ function enqueueReasoningThoughtAction(step) {
 
 function enqueueReasoningObservation(step) {
     reasoningTypingQueue = reasoningTypingQueue.then(() => {
+        if (!isLiveReasoningDrawerOpen()) {
+            const existingStep = displayedWorkflowSteps.find(item =>
+                item.iteration === step.iteration
+            );
+
+            if (existingStep) {
+                existingStep.output = step.output;
+            } else {
+                displayedWorkflowSteps.push({ ...step });
+            }
+
+            return;
+        }
+
         const stepElement = createReasoningStepElement(step);
         const observationElement = stepElement.querySelector(".reasoning-observation");
 

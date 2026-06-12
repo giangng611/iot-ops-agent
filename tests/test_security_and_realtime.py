@@ -907,6 +907,109 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             "sensor-001",
         )
 
+    def test_custom_company_agent_collects_focused_tool_evidence(self):
+        agent = app_module.ioa_v2_agent
+        company_context = {
+            "source": "company_mongodb",
+            "record_count": 45,
+            "distinct_device_count": 45,
+            "rules_status": "provisional_poc",
+            "summary": {"device_count": 45},
+            "provenance": {"collections": ["datamgmt.CIN"]},
+        }
+
+        with (
+            patch.object(
+                agent,
+                "choose_company_tool",
+                return_value="inspect_company_fleet_summary",
+            ),
+            patch.object(
+                agent,
+                "generate_context_answer",
+                return_value="grounded company answer",
+            ) as generate_answer,
+            patch.object(agent, "save_to_history"),
+        ):
+            result = agent.run_with_operational_context(
+                "show company fleet",
+                company_context,
+            )
+
+        self.assertEqual(result["final_answer"], "grounded company answer")
+        self.assertEqual(len(result["steps"]), 2)
+        self.assertEqual(
+            [step["action"] for step in result["steps"]],
+            [
+                "read_company_operational_context",
+                "inspect_company_fleet_summary",
+            ],
+        )
+        self.assertEqual(
+            result["steps"][1]["output"]["summary"]["device_count"],
+            45,
+        )
+        generate_answer.assert_called_once_with(
+            "show company fleet",
+            company_context,
+            result["steps"],
+        )
+
+    def test_custom_company_stream_emits_database_tool_iteration(self):
+        agent = app_module.ioa_v2_agent
+        company_context = {
+            "source": "company_mongodb",
+            "record_count": 45,
+            "rules_status": "provisional_poc",
+            "provenance": {"collections": ["datamgmt.CIN"]},
+        }
+
+        with (
+            patch.object(
+                agent,
+                "choose_company_tool",
+                return_value="get_company_disconnected_devices",
+            ),
+            patch(
+                "agents.ioa_v2_agent.get_company_disconnected_context",
+                return_value={
+                    "source": "company_mongodb",
+                    "count": 6,
+                    "devices": [],
+                },
+            ) as disconnected_tool,
+            patch.object(
+                agent,
+                "generate_context_answer",
+                return_value="six disconnected devices",
+            ),
+            patch.object(agent, "save_to_history"),
+        ):
+            events = list(agent.run_stream_with_operational_context(
+                "show disconnected company devices",
+                company_context,
+            ))
+
+        self.assertEqual(
+            [event["type"] for event in events],
+            [
+                "thought",
+                "observation",
+                "thought",
+                "observation",
+                "final",
+            ],
+        )
+        self.assertEqual(
+            events[2]["action"],
+            "get_company_disconnected_devices",
+        )
+        self.assertEqual(
+            events[3]["observation"]["output"]["count"],
+            6,
+        )
+        disconnected_tool.assert_called_once_with()
+
     def test_company_metric_identity_values_are_read_from_payload(self):
         metrics = extract_display_metrics(
             '{"deviceId":"device-1","deviceName":"Sensor 1",'

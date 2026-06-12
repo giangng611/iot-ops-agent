@@ -2896,6 +2896,17 @@ button:disabled {
     height: 48px;
 }
 
+.prompt-toolbar select,
+.prompt-modal select {
+    appearance: none;
+    background-color: #212121;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23ececec' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.5 7.5 10 12l4.5-4.5'/%3E%3C/svg%3E");
+    background-position: right 14px center;
+    background-repeat: no-repeat;
+    background-size: 18px 18px;
+    padding: 0 48px 0 16px;
+}
+
 .prompt-toolbar .new-prompt-btn {
     padding: 0 18px;
     border-radius: 12px;
@@ -2930,7 +2941,6 @@ button:disabled {
 
 .prompt-modal select {
     height: 56px;
-    padding: 0 16px;
 }
 
 .prompt-modal textarea {

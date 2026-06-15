@@ -26,6 +26,7 @@ import storage.relational_store as relational_store  # noqa: E402
 import services.telegram_service as telegram_service  # noqa: E402
 import services.diagnose_service as diagnose_service  # noqa: E402
 import routes.telemetry_routes as telemetry_routes  # noqa: E402
+import routes.auth_routes as auth_routes  # noqa: E402
 from agents.langgraph_agent import LangGraphAgent  # noqa: E402
 from services.chat_service import normalize_token_usage  # noqa: E402
 from services.company_data_service import (  # noqa: E402
@@ -56,6 +57,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         telegram_service._telegram_updates_inflight.clear()
         telegram_service._telegram_updates_processed.clear()
         telemetry_routes._user_data_sources.clear()
+        telemetry_routes._mongo_read_rate_limit_log.clear()
+        auth_routes._login_rate_limit_log.clear()
         for postgres_url_var in ("SUPABASE_DB_URL", "DATABASE_URL", "POSTGRES_URL"):
             os.environ.pop(postgres_url_var, None)
         init_db()
@@ -86,7 +89,6 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             ("get", "/api/telemetry/sensor-001", {}),
             ("get", "/api/mongo/telemetry/health", {}),
             ("get", "/api/mongo/telemetry/indexes", {}),
-            ("post", "/api/mongo/telemetry/indexes", {}),
             ("get", "/api/mongo/devices", {}),
             ("get", "/api/mongo/telemetry/sensor-001", {}),
             ("get", "/api/storage/status", {}),
@@ -263,6 +265,80 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             "private message",
         )
 
+    def test_sql_injection_payloads_do_not_bypass_login_or_damage_tables(self):
+        user = self.create_user_once("sql-owner", "sql-owner-pass")
+        injection = "' OR 1=1; DROP TABLE users; --"
+
+        response = self.client.post(
+            "/api/login",
+            json={
+                "username": injection,
+                "password": injection,
+            },
+        )
+        self.assertEqual(response.status_code, 401)
+
+        self.login_as(user)
+        response = self.client.post(
+            "/api/prompts",
+            json={
+                "title": injection,
+                "command": injection,
+                "category": "Security test",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+        self.assertIsNotNone(verify_user("sql-owner", "sql-owner-pass"))
+        prompts_response = self.client.get("/api/prompts")
+        self.assertEqual(prompts_response.status_code, 200)
+        self.assertTrue(any(
+            prompt["title"] == injection
+            for prompt in prompts_response.get_json()["prompts"]
+        ))
+
+    def test_login_rate_limit_blocks_repeated_password_guessing(self):
+        self.create_user_once("brute-force-target", "correct-password")
+
+        with patch.dict(os.environ, {
+            "LOGIN_RATE_LIMIT_ATTEMPTS": "2",
+            "LOGIN_RATE_LIMIT_WINDOW_SECONDS": "60",
+        }):
+            first = self.client.post(
+                "/api/login",
+                json={
+                    "username": "brute-force-target",
+                    "password": "wrong-1",
+                },
+            )
+            second = self.client.post(
+                "/api/login",
+                json={
+                    "username": "brute-force-target",
+                    "password": "wrong-2",
+                },
+            )
+            blocked = self.client.post(
+                "/api/login",
+                json={
+                    "username": "brute-force-target",
+                    "password": "correct-password",
+                },
+            )
+            other_account = self.client.post(
+                "/api/login",
+                json={
+                    "username": "different-account",
+                    "password": "wrong",
+                },
+            )
+
+        self.assertEqual(first.status_code, 401)
+        self.assertEqual(second.status_code, 401)
+        self.assertEqual(blocked.status_code, 429)
+        self.assertTrue(blocked.headers.get("Retry-After"))
+        self.assertEqual(other_account.status_code, 401)
+
     def test_diagnose_limits_are_enforced(self):
         user = self.create_user_once("limit-user", "limit-pass")
         self.login_as(user)
@@ -298,6 +374,182 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             app_module.MAX_DIAGNOSE_MESSAGE_CHARS = original_max_chars
             app_module.DIAGNOSE_RATE_LIMIT_REQUESTS = original_limit
             app_module.DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS = original_window
+
+    def test_mongo_routes_clamp_read_limits_and_disallow_index_writes(self):
+        user = self.create_user_once("mongo-limit-user", "mongo-limit-pass")
+        self.login_as(user)
+
+        with patch.object(
+            telemetry_routes,
+            "get_mongo_telemetry_health_payload",
+            return_value={"latest": []},
+        ) as health_payload:
+            response = self.client.get(
+                "/api/mongo/telemetry/health?limit=999999"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        health_payload.assert_called_once_with(999999)
+
+        with patch(
+            "services.telemetry_service.get_telemetry_health",
+            return_value={"latest": []},
+        ) as mongo_health:
+            from services.telemetry_service import (
+                get_mongo_telemetry_health_payload,
+            )
+
+            get_mongo_telemetry_health_payload(999999)
+
+        mongo_health.assert_called_once_with(limit=100)
+
+        response = self.client.post("/api/mongo/telemetry/indexes")
+        self.assertEqual(response.status_code, 405)
+
+    def test_mongo_routes_do_not_expose_database_exception_details(self):
+        user = self.create_user_once("mongo-error-user", "mongo-error-pass")
+        self.login_as(user)
+        secret_error = (
+            "mongodb://admin:super-secret@internal-db.example:27017 failed"
+        )
+
+        with patch.object(
+            telemetry_routes,
+            "get_mongo_devices_payload",
+            side_effect=RuntimeError(secret_error),
+        ):
+            response = self.client.get("/api/mongo/devices")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.get_data(as_text=True)
+        self.assertNotIn("super-secret", body)
+        self.assertNotIn("internal-db.example", body)
+        self.assertNotIn("details", response.get_json())
+
+    def test_company_fallback_does_not_expose_database_exception_details(self):
+        secret_error = (
+            "mongodb://admin:company-secret@company-db.internal failed"
+        )
+
+        with patch(
+            "services.telemetry_service.get_company_device_history",
+            side_effect=RuntimeError(secret_error),
+        ), patch(
+            "services.telemetry_service.get_device_telemetry_history",
+            return_value=[],
+        ):
+            from services.telemetry_service import get_device_history_payload
+
+            payload = get_device_history_payload(
+                "sensor-001",
+                selected_source="company",
+            )
+
+        serialized = json.dumps(payload)
+        self.assertNotIn("company-secret", serialized)
+        self.assertNotIn("company-db.internal", serialized)
+        self.assertEqual(
+            payload["reason"],
+            "Company MongoDB history read failed.",
+        )
+
+    def test_storage_status_does_not_expose_database_exception_details(self):
+        secret_error = (
+            "postgresql://admin:db-secret@private-db.internal/app failed"
+        )
+
+        with patch.object(
+            relational_store,
+            "using_postgres",
+            return_value=True,
+        ), patch.object(
+            relational_store,
+            "get_postgres_connection",
+            side_effect=RuntimeError(secret_error),
+        ), patch.dict(os.environ, {
+            "APP_DB_FALLBACK_ENABLED": "true",
+        }):
+            payload = relational_store.get_storage_status()
+
+        serialized = json.dumps(payload)
+        self.assertNotIn("db-secret", serialized)
+        self.assertNotIn("private-db.internal", serialized)
+        self.assertEqual(payload["app_data"]["error"], "RuntimeError")
+        self.assertEqual(
+            payload["app_data"]["last_fallback"]["error"],
+            "RuntimeError",
+        )
+
+    def test_diagnose_responses_do_not_expose_runtime_exception_details(self):
+        user = self.create_user_once("runtime-error-user", "runtime-error-pass")
+        self.login_as(user)
+        secret_error = (
+            "provider failed with api_key=secret-key "
+            "at postgresql://admin:db-pass@private-db.internal/app"
+        )
+
+        with patch.object(
+            app_module.ioa_v2_agent,
+            "run",
+            side_effect=RuntimeError(secret_error),
+        ):
+            sync_response = self.client.post(
+                "/api/diagnose",
+                json={
+                    "message": "check system",
+                    "mode": "ioa_v2_custom",
+                },
+            )
+            stream_response = self.client.post(
+                "/api/diagnose-stream",
+                json={
+                    "message": "check system",
+                    "mode": "ioa_v2_custom",
+                },
+            )
+
+        sync_body = sync_response.get_data(as_text=True)
+        stream_body = stream_response.get_data(as_text=True)
+
+        self.assertEqual(sync_response.status_code, 500)
+        self.assertNotIn("secret-key", sync_body)
+        self.assertNotIn("db-pass", sync_body)
+        self.assertNotIn("private-db.internal", sync_body)
+        self.assertNotIn("secret-key", stream_body)
+        self.assertNotIn("db-pass", stream_body)
+        self.assertNotIn("private-db.internal", stream_body)
+        self.assertIn("runtime failed", sync_body)
+        self.assertIn("runtime failed", stream_body)
+
+    def test_mongo_read_rate_limit_is_enforced_per_user(self):
+        first_user = self.create_user_once(
+            "mongo-rate-user",
+            "mongo-rate-pass",
+        )
+        second_user = self.create_user_once(
+            "mongo-rate-user-2",
+            "mongo-rate-pass-2",
+        )
+
+        with patch.dict(os.environ, {
+            "MONGO_READ_RATE_LIMIT_REQUESTS": "1",
+            "MONGO_READ_RATE_LIMIT_WINDOW_SECONDS": "60",
+        }), patch.object(
+            telemetry_routes,
+            "get_mongo_devices_payload",
+            return_value={"source": "mongodb", "devices": []},
+        ):
+            self.login_as(first_user)
+            first_response = self.client.get("/api/mongo/devices")
+            limited_response = self.client.get("/api/mongo/devices")
+
+            self.login_as(second_user)
+            second_user_response = self.client.get("/api/mongo/devices")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(limited_response.status_code, 429)
+        self.assertTrue(limited_response.headers.get("Retry-After"))
+        self.assertEqual(second_user_response.status_code, 200)
 
     def test_embedded_telemetry_payload_reports_connected(self):
         app_module.generate_telemetry_batch()
@@ -1182,6 +1434,43 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         response = self.client.delete(f"/api/prompts/{prompt_id}")
         self.assertEqual(response.status_code, 200)
 
+    def test_prompt_routes_reject_cross_user_update_and_delete(self):
+        owner = self.create_user_once("prompt-owner", "prompt-owner-pass")
+        attacker = self.create_user_once(
+            "prompt-attacker",
+            "prompt-attacker-pass",
+        )
+        self.login_as(owner)
+        create_response = self.client.post(
+            "/api/prompts",
+            json={
+                "title": "Owner only",
+                "command": "/owner-only",
+                "category": "Private",
+            },
+        )
+        prompt_id = create_response.get_json()["id"]
+
+        self.login_as(attacker)
+        update_response = self.client.put(
+            f"/api/prompts/{prompt_id}",
+            json={
+                "title": "Hijacked",
+                "command": "/hijacked",
+                "category": "Attack",
+            },
+        )
+        delete_response = self.client.delete(f"/api/prompts/{prompt_id}")
+
+        self.assertEqual(update_response.status_code, 404)
+        self.assertEqual(delete_response.status_code, 404)
+
+        self.login_as(owner)
+        prompts = self.client.get("/api/prompts").get_json()["prompts"]
+        owner_prompt = next(
+            prompt for prompt in prompts if prompt["id"] == prompt_id
+        )
+        self.assertEqual(owner_prompt["title"], "Owner only")
     @patch("services.telegram_service.requests.post")
     def test_telegram_webhook_rejects_invalid_secret(self, mock_post):
         os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"

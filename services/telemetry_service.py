@@ -2,7 +2,6 @@ import os
 
 from services.time_service import now, parse_timestamp
 from storage.mongo_store import (
-    ensure_telemetry_indexes,
     get_all_latest_devices_from_mongo,
     get_device_telemetry_history_from_mongo,
     get_telemetry_health,
@@ -17,6 +16,18 @@ from services.company_data_service import (
     get_company_device_history,
     get_company_operational_payload,
 )
+
+DEFAULT_MONGO_READ_LIMIT = 30
+MAX_MONGO_READ_LIMIT = 100
+
+
+def clamp_mongo_read_limit(limit, default=DEFAULT_MONGO_READ_LIMIT):
+    try:
+        parsed_limit = int(limit)
+    except (TypeError, ValueError):
+        parsed_limit = default
+
+    return max(1, min(parsed_limit, MAX_MONGO_READ_LIMIT))
 
 
 def get_telemetry_connected_grace_seconds():
@@ -106,12 +117,12 @@ def get_device_history_payload(device_id, selected_source="simulator"):
     if selected_source == "company":
         try:
             return get_company_device_history(device_id)
-        except Exception as exc:
+        except Exception:
             return {
                 "source": get_telemetry_source(),
                 "selected_source": "company",
                 "active_source": "simulator_fallback",
-                "reason": f"Company MongoDB history read failed: {exc}",
+                "reason": "Company MongoDB history read failed.",
                 "device_id": device_id,
                 "history": get_device_telemetry_history(device_id),
             }
@@ -124,13 +135,10 @@ def get_device_history_payload(device_id, selected_source="simulator"):
 
 
 def get_mongo_telemetry_health_payload(limit):
-    return get_telemetry_health(limit=limit)
+    return get_telemetry_health(limit=clamp_mongo_read_limit(limit, default=5))
 
 
-def get_mongo_telemetry_indexes_payload(ensure_indexes=False):
-    if ensure_indexes:
-        ensure_telemetry_indexes()
-
+def get_mongo_telemetry_indexes_payload():
     return get_telemetry_indexes()
 
 
@@ -145,5 +153,8 @@ def get_mongo_device_history_payload(device_id, limit):
     return {
         "source": "mongodb",
         "device_id": device_id,
-        "history": get_device_telemetry_history_from_mongo(device_id, limit=limit),
+        "history": get_device_telemetry_history_from_mongo(
+            device_id,
+            limit=clamp_mongo_read_limit(limit),
+        ),
     }

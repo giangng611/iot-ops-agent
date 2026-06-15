@@ -1,5 +1,7 @@
 import os
 import threading
+import time
+from collections import defaultdict, deque
 
 from flask import Blueprint, jsonify, request, session
 
@@ -17,6 +19,53 @@ from services.telemetry_service import (
 telemetry_bp = Blueprint("telemetry", __name__)
 _user_data_source_lock = threading.Lock()
 _user_data_sources = {}
+_mongo_read_rate_limit_lock = threading.Lock()
+_mongo_read_rate_limit_log = defaultdict(deque)
+
+
+def _positive_int_env(name, default):
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+    return value if value > 0 else default
+
+
+def check_mongo_read_rate_limit():
+    requests = _positive_int_env(
+        "MONGO_READ_RATE_LIMIT_REQUESTS",
+        60,
+    )
+    window_seconds = _positive_int_env(
+        "MONGO_READ_RATE_LIMIT_WINDOW_SECONDS",
+        60,
+    )
+    key = f"user:{current_user_id()}"
+    now = time.monotonic()
+    window_start = now - window_seconds
+
+    with _mongo_read_rate_limit_lock:
+        request_times = _mongo_read_rate_limit_log[key]
+
+        while request_times and request_times[0] <= window_start:
+            request_times.popleft()
+
+        if len(request_times) >= requests:
+            retry_after = max(
+                1,
+                int(window_seconds - (now - request_times[0])),
+            )
+            response = jsonify({
+                "error": "MongoDB read rate limit exceeded.",
+            })
+            response.status_code = 429
+            response.headers["Retry-After"] = str(retry_after)
+            return response
+
+        request_times.append(now)
+
+    return None
 
 
 def get_selected_data_source():
@@ -104,31 +153,35 @@ def get_mongo_telemetry_health():
     if unauthorized:
         return unauthorized
 
+    rate_limited = check_mongo_read_rate_limit()
+    if rate_limited:
+        return rate_limited
+
     try:
         limit = request.args.get("limit", default=5, type=int)
         return jsonify(get_mongo_telemetry_health_payload(limit))
-    except Exception as exc:
+    except Exception:
         return jsonify({
             "error": "MongoDB telemetry read failed",
-            "details": str(exc),
         }), 503
 
 
-@telemetry_bp.route("/api/mongo/telemetry/indexes", methods=["GET", "POST"])
+@telemetry_bp.route("/api/mongo/telemetry/indexes", methods=["GET"])
 def mongo_telemetry_indexes():
     unauthorized = require_login_json()
 
     if unauthorized:
         return unauthorized
 
+    rate_limited = check_mongo_read_rate_limit()
+    if rate_limited:
+        return rate_limited
+
     try:
-        return jsonify(get_mongo_telemetry_indexes_payload(
-            ensure_indexes=request.method == "POST",
-        ))
-    except Exception as exc:
+        return jsonify(get_mongo_telemetry_indexes_payload())
+    except Exception:
         return jsonify({
             "error": "MongoDB telemetry index check failed",
-            "details": str(exc),
         }), 503
 
 
@@ -139,12 +192,15 @@ def get_mongo_devices():
     if unauthorized:
         return unauthorized
 
+    rate_limited = check_mongo_read_rate_limit()
+    if rate_limited:
+        return rate_limited
+
     try:
         return jsonify(get_mongo_devices_payload())
-    except Exception as exc:
+    except Exception:
         return jsonify({
             "error": "MongoDB telemetry read failed",
-            "details": str(exc),
         }), 503
 
 
@@ -155,11 +211,14 @@ def get_mongo_device_history(device_id):
     if unauthorized:
         return unauthorized
 
+    rate_limited = check_mongo_read_rate_limit()
+    if rate_limited:
+        return rate_limited
+
     try:
         limit = request.args.get("limit", default=30, type=int)
         return jsonify(get_mongo_device_history_payload(device_id, limit))
-    except Exception as exc:
+    except Exception:
         return jsonify({
             "error": "MongoDB telemetry read failed",
-            "details": str(exc),
         }), 503

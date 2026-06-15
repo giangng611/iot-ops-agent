@@ -16,11 +16,19 @@ IDENTIFIER_CHARS = frozenset(
 )
 BLOCKED_QUERY_OPERATORS = {
     "$accumulator",
+    "$expr",
     "$function",
+    "$geoNear",
+    "$jsonSchema",
     "$merge",
+    "$near",
+    "$nearSphere",
     "$out",
+    "$regex",
+    "$text",
     "$where",
 }
+ALLOWED_SORT_DIRECTIONS = {-1, 1}
 
 
 class CompanyMongoProxyRateLimitError(RuntimeError):
@@ -61,6 +69,23 @@ def _validate_read_document(value):
     elif isinstance(value, (list, tuple)):
         for nested_value in value:
             _validate_read_document(nested_value)
+
+
+def _validate_sort(sort):
+    if sort is None:
+        return
+
+    if (
+        not isinstance(sort, (list, tuple))
+        or len(sort) != 2
+    ):
+        raise ValueError("MongoDB sort must be a (field, direction) pair.")
+
+    field, direction = sort
+    _validate_identifier(field, "sort field")
+
+    if direction not in ALLOWED_SORT_DIRECTIONS:
+        raise ValueError("MongoDB sort direction must be 1 or -1.")
 
 
 class SlidingWindowRateLimiter:
@@ -188,6 +213,7 @@ class CompanyMongoReadProxy:
         query = query or {}
         _validate_read_document(query)
         _validate_read_document(projection or {})
+        _validate_sort(sort)
         safe_limit = max(1, min(int(limit), MAX_QUERY_LIMIT))
         cursor = self._client[database_name][collection_name].find(
             query,

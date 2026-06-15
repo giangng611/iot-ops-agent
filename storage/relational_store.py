@@ -52,13 +52,20 @@ def clear_fallback():
     _postgres_circuit_open_until = 0.0
 
 
+def safe_error_summary(error):
+    if isinstance(error, BaseException):
+        return type(error).__name__
+
+    return str(error)
+
+
 def record_fallback(operation_name, error, fallback_backend="sqlite"):
     global _last_fallback
     global _postgres_circuit_open_until
 
     _last_fallback = {
         "operation": operation_name,
-        "error": str(error),
+        "error": safe_error_summary(error),
         "fallback_backend": fallback_backend,
         "recorded_at": now_iso(),
     }
@@ -226,7 +233,7 @@ def get_storage_status():
                     "Supabase/Postgres is configured but unavailable; "
                     "SQLite fallback is active."
                 ),
-                "error": str(exc),
+                "error": safe_error_summary(exc),
                 "last_fallback": get_last_fallback(),
             })
         else:
@@ -237,7 +244,7 @@ def get_storage_status():
                     "Supabase/Postgres is configured but unavailable; "
                     "SQLite fallback is disabled."
                 ),
-                "error": str(exc),
+                "error": safe_error_summary(exc),
             })
         return status
 

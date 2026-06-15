@@ -156,6 +156,74 @@ class CompanyMongoProxyTests(unittest.TestCase):
                 {"$where": "function () { return true; }"},
             )
 
+    def test_find_rejects_expensive_query_operators(self):
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+        proxy = CompanyMongoReadProxy(
+            "mongodb://example.invalid",
+            actor="test",
+            client_factory=lambda *args, **kwargs: client,
+        )
+
+        for query in (
+            {"name": {"$regex": ".*"}},
+            {"$expr": {"$eq": ["$status", "critical"]}},
+            {"location": {"$near": [0, 0]}},
+        ):
+            with self.subTest(query=query):
+                with self.assertRaises(ValueError):
+                    proxy.find("datamgmt", "CIN", query)
+
+    def test_find_rejects_invalid_namespace_sort_and_limit(self):
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+        proxy = CompanyMongoReadProxy(
+            "mongodb://example.invalid",
+            actor="test",
+            client_factory=lambda *args, **kwargs: client,
+        )
+
+        invalid_calls = (
+            lambda: proxy.find("admin.system", "users"),
+            lambda: proxy.find("datamgmt", "$cmd"),
+            lambda: proxy.find("datamgmt", "CIN", sort=("$natural", 1)),
+            lambda: proxy.find("datamgmt", "CIN", sort=("ct", 0)),
+            lambda: proxy.find("datamgmt", "CIN", limit="unbounded"),
+        )
+
+        for invalid_call in invalid_calls:
+            with self.subTest(call=invalid_call):
+                with self.assertRaises((TypeError, ValueError)):
+                    invalid_call()
+
+    def test_rate_limits_are_isolated_by_actor(self):
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+
+        with patch.dict(
+            "os.environ",
+            {
+                "COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS": "1",
+                "COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS": "60",
+            },
+        ):
+            first_proxy = CompanyMongoReadProxy(
+                "mongodb://example.invalid",
+                actor="first",
+                client_factory=lambda *args, **kwargs: client,
+            )
+            second_proxy = CompanyMongoReadProxy(
+                "mongodb://example.invalid",
+                actor="second",
+                client_factory=lambda *args, **kwargs: client,
+            )
+
+            first_proxy.find("datamgmt", "CIN")
+            second_proxy.find("datamgmt", "CIN")
+
+            with self.assertRaises(CompanyMongoProxyRateLimitError):
+                first_proxy.find("datamgmt", "CIN")
+
 
 if __name__ == "__main__":
     unittest.main()

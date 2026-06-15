@@ -16,6 +16,7 @@ Use a read-only database user.
 COMPANY_DB_URL=postgresql://readonly_user:[PASSWORD]@company-db-host:5432/company_db
 COMPANY_MONGODB_URI=mongodb://readonly_user:[PASSWORD]@company-mongo-host:27017/?authSource=admin
 COMPANY_MONGODB_DB=
+COMPANY_MONGO_ALLOWED_NAMESPACES=devicemgmt.NODE,authorization.IDENTITY,datamgmt.CNT,datamgmt.CIN,datamgmt.DEVICE_TELEMETRY,datamgmt.RULE
 COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
 COMPANY_DB_STATEMENT_TIMEOUT_MS=5000
 COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS=120
@@ -39,6 +40,10 @@ It does not expose insert, update, delete, aggregation, or arbitrary database
 commands. Queries always apply a document limit and `maxTimeMS`; server-side
 JavaScript and write-stage operators such as `$where`, `$function`, `$out`,
 and `$merge` are rejected.
+
+Database and collection access is also restricted by
+`COMPANY_MONGO_ALLOWED_NAMESPACES`. Discovery results are filtered through the
+same allowlist. A valid MongoDB identifier is not sufficient by itself.
 
 The proxy rate limit is process-local and counts MongoDB read operations by
 caller. API reads and LLM tool reads use separate caller keys. One unified

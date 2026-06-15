@@ -263,6 +263,7 @@ Environment variables should be configured through the deployment provider inste
 * [Dify UI Integration](docs/DIFY_UI_INTEGRATION.md)
 * [Telegram PoC](docs/TELEGRAM_POC.md)
 * [Company DB Discovery](docs/COMPANY_DB_DISCOVERY.md)
+* [Company DB Security Assessment](docs/COMPANY_DB_SECURITY_ASSESSMENT.md)
 * [Roadmap](docs/ROADMAP.md)
 
 ---

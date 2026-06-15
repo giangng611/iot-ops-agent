@@ -45,7 +45,7 @@ The assessment verified that:
 Latest automated result:
 
 ```text
-70 tests passed
+75 tests passed
 ```
 
 Latest live verification:
@@ -444,7 +444,7 @@ The following operations were not executed against a live database:
 
 ## 5. Test Suite Classification
 
-Current suite: 70 tests.
+Current suite: 75 tests.
 
 Direct security coverage:
 
@@ -498,9 +498,10 @@ failed logins, database access, policy denials, and administrative operations.
 
 ### 6.5 Company Database Not Yet Live-Verified
 
-Company MongoDB and Postgres controls have unit-test coverage, but the real
-database role, network ACLs, TLS configuration, tenant boundaries, and schema
-must be verified in the next phase using a company-issued read-only account.
+The first live company MongoDB security check has now been performed. It
+identified anonymous document reads and an over-broad `readAnyDatabase` role.
+See `docs/COMPANY_DB_SECURITY_ASSESSMENT.md`. Production integration remains
+blocked until the database-side findings are remediated and the checker passes.
 
 ### 6.6 No SAST, DAST, or Dependency Vulnerability Report
 
@@ -543,4 +544,3 @@ database.
 - `routes/auth_routes.py`
 - `routes/diagnose_routes.py`
 - `routes/telemetry_routes.py`
-

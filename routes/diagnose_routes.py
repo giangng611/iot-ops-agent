@@ -36,6 +36,9 @@ def create_diagnose_blueprint(runtime):
         lambda: runtime["rate_limit_window_seconds"],
     )
     diagnose_rate_limit_log = runtime.get("diagnose_rate_limit_log") or defaultdict(deque)
+    public_runtime_error = (
+        "The requested runtime failed. Please try again later."
+    )
 
     runtime_metadata = {
         "ioa_v1_custom": {
@@ -391,9 +394,9 @@ def create_diagnose_blueprint(runtime):
                 )
             })
 
-        except Exception as e:
+        except Exception:
             return jsonify({
-                "error": str(e)
+                "error": public_runtime_error,
             }), 500
 
     @diagnose_bp.route("/api/diagnose-stream", methods=["POST"])
@@ -676,14 +679,14 @@ def create_diagnose_blueprint(runtime):
                                 'output': {
                                     'framework': 'n8n',
                                     'status': 'error',
-                                    'error': str(e)
+                                    'error': public_runtime_error,
                                 }
                             }
                         })}\n\n"
 
                         yield f"data: {json.dumps({
                             'type': 'error',
-                            'error': str(e)
+                            'error': public_runtime_error,
                         })}\n\n"
 
                     return
@@ -769,14 +772,14 @@ def create_diagnose_blueprint(runtime):
                                 'output': {
                                     'framework': 'Dify',
                                     'status': 'error',
-                                    'error': str(e)
+                                    'error': public_runtime_error,
                                 }
                             }
                         })}\n\n"
 
                         yield f"data: {json.dumps({
                             'type': 'error',
-                            'error': str(e)
+                            'error': public_runtime_error,
                         })}\n\n"
 
                     return
@@ -834,8 +837,11 @@ def create_diagnose_blueprint(runtime):
                     notes="Automatic benchmark capture from streamed UI execution."
                 )
 
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            except Exception:
+                yield f"data: {json.dumps({
+                    'type': 'error',
+                    'error': public_runtime_error,
+                })}\n\n"
 
         return Response(generate(), mimetype="text/event-stream")
 

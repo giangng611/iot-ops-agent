@@ -49,6 +49,12 @@ class FakeDatabase:
     def __getitem__(self, collection_name):
         return self.collection
 
+    def list_collections(self, **kwargs):
+        return [
+            {"name": "CIN", "type": "collection"},
+            {"name": "SECRET", "type": "collection"},
+        ]
+
 
 class FakeAdmin:
     def command(self, command):
@@ -64,6 +70,9 @@ class FakeClient:
 
     def __getitem__(self, database_name):
         return self.database
+
+    def list_database_names(self):
+        return ["datamgmt", "secret", "admin"]
 
     def close(self):
         self.closed = True
@@ -155,6 +164,122 @@ class CompanyMongoProxyTests(unittest.TestCase):
                 "CIN",
                 {"$where": "function () { return true; }"},
             )
+
+    def test_find_rejects_expensive_query_operators(self):
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+        proxy = CompanyMongoReadProxy(
+            "mongodb://example.invalid",
+            actor="test",
+            client_factory=lambda *args, **kwargs: client,
+        )
+
+        for query in (
+            {"name": {"$regex": ".*"}},
+            {"$expr": {"$eq": ["$status", "critical"]}},
+            {"location": {"$near": [0, 0]}},
+        ):
+            with self.subTest(query=query):
+                with self.assertRaises(ValueError):
+                    proxy.find("datamgmt", "CIN", query)
+
+    def test_find_rejects_invalid_namespace_sort_and_limit(self):
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+        proxy = CompanyMongoReadProxy(
+            "mongodb://example.invalid",
+            actor="test",
+            client_factory=lambda *args, **kwargs: client,
+        )
+
+        invalid_calls = (
+            lambda: proxy.find("admin.system", "users"),
+            lambda: proxy.find("datamgmt", "$cmd"),
+            lambda: proxy.find("datamgmt", "CIN", sort=("$natural", 1)),
+            lambda: proxy.find("datamgmt", "CIN", sort=("ct", 0)),
+            lambda: proxy.find("datamgmt", "CIN", limit="unbounded"),
+        )
+
+        for invalid_call in invalid_calls:
+            with self.subTest(call=invalid_call):
+                with self.assertRaises((TypeError, ValueError)):
+                    invalid_call()
+
+    def test_rate_limits_are_isolated_by_actor(self):
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+
+        with patch.dict(
+            "os.environ",
+            {
+                "COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS": "1",
+                "COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS": "60",
+            },
+        ):
+            first_proxy = CompanyMongoReadProxy(
+                "mongodb://example.invalid",
+                actor="first",
+                client_factory=lambda *args, **kwargs: client,
+            )
+            second_proxy = CompanyMongoReadProxy(
+                "mongodb://example.invalid",
+                actor="second",
+                client_factory=lambda *args, **kwargs: client,
+            )
+
+            first_proxy.find("datamgmt", "CIN")
+            second_proxy.find("datamgmt", "CIN")
+
+            with self.assertRaises(CompanyMongoProxyRateLimitError):
+                first_proxy.find("datamgmt", "CIN")
+
+    def test_proxy_rejects_namespaces_outside_allowlist(self):
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+        proxy = CompanyMongoReadProxy(
+            "mongodb://example.invalid",
+            actor="test",
+            client_factory=lambda *args, **kwargs: client,
+        )
+
+        with self.assertRaises(PermissionError):
+            proxy.find("datamgmt", "SECRET")
+
+        with self.assertRaises(PermissionError):
+            proxy.find("admin", "system_users")
+
+    def test_discovery_only_returns_allowlisted_namespaces(self):
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+        proxy = CompanyMongoReadProxy(
+            "mongodb://example.invalid",
+            actor="test",
+            client_factory=lambda *args, **kwargs: client,
+        )
+
+        self.assertEqual(proxy.list_database_names(), ["datamgmt"])
+        self.assertEqual(
+            proxy.list_collections("datamgmt"),
+            [{"name": "CIN", "type": "collection"}],
+        )
+
+    def test_namespace_allowlist_can_be_configured(self):
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+        proxy = CompanyMongoReadProxy(
+            "mongodb://example.invalid",
+            actor="test",
+            client_factory=lambda *args, **kwargs: client,
+        )
+
+        with patch.dict(
+            "os.environ",
+            {"COMPANY_MONGO_ALLOWED_NAMESPACES": "custom.devices"},
+        ):
+            proxy.find("custom", "devices")
+
+            with self.assertRaises(PermissionError):
+                proxy.find("datamgmt", "CIN")
 
 
 if __name__ == "__main__":

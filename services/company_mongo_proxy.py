@@ -9,6 +9,14 @@ from pymongo import MongoClient
 DEFAULT_RATE_LIMIT_REQUESTS = 120
 DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 60
 MAX_QUERY_LIMIT = 1000
+DEFAULT_ALLOWED_NAMESPACES = frozenset({
+    "authorization.IDENTITY",
+    "datamgmt.CIN",
+    "datamgmt.CNT",
+    "datamgmt.DEVICE_TELEMETRY",
+    "datamgmt.RULE",
+    "devicemgmt.NODE",
+})
 IDENTIFIER_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyz"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -16,11 +24,19 @@ IDENTIFIER_CHARS = frozenset(
 )
 BLOCKED_QUERY_OPERATORS = {
     "$accumulator",
+    "$expr",
     "$function",
+    "$geoNear",
+    "$jsonSchema",
     "$merge",
+    "$near",
+    "$nearSphere",
     "$out",
+    "$regex",
+    "$text",
     "$where",
 }
+ALLOWED_SORT_DIRECTIONS = {-1, 1}
 
 
 class CompanyMongoProxyRateLimitError(RuntimeError):
@@ -61,6 +77,49 @@ def _validate_read_document(value):
     elif isinstance(value, (list, tuple)):
         for nested_value in value:
             _validate_read_document(nested_value)
+
+
+def _validate_sort(sort):
+    if sort is None:
+        return
+
+    if (
+        not isinstance(sort, (list, tuple))
+        or len(sort) != 2
+    ):
+        raise ValueError("MongoDB sort must be a (field, direction) pair.")
+
+    field, direction = sort
+    _validate_identifier(field, "sort field")
+
+    if direction not in ALLOWED_SORT_DIRECTIONS:
+        raise ValueError("MongoDB sort direction must be 1 or -1.")
+
+
+def get_allowed_namespaces():
+    configured = os.getenv("COMPANY_MONGO_ALLOWED_NAMESPACES", "").strip()
+
+    if not configured:
+        return DEFAULT_ALLOWED_NAMESPACES
+
+    namespaces = {
+        namespace.strip()
+        for namespace in configured.split(",")
+        if namespace.strip()
+    }
+
+    for namespace in namespaces:
+        if namespace.count(".") != 1:
+            raise ValueError(
+                "Company MongoDB namespaces must use database.collection "
+                f"format: {namespace}"
+            )
+
+        database_name, collection_name = namespace.split(".", 1)
+        _validate_identifier(database_name, "database name")
+        _validate_identifier(collection_name, "collection name")
+
+    return frozenset(namespaces)
 
 
 class SlidingWindowRateLimiter:
@@ -144,6 +203,12 @@ class CompanyMongoReadProxy:
 
         if collection_name is not None:
             _validate_identifier(collection_name, "collection name")
+            namespace = f"{database_name}.{collection_name}"
+
+            if namespace not in get_allowed_namespaces():
+                raise PermissionError(
+                    f"Company MongoDB namespace is not allowed: {namespace}"
+                )
 
         company_mongo_rate_limiter.check(
             f"{self._actor}:{operation}"
@@ -153,14 +218,31 @@ class CompanyMongoReadProxy:
         company_mongo_rate_limiter.check(
             f"{self._actor}:list_database_names"
         )
-        return self._client.list_database_names()
+        allowed_databases = {
+            namespace.split(".", 1)[0]
+            for namespace in get_allowed_namespaces()
+        }
+        return [
+            database_name
+            for database_name in self._client.list_database_names()
+            if database_name in allowed_databases
+        ]
 
     def list_collections(self, database_name):
         self._check_read("list_collections", database_name)
-        return list(self._client[database_name].list_collections(
+        allowed_collections = {
+            namespace.split(".", 1)[1]
+            for namespace in get_allowed_namespaces()
+            if namespace.startswith(f"{database_name}.")
+        }
+        return [
+            namespace
+            for namespace in self._client[database_name].list_collections(
             filter={"type": {"$in": ["collection", "view"]}},
             nameOnly=True,
-        ))
+            )
+            if namespace.get("name") in allowed_collections
+        ]
 
     def collection_stats(self, database_name, collection_name):
         self._check_read(
@@ -188,6 +270,7 @@ class CompanyMongoReadProxy:
         query = query or {}
         _validate_read_document(query)
         _validate_read_document(projection or {})
+        _validate_sort(sort)
         safe_limit = max(1, min(int(limit), MAX_QUERY_LIMIT))
         cursor = self._client[database_name][collection_name].find(
             query,

@@ -178,8 +178,14 @@ SOCKETIO_CORS_ORIGINS=
 MAX_DIAGNOSE_MESSAGE_CHARS=2000
 DIAGNOSE_RATE_LIMIT_REQUESTS=10
 DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
+LOGIN_RATE_LIMIT_ATTEMPTS=10
+LOGIN_RATE_LIMIT_WINDOW_SECONDS=300
 ENABLE_EMBEDDED_TELEMETRY=true
 TELEMETRY_BROADCAST_INTERVAL_SECONDS=300
+MONGODB_URI=mongodb://iot_ops_runtime:[PASSWORD]@localhost:27017/iot_ops_agent?authSource=iot_ops_agent
+MONGODB_ADMIN_URI=mongodb://iot_ops_admin:[PASSWORD]@localhost:27017/admin?authSource=admin
+MONGO_READ_RATE_LIMIT_REQUESTS=60
+MONGO_READ_RATE_LIMIT_WINDOW_SECONDS=60
 ACCESS_CODE=please_contact_project_owner
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
 DIFY_API_URL=http://localhost/v1/chat-messages
@@ -257,6 +263,8 @@ Environment variables should be configured through the deployment provider inste
 * [Dify UI Integration](docs/DIFY_UI_INTEGRATION.md)
 * [Telegram PoC](docs/TELEGRAM_POC.md)
 * [Company DB Discovery](docs/COMPANY_DB_DISCOVERY.md)
+* [Company DB Security Assessment](docs/COMPANY_DB_SECURITY_ASSESSMENT.md)
+* [LangGraph Governance](docs/LANGGRAPH_GOVERNANCE.md)
 * [Roadmap](docs/ROADMAP.md)
 
 ---

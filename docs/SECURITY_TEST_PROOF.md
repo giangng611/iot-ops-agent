@@ -45,7 +45,7 @@ The assessment verified that:
 Latest automated result:
 
 ```text
-75 tests passed
+86 tests passed
 ```
 
 Latest live verification:
@@ -444,7 +444,7 @@ The following operations were not executed against a live database:
 
 ## 5. Test Suite Classification
 
-Current suite: 75 tests.
+Current suite: 86 tests.
 
 Direct security coverage:
 

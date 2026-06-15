@@ -264,6 +264,7 @@ Environment variables should be configured through the deployment provider inste
 * [Telegram PoC](docs/TELEGRAM_POC.md)
 * [Company DB Discovery](docs/COMPANY_DB_DISCOVERY.md)
 * [Company DB Security Assessment](docs/COMPANY_DB_SECURITY_ASSESSMENT.md)
+* [LangGraph Governance](docs/LANGGRAPH_GOVERNANCE.md)
 * [Roadmap](docs/ROADMAP.md)
 
 ---

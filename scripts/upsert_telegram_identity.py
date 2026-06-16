@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -9,10 +10,13 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 from storage.relational_store import (  # noqa: E402
+    get_app_db_backend,
+    get_configured_app_db_backend,
     get_user_by_username,
     init_db,
     upsert_telegram_identity,
 )
+from storage.postgres_store import postgres_url_configured  # noqa: E402
 
 
 def parse_data_sources(value):
@@ -33,9 +37,29 @@ def main():
     parser.add_argument("--role", default="operator")
     parser.add_argument("--data-sources", default="simulator")
     parser.add_argument("--inactive", action="store_true")
+    parser.add_argument(
+        "--allow-sqlite-fallback",
+        action="store_true",
+        help=(
+            "Allow fallback to local SQLite if Supabase/Postgres is configured "
+            "but unavailable."
+        ),
+    )
     args = parser.parse_args()
 
+    if (
+        postgres_url_configured()
+        and not args.allow_sqlite_fallback
+        and "APP_DB_FALLBACK_ENABLED" not in os.environ
+    ):
+        os.environ["APP_DB_FALLBACK_ENABLED"] = "false"
+
     init_db()
+    print(
+        "Using app DB backend: "
+        f"{get_app_db_backend()} "
+        f"(configured: {get_configured_app_db_backend()})"
+    )
     user = get_user_by_username(args.username)
 
     if not user:

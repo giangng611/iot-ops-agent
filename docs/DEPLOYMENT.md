@@ -139,9 +139,13 @@ PUBLIC_BASE_URL=https://iot-ops-agent.onrender.com
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_WEBHOOK_SECRET=...
 TELEGRAM_ALLOWED_USER_IDS=
-TELEGRAM_HISTORY_USER_ID=
 TELEGRAM_DEFAULT_DATA_SOURCE=simulator
 ```
+
+Telegram access also requires a database mapping from Telegram user ID to an
+IoT Ops Agent user. Use `python -m scripts.upsert_telegram_identity` after the
+target app user exists. Grant `company` in `--data-sources` only to operators
+approved to query Company DB through Telegram.
 
 Company MongoDB variables should be configured only when the Render service
 can reach the company network:

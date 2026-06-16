@@ -8,7 +8,7 @@ from collections import OrderedDict
 import requests
 
 from services.chat_service import save_chat_message
-from storage.relational_store import create_chat
+from storage.relational_store import create_chat, get_telegram_identity
 
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -158,6 +158,31 @@ def telegram_user_is_allowed(telegram_user_id):
     return str(telegram_user_id) in allowed_user_ids
 
 
+def resolve_telegram_identity(message):
+    telegram_user_id = message.get("telegram_user_id")
+
+    if telegram_user_id is None:
+        return None, "missing_telegram_user_id"
+
+    if not telegram_user_is_allowed(telegram_user_id):
+        return None, "telegram_user_not_allowlisted"
+
+    identity = get_telegram_identity(telegram_user_id)
+
+    if not identity:
+        return None, "telegram_identity_not_mapped"
+
+    if not identity.get("is_active"):
+        return None, "telegram_identity_inactive"
+
+    return identity, None
+
+
+def data_source_is_allowed(identity, data_source):
+    allowed_sources = set(identity.get("allowed_data_sources") or [])
+    return data_source in allowed_sources
+
+
 def build_help_text():
     return "\n".join([
         "What would you like to check?",
@@ -265,12 +290,7 @@ def make_chat_title(message):
     return f"Telegram: {compact_message or 'New request'}"
 
 
-def start_telegram_history(message):
-    user_id = get_history_user_id()
-
-    if user_id is None:
-        return None, None
-
+def start_telegram_history(user_id, message):
     chat_id = create_chat(user_id, make_chat_title(message["text"]))
     save_chat_message(
         chat_id=chat_id,
@@ -345,6 +365,18 @@ def handle_telegram_update(update, langgraph_agent, emit_user_event=None):
     )
 
 
+def get_telegram_failure_user_id(update):
+    message = extract_message(update)
+
+    if message is not None:
+        identity, deny_reason = resolve_telegram_identity(message)
+
+        if not deny_reason:
+            return identity["user_id"]
+
+    return get_history_user_id()
+
+
 def process_telegram_update(
     update,
     langgraph_agent,
@@ -362,12 +394,14 @@ def process_telegram_update(
         return {"status": "duplicate"}
 
     try:
-        if not telegram_user_is_allowed(message["telegram_user_id"]):
+        identity, deny_reason = resolve_telegram_identity(message)
+
+        if deny_reason:
             send_telegram_message(
                 message["chat_id"],
                 "You are not allowed to use this IoT Ops Agent bot.",
             )
-            result = {"status": "forbidden"}
+            result = {"status": "forbidden", "reason": deny_reason}
         else:
             prompt, help_text = normalize_telegram_prompt(message["text"])
 
@@ -375,25 +409,9 @@ def process_telegram_update(
                 send_telegram_message(message["chat_id"], help_text)
                 result = {"status": "help_sent"}
             else:
-                history_user_id, history_chat_id = start_telegram_history(
-                    message
-                )
+                history_user_id = identity["user_id"]
+                history_chat_id = None
                 title = make_chat_title(message["text"])
-
-                if (
-                    emit_user_event
-                    and history_user_id is not None
-                    and history_chat_id is not None
-                ):
-                    emit_user_event(
-                        history_user_id,
-                        "telegram_chat_started",
-                        {
-                            "chat_id": history_chat_id,
-                            "title": title,
-                            "message": message["text"],
-                        },
-                    )
 
                 steps = []
                 final_answer = "No answer was generated."
@@ -403,6 +421,40 @@ def process_telegram_update(
                     if get_user_data_source
                     else "simulator"
                 )
+
+                if not data_source_is_allowed(identity, data_source):
+                    send_telegram_message(
+                        message["chat_id"],
+                        (
+                            "You are not allowed to use the selected IoT Ops "
+                            "Agent data source."
+                        ),
+                    )
+                    result = {
+                        "status": "forbidden",
+                        "reason": "data_source_not_allowed",
+                        "data_source": data_source,
+                    }
+                    complete_telegram_update(update_key)
+                    return result
+
+                history_user_id, history_chat_id = start_telegram_history(
+                    history_user_id,
+                    message,
+                )
+
+                if emit_user_event:
+                    emit_user_event(
+                        history_user_id,
+                        "telegram_chat_started",
+                        {
+                            "chat_id": history_chat_id,
+                            "title": title,
+                            "message": message["text"],
+                            "telegram_user_id": identity["telegram_user_id"],
+                            "telegram_role": identity["role"],
+                        },
+                    )
 
                 for stream_event in langgraph_agent.run_stream(
                     prompt,
@@ -489,7 +541,7 @@ def process_telegram_update_in_background(
             )
         except Exception as exc:
             print(f"Telegram background processing failed: {exc}")
-            history_user_id = get_history_user_id()
+            history_user_id = get_telegram_failure_user_id(update)
 
             if emit_user_event and history_user_id is not None:
                 emit_user_event(

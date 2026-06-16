@@ -478,6 +478,122 @@ def verify_user(username, password):
     return user
 
 
+def serialize_data_sources(data_sources):
+    return ",".join([
+        str(item).strip()
+        for item in (data_sources or ["simulator"])
+        if str(item).strip()
+    ]) or "simulator"
+
+
+def deserialize_data_sources(value):
+    return [
+        item.strip()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
+
+
+def upsert_telegram_identity(
+    telegram_user_id,
+    user_id,
+    telegram_username=None,
+    role="viewer",
+    allowed_data_sources=None,
+    is_active=True,
+):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into public.telegram_identities (
+                        telegram_user_id,
+                        user_id,
+                        telegram_username,
+                        role,
+                        allowed_data_sources,
+                        is_active,
+                        created_at,
+                        updated_at
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s)
+                    on conflict (telegram_user_id) do update set
+                        user_id = excluded.user_id,
+                        telegram_username = excluded.telegram_username,
+                        role = excluded.role,
+                        allowed_data_sources = excluded.allowed_data_sources,
+                        is_active = excluded.is_active,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        str(telegram_user_id),
+                        user_id,
+                        telegram_username,
+                        role or "viewer",
+                        serialize_data_sources(allowed_data_sources),
+                        bool(is_active),
+                        now_iso(),
+                        now_iso(),
+                    ),
+                )
+            conn.commit()
+
+    return _with_fallback(
+        "upsert_telegram_identity",
+        postgres_operation,
+        lambda: sqlite_store.upsert_telegram_identity(
+            telegram_user_id,
+            user_id,
+            telegram_username=telegram_username,
+            role=role,
+            allowed_data_sources=allowed_data_sources,
+            is_active=is_active,
+        ),
+    )
+
+
+def get_telegram_identity(telegram_user_id):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select
+                        telegram_user_id,
+                        user_id,
+                        telegram_username,
+                        role,
+                        allowed_data_sources,
+                        is_active
+                    from public.telegram_identities
+                    where telegram_user_id = %s
+                    """,
+                    (str(telegram_user_id),),
+                )
+                row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "telegram_user_id": row["telegram_user_id"],
+            "user_id": row["user_id"],
+            "telegram_username": row["telegram_username"],
+            "role": row["role"],
+            "allowed_data_sources": deserialize_data_sources(
+                row["allowed_data_sources"]
+            ),
+            "is_active": bool(row["is_active"]),
+        }
+
+    return _with_fallback(
+        "get_telegram_identity",
+        postgres_operation,
+        lambda: sqlite_store.get_telegram_identity(telegram_user_id),
+    )
+
+
 def delete_chat(chat_id, user_id):
     def postgres_operation():
         with get_postgres_connection() as conn:

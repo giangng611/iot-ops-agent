@@ -89,8 +89,9 @@ Service and route responsibilities include:
 * `routes/telegram_routes.py`: Telegram webhook validation and background
   processing.
 * `services/diagnose_service.py`: context packaging for n8n and Dify.
-* `services/telegram_service.py`: Telegram commands, deduplication, chat
-  persistence, source selection, and LangGraph streaming.
+* `services/telegram_service.py`: Telegram commands, deduplication, identity
+  mapping, RBAC/source authorization, chat persistence, and LangGraph
+  streaming.
 
 ## Agent Runtimes
 
@@ -112,9 +113,12 @@ verifying the resolved snapshot. LangGraph selects company-specific tools
 directly. LangChain, n8n, and Dify receive bounded company context packaged by
 Flask.
 
-Telegram currently uses the in-process LangGraph runtime. Its data source is
-the latest source remembered for `TELEGRAM_HISTORY_USER_ID`, or
-`TELEGRAM_DEFAULT_DATA_SOURCE` when no UI source has been remembered.
+Telegram currently uses the in-process LangGraph runtime. Each Telegram sender
+must be mapped in `telegram_identities` before the runtime can call LangGraph.
+The mapped IoT Ops Agent user owns the saved chat history and source
+selection. A request is rejected before agent execution when the identity is
+unmapped, inactive, outside `TELEGRAM_ALLOWED_USER_IDS`, or not allowed to use
+the selected data source.
 
 ## Reasoning Trace
 
@@ -147,7 +151,7 @@ telegram_chat_failed
 ```
 
 These events synchronize Telegram-originated runs with the web workspace when
-history persistence is configured.
+the Telegram account is mapped to an IoT Ops Agent user.
 
 ## Security Boundary
 

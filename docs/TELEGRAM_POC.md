@@ -20,13 +20,36 @@ PUBLIC_BASE_URL=https://iot-ops-agent.onrender.com
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret
 TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
-TELEGRAM_HISTORY_USER_ID=1
 TELEGRAM_DEFAULT_DATA_SOURCE=simulator
 ```
 
-`TELEGRAM_ALLOWED_USER_IDS` is optional for local testing. Set it before company testing so only approved Telegram accounts can use the bot.
+`TELEGRAM_ALLOWED_USER_IDS` is an optional outer allowlist. Set it before
+company testing so only approved Telegram accounts can reach the bot.
 
-`TELEGRAM_HISTORY_USER_ID` is optional. When set, each Telegram request is saved as a platform chat owned by that app user, including the assistant final answer, reasoning steps, and token usage when available.
+Every Telegram account must also be mapped to an IoT Ops Agent user in the
+application database. The Telegram runtime fails closed when the Telegram user
+ID is missing, unmapped, inactive, or outside the optional allowlist.
+
+Create or update a mapping with:
+
+```bash
+python -m scripts.upsert_telegram_identity \
+  --telegram-user-id 123456789 \
+  --username company-operator \
+  --telegram-username operator_handle \
+  --role operator \
+  --data-sources simulator,company
+```
+
+For a lower-risk user, grant simulator only:
+
+```bash
+python -m scripts.upsert_telegram_identity \
+  --telegram-user-id 987654321 \
+  --username demo-viewer \
+  --role viewer \
+  --data-sources simulator
+```
 
 ## Configure Webhook
 
@@ -68,9 +91,10 @@ Supported commands:
 /diagnose gateway-001
 ```
 
-Any other text is sent to the existing LangGraph runtime. Telegram receives
-the formatted final answer. With `TELEGRAM_HISTORY_USER_ID`, the platform also
-stores and emits the reasoning steps and token metadata.
+Any other text is sent to the existing LangGraph runtime only after identity
+and data-source authorization pass. Telegram receives the formatted final
+answer. The platform stores the request, reasoning steps, final answer, and
+token metadata under the mapped IoT Ops Agent user.
 
 ## Test Company DB Through Localhost
 
@@ -90,9 +114,11 @@ python -m scripts.configure_telegram_webhook \
   --base-url https://your-tunnel.trycloudflare.com
 ```
 
-Keep both processes running. Open the local platform as the user identified by
-`TELEGRAM_HISTORY_USER_ID`, select `Company DB`, and then send a Telegram
-command. The source choice is remembered in process for that user.
+Keep both processes running. Open the local platform as the IoT Ops Agent user
+mapped to the Telegram account, select `Company DB`, and then send a Telegram
+command. The source choice is remembered in process for that mapped user. The
+Telegram identity must include `company` in `allowed_data_sources`; otherwise
+the request is rejected before LangGraph runs.
 
 For a demo that should start on company data before the UI is opened, launch
 the local app with:

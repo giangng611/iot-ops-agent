@@ -46,6 +46,7 @@ from storage.relational_store import (  # noqa: E402
     create_user,
     get_messages,
     init_db,
+    upsert_telegram_identity,
     verify_user,
 )
 
@@ -61,6 +62,12 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         auth_routes._login_rate_limit_log.clear()
         for postgres_url_var in ("SUPABASE_DB_URL", "DATABASE_URL", "POSTGRES_URL"):
             os.environ.pop(postgres_url_var, None)
+        for telegram_var in (
+            "TELEGRAM_ALLOWED_USER_IDS",
+            "TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_HISTORY_USER_ID",
+        ):
+            os.environ.pop(telegram_var, None)
         init_db()
         app_module.app.config["TESTING"] = True
         app_module.diagnose_rate_limit_log.clear()
@@ -78,6 +85,23 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["user_id"] = user["id"]
             session["username"] = user["username"]
+
+    def map_telegram_user(
+        self,
+        telegram_user_id,
+        user,
+        allowed_data_sources=None,
+        role="operator",
+        is_active=True,
+    ):
+        upsert_telegram_identity(
+            telegram_user_id,
+            user["id"],
+            telegram_username=f"telegram_{telegram_user_id}",
+            role=role,
+            allowed_data_sources=allowed_data_sources or ["simulator"],
+            is_active=is_active,
+        )
 
     def test_sensitive_routes_require_login(self):
         routes = [
@@ -1499,6 +1523,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
     @patch("services.telegram_service.requests.post")
     def test_telegram_help_sends_prompt_list(self, mock_post):
+        user = self.create_user_once("telegram-help-user", "help-pass")
+        self.map_telegram_user(456, user)
         os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
         os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
         os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "456"
@@ -1534,12 +1560,148 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
 
     @patch("services.telegram_service.requests.post")
+    def test_telegram_unmapped_user_is_denied_before_agent_runs(self, mock_post):
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        with patch.object(
+            app_module.langgraph_agent,
+            "run_stream",
+        ) as mock_run_stream:
+            try:
+                payload = telegram_service.process_telegram_update(
+                    {
+                        "message": {
+                            "chat": {"id": 123},
+                            "from": {"id": 999, "username": "unknown_user"},
+                            "text": "/overview",
+                        },
+                    },
+                    app_module.langgraph_agent,
+                )
+
+                self.assertEqual(payload["status"], "forbidden")
+                self.assertEqual(
+                    payload["reason"],
+                    "telegram_identity_not_mapped",
+                )
+                mock_run_stream.assert_not_called()
+                sent_payload = mock_post.call_args.kwargs["json"]
+                self.assertEqual(sent_payload["chat_id"], 123)
+                self.assertIn("not allowed", sent_payload["text"])
+            finally:
+                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_inactive_identity_is_denied(self, mock_post):
+        user = self.create_user_once("telegram-inactive-user", "inactive-pass")
+        self.map_telegram_user(456, user, is_active=False)
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        with patch.object(
+            app_module.langgraph_agent,
+            "run_stream",
+        ) as mock_run_stream:
+            try:
+                payload = telegram_service.process_telegram_update(
+                    {
+                        "message": {
+                            "chat": {"id": 123},
+                            "from": {"id": 456, "username": "inactive_user"},
+                            "text": "/overview",
+                        },
+                    },
+                    app_module.langgraph_agent,
+                )
+
+                self.assertEqual(payload["status"], "forbidden")
+                self.assertEqual(payload["reason"], "telegram_identity_inactive")
+                mock_run_stream.assert_not_called()
+            finally:
+                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_allowlist_still_blocks_mapped_user(self, mock_post):
+        user = self.create_user_once("telegram-allowlist-user", "allow-pass")
+        self.map_telegram_user(456, user)
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "789"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        with patch.object(
+            app_module.langgraph_agent,
+            "run_stream",
+        ) as mock_run_stream:
+            try:
+                payload = telegram_service.process_telegram_update(
+                    {
+                        "message": {
+                            "chat": {"id": 123},
+                            "from": {"id": 456, "username": "ops_user"},
+                            "text": "/overview",
+                        },
+                    },
+                    app_module.langgraph_agent,
+                )
+
+                self.assertEqual(payload["status"], "forbidden")
+                self.assertEqual(
+                    payload["reason"],
+                    "telegram_user_not_allowlisted",
+                )
+                mock_run_stream.assert_not_called()
+            finally:
+                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+                os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_company_source_requires_identity_scope(self, mock_post):
+        user = self.create_user_once("telegram-scope-user", "scope-pass")
+        self.map_telegram_user(456, user, allowed_data_sources=["simulator"])
+        telemetry_routes.remember_user_data_source(user["id"], "company")
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        with patch.object(
+            app_module.langgraph_agent,
+            "run_stream",
+        ) as mock_run_stream:
+            try:
+                payload = telegram_service.process_telegram_update(
+                    {
+                        "message": {
+                            "chat": {"id": 123},
+                            "from": {"id": 456, "username": "ops_user"},
+                            "text": "/companyfleet",
+                        },
+                    },
+                    app_module.langgraph_agent,
+                    get_user_data_source=(
+                        app_module.get_user_selected_data_source
+                    ),
+                )
+
+                self.assertEqual(payload["status"], "forbidden")
+                self.assertEqual(payload["reason"], "data_source_not_allowed")
+                self.assertEqual(payload["data_source"], "company")
+                mock_run_stream.assert_not_called()
+                sent_payload = mock_post.call_args.kwargs["json"]
+                self.assertIn("data source", sent_payload["text"])
+            finally:
+                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+
+    @patch("services.telegram_service.requests.post")
     def test_telegram_message_calls_langgraph_and_saves_history(self, mock_post):
         user = self.create_user_once("telegram-history-user", "history-pass")
+        self.map_telegram_user(
+            456,
+            user,
+            allowed_data_sources=["simulator", "company"],
+        )
         os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
         os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
         os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "456"
-        os.environ["TELEGRAM_HISTORY_USER_ID"] = str(user["id"])
         mock_post.return_value.raise_for_status.return_value = None
         self.login_as(user)
         socket_client = app_module.socketio.test_client(
@@ -1640,7 +1802,6 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 os.environ.pop("TELEGRAM_BOT_TOKEN", None)
                 os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
                 os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
-                os.environ.pop("TELEGRAM_HISTORY_USER_ID", None)
 
     def test_telegram_commands_map_to_agent_prompts(self):
         self.assertEqual(
@@ -1699,6 +1860,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
     @patch("services.telegram_service.requests.post")
     def test_telegram_duplicate_update_is_answered_once(self, mock_post):
+        user = self.create_user_once("telegram-duplicate-user", "duplicate-pass")
+        self.map_telegram_user(456, user)
         os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
         os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
         os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "456"
@@ -1792,38 +1955,42 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
     def test_telegram_background_failure_notifies_ui(self):
         user = self.create_user_once("telegram-failure-user", "failure-pass")
-        os.environ["TELEGRAM_HISTORY_USER_ID"] = str(user["id"])
+        self.map_telegram_user(456, user)
         emitted_events = []
 
-        try:
-            with patch(
-                "services.telegram_service.process_telegram_update",
-                side_effect=RuntimeError("simulated agent failure"),
-            ):
-                worker = (
-                    telegram_service.process_telegram_update_in_background(
-                        {"update_id": 999},
-                        app_module.langgraph_agent,
-                        emit_user_event=lambda user_id, event, payload: (
-                            emitted_events.append(
-                                (user_id, event, payload)
-                            )
-                        ),
-                    )
+        with patch(
+            "services.telegram_service.process_telegram_update",
+            side_effect=RuntimeError("simulated agent failure"),
+        ):
+            worker = (
+                telegram_service.process_telegram_update_in_background(
+                    {
+                        "update_id": 999,
+                        "message": {
+                            "chat": {"id": 123},
+                            "from": {"id": 456, "username": "ops_user"},
+                            "text": "/overview",
+                        },
+                    },
+                    app_module.langgraph_agent,
+                    emit_user_event=lambda user_id, event, payload: (
+                        emitted_events.append(
+                            (user_id, event, payload)
+                        )
+                    ),
                 )
-                worker.join(timeout=1)
-
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(
-                emitted_events,
-                [(
-                    user["id"],
-                    "telegram_chat_failed",
-                    {"error": "Telegram request failed."},
-                )],
             )
-        finally:
-            os.environ.pop("TELEGRAM_HISTORY_USER_ID", None)
+            worker.join(timeout=1)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(
+            emitted_events,
+            [(
+                user["id"],
+                "telegram_chat_failed",
+                {"error": "Telegram request failed."},
+            )],
+        )
 
     def test_data_source_selection_is_remembered_for_telegram_user(self):
         user = self.create_user_once("source-user", "source-pass")

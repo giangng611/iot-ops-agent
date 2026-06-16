@@ -11,7 +11,13 @@ load_dotenv(ROOT / ".env")
 from storage.postgres_store import get_postgres_connection  # noqa: E402
 
 
-APP_TABLES = ("users", "chats", "messages", "prompts")
+APP_TABLES = (
+    "users",
+    "chats",
+    "messages",
+    "prompts",
+    "telegram_identities",
+)
 
 
 def get_rls_status():

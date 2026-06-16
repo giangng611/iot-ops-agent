@@ -95,6 +95,26 @@ def init_db():
 
     cursor.execute(CREATE_PROMPTS_TABLE)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_user_id TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            telegram_username TEXT,
+            role TEXT NOT NULL DEFAULT 'viewer',
+            allowed_data_sources TEXT NOT NULL DEFAULT 'simulator',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS telegram_identities_user_id_idx
+        ON telegram_identities (user_id)
+    """)
+
     conn.commit()
     conn.close()
 
@@ -448,6 +468,96 @@ def verify_user(username, password):
         return None
 
     return user
+
+def serialize_data_sources(data_sources):
+    return ",".join([
+        str(item).strip()
+        for item in (data_sources or ["simulator"])
+        if str(item).strip()
+    ]) or "simulator"
+
+def deserialize_data_sources(value):
+    return [
+        item.strip()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
+
+def upsert_telegram_identity(
+    telegram_user_id,
+    user_id,
+    telegram_username=None,
+    role="viewer",
+    allowed_data_sources=None,
+    is_active=True,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+    timestamp = now_iso()
+
+    cursor.execute("""
+        INSERT INTO telegram_identities (
+            telegram_user_id,
+            user_id,
+            telegram_username,
+            role,
+            allowed_data_sources,
+            is_active,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(telegram_user_id) DO UPDATE SET
+            user_id = excluded.user_id,
+            telegram_username = excluded.telegram_username,
+            role = excluded.role,
+            allowed_data_sources = excluded.allowed_data_sources,
+            is_active = excluded.is_active,
+            updated_at = excluded.updated_at
+    """, (
+        str(telegram_user_id),
+        user_id,
+        telegram_username,
+        role or "viewer",
+        serialize_data_sources(allowed_data_sources),
+        1 if is_active else 0,
+        timestamp,
+        timestamp,
+    ))
+
+    conn.commit()
+    conn.close()
+
+def get_telegram_identity(telegram_user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            telegram_user_id,
+            user_id,
+            telegram_username,
+            role,
+            allowed_data_sources,
+            is_active
+        FROM telegram_identities
+        WHERE telegram_user_id = ?
+    """, (str(telegram_user_id),))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "telegram_user_id": row[0],
+        "user_id": row[1],
+        "telegram_username": row[2],
+        "role": row[3],
+        "allowed_data_sources": deserialize_data_sources(row[4]),
+        "is_active": bool(row[5]),
+    }
 
 def delete_chat(chat_id, user_id):
     conn = get_connection()

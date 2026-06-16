@@ -14,6 +14,7 @@ from services.telemetry_service import (
     get_mongo_telemetry_health_payload,
     get_mongo_telemetry_indexes_payload,
 )
+from storage.relational_store import get_user_data_source_policy
 
 
 telemetry_bp = Blueprint("telemetry", __name__)
@@ -68,8 +69,36 @@ def check_mongo_read_rate_limit():
     return None
 
 
+def get_allowed_data_sources(user_id):
+    return set(
+        get_user_data_source_policy(user_id).get(
+            "allowed_data_sources",
+            ["simulator"],
+        )
+    )
+
+
+def get_default_data_source(user_id):
+    policy = get_user_data_source_policy(user_id)
+    default_source = policy.get("default_data_source", "simulator")
+    allowed_sources = set(policy.get("allowed_data_sources") or ["simulator"])
+
+    if default_source not in allowed_sources:
+        return "simulator"
+
+    return default_source
+
+
 def get_selected_data_source():
-    return session.get("selected_data_source", "simulator")
+    user_id = current_user_id()
+    selected_source = session.get("selected_data_source")
+
+    if selected_source in get_allowed_data_sources(user_id):
+        return selected_source
+
+    selected_source = get_default_data_source(user_id)
+    session["selected_data_source"] = selected_source
+    return selected_source
 
 
 def remember_user_data_source(user_id, selected_source):
@@ -81,19 +110,19 @@ def remember_user_data_source(user_id, selected_source):
 
 
 def get_user_selected_data_source(user_id):
-    default_source = os.getenv(
-        "TELEGRAM_DEFAULT_DATA_SOURCE",
-        "simulator",
-    ).strip().lower()
-
-    if default_source not in {"simulator", "company"}:
-        default_source = "simulator"
-
     if user_id is None:
-        return default_source
+        return "simulator"
+
+    allowed_sources = get_allowed_data_sources(user_id)
+    default_source = get_default_data_source(user_id)
 
     with _user_data_source_lock:
-        return _user_data_sources.get(int(user_id), default_source)
+        selected_source = _user_data_sources.get(int(user_id), default_source)
+
+    if selected_source not in allowed_sources:
+        return default_source
+
+    return selected_source
 
 
 @telemetry_bp.route("/api/devices", methods=["GET"])
@@ -106,7 +135,13 @@ def get_devices():
     selected_source = get_selected_data_source()
     remember_user_data_source(current_user_id(), selected_source)
 
-    return jsonify(get_devices_payload(selected_source))
+    payload = get_devices_payload(selected_source)
+    payload["selected_source"] = selected_source
+    payload["default_source"] = get_default_data_source(current_user_id())
+    payload["allowed_data_sources"] = sorted(
+        get_allowed_data_sources(current_user_id())
+    )
+    return jsonify(payload)
 
 
 @telemetry_bp.route("/api/data-source", methods=["GET", "POST"])
@@ -123,6 +158,15 @@ def data_source():
         if selected_source not in {"simulator", "company"}:
             return jsonify({"error": "Invalid data source"}), 400
 
+        if selected_source not in get_allowed_data_sources(current_user_id()):
+            return jsonify({
+                "error": "You are not allowed to use this data source.",
+                "selected_source": get_selected_data_source(),
+                "allowed_data_sources": sorted(
+                    get_allowed_data_sources(current_user_id())
+                ),
+            }), 403
+
         session["selected_data_source"] = selected_source
 
     selected_source = get_selected_data_source()
@@ -130,6 +174,8 @@ def data_source():
 
     return jsonify({
         "selected_source": selected_source,
+        "default_source": get_default_data_source(current_user_id()),
+        "allowed_data_sources": sorted(get_allowed_data_sources(current_user_id())),
     })
 
 

@@ -77,9 +77,27 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            allowed_data_sources TEXT NOT NULL DEFAULT 'simulator',
+            default_data_source TEXT NOT NULL DEFAULT 'simulator'
         )
     """)
+
+    try:
+        cursor.execute("""
+            ALTER TABLE users ADD COLUMN allowed_data_sources TEXT
+            NOT NULL DEFAULT 'simulator'
+        """)
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("""
+            ALTER TABLE users ADD COLUMN default_data_source TEXT
+            NOT NULL DEFAULT 'simulator'
+        """)
+    except sqlite3.OperationalError:
+        pass
 
     CREATE_PROMPTS_TABLE = """
     CREATE TABLE IF NOT EXISTS prompts (
@@ -473,6 +491,68 @@ def get_user_by_username(username):
         "username": row[1],
         "password_hash": row[2]
     }
+
+def get_user_data_source_policy(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT allowed_data_sources, default_data_source
+        FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return {
+            "allowed_data_sources": ["simulator"],
+            "default_data_source": "simulator",
+        }
+
+    allowed_sources = deserialize_data_sources(row[0])
+    default_source = row[1] if row[1] in allowed_sources else "simulator"
+
+    return {
+        "allowed_data_sources": allowed_sources or ["simulator"],
+        "default_data_source": default_source,
+    }
+
+def update_user_data_source_policy(
+    user_id,
+    allowed_data_sources=None,
+    default_data_source="simulator",
+):
+    allowed_sources = deserialize_data_sources(
+        serialize_data_sources(allowed_data_sources)
+    )
+
+    if "simulator" not in allowed_sources:
+        allowed_sources.insert(0, "simulator")
+
+    if default_data_source not in allowed_sources:
+        default_data_source = "simulator"
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE users
+        SET allowed_data_sources = ?,
+            default_data_source = ?
+        WHERE id = ?
+    """, (
+        serialize_data_sources(allowed_sources),
+        default_data_source,
+        user_id,
+    ))
+
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+
+    return updated > 0
 
 
 def verify_user(username, password):

@@ -48,6 +48,7 @@ from storage.relational_store import (  # noqa: E402
     get_telegram_identity,
     get_messages,
     init_db,
+    update_user_data_source_policy,
     upsert_telegram_identity,
     verify_user,
 )
@@ -104,6 +105,13 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             role=role,
             allowed_data_sources=allowed_data_sources or ["simulator"],
             is_active=is_active,
+        )
+
+    def grant_company_data_source(self, user, default_source="company"):
+        update_user_data_source_policy(
+            user["id"],
+            allowed_data_sources=["simulator", "company"],
+            default_data_source=default_source,
         )
 
     def test_sensitive_routes_require_login(self):
@@ -620,6 +628,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
     def test_data_source_switch_to_company_returns_rules_pending(self):
         user = self.create_user_once("company-source-user", "company-pass")
+        self.grant_company_data_source(user)
         self.login_as(user)
 
         company_payload = {
@@ -674,6 +683,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
     def test_company_device_history_uses_company_source(self):
         user = self.create_user_once("company-history-user", "history-pass")
+        self.grant_company_data_source(user)
         self.login_as(user)
         self.client.post(
             "/api/data-source",
@@ -711,6 +721,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             "company-history-fallback-user",
             "history-pass",
         )
+        self.grant_company_data_source(user)
         self.login_as(user)
         self.client.post(
             "/api/data-source",
@@ -1615,6 +1626,12 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                         1,
                         "2099-01-01T00:00:00+00:00",
                     )
+                with self.assertRaises(RuntimeError):
+                    relational_store.update_user_data_source_policy(
+                        1,
+                        allowed_data_sources=["simulator", "company"],
+                        default_data_source="company",
+                    )
 
             self.assertIsNone(
                 relational_store.sqlite_store.get_telegram_link_code("hash")
@@ -1826,6 +1843,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
     @patch("services.telegram_service.requests.post")
     def test_telegram_company_source_requires_identity_scope(self, mock_post):
         user = self.create_user_once("telegram-scope-user", "scope-pass")
+        self.grant_company_data_source(user)
         self.map_telegram_user(456, user, allowed_data_sources=["simulator"])
         telemetry_routes.remember_user_data_source(user["id"], "company")
         os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
@@ -1862,6 +1880,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
     @patch("services.telegram_service.requests.post")
     def test_telegram_message_calls_langgraph_and_saves_history(self, mock_post):
         user = self.create_user_once("telegram-history-user", "history-pass")
+        self.grant_company_data_source(user)
         self.map_telegram_user(
             456,
             user,
@@ -2163,6 +2182,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
     def test_data_source_selection_is_remembered_for_telegram_user(self):
         user = self.create_user_once("source-user", "source-pass")
+        self.grant_company_data_source(user)
         self.login_as(user)
 
         response = self.client.post(
@@ -2176,15 +2196,40 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             "company",
         )
 
-    def test_telegram_data_source_can_default_to_company(self):
-        with patch.dict(
-            os.environ,
-            {"TELEGRAM_DEFAULT_DATA_SOURCE": "company"},
-        ):
-            self.assertEqual(
-                app_module.get_user_selected_data_source(999999),
-                "company",
-            )
+    def test_unapproved_user_cannot_select_company_data_source(self):
+        user = self.create_user_once("source-denied-user", "source-pass")
+        self.login_as(user)
+
+        response = self.client.post(
+            "/api/data-source",
+            json={"selected_source": "company"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.get_json()
+        self.assertEqual(payload["selected_source"], "simulator")
+        self.assertEqual(payload["allowed_data_sources"], ["simulator"])
+        self.assertEqual(
+            app_module.get_user_selected_data_source(user["id"]),
+            "simulator",
+        )
+
+    def test_new_user_data_source_defaults_to_simulator(self):
+        user = self.create_user_once("source-default-user", "source-pass")
+
+        self.assertEqual(
+            app_module.get_user_selected_data_source(user["id"]),
+            "simulator",
+        )
+
+    def test_company_grant_can_default_user_to_company(self):
+        user = self.create_user_once("source-company-default", "source-pass")
+        self.grant_company_data_source(user)
+
+        self.assertEqual(
+            app_module.get_user_selected_data_source(user["id"]),
+            "company",
+        )
 
     def test_storage_status_api_reports_backend_shape(self):
         user = self.create_user_once("storage-api-user", "storage-pass")

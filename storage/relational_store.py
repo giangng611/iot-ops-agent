@@ -508,6 +508,101 @@ def deserialize_data_sources(value):
     ]
 
 
+def normalize_user_data_source_policy(
+    allowed_data_sources=None,
+    default_data_source="simulator",
+):
+    allowed_sources = deserialize_data_sources(
+        serialize_data_sources(allowed_data_sources)
+    )
+
+    if "simulator" not in allowed_sources:
+        allowed_sources.insert(0, "simulator")
+
+    if default_data_source not in allowed_sources:
+        default_data_source = "simulator"
+
+    return allowed_sources, default_data_source
+
+
+def get_user_data_source_policy(user_id):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select allowed_data_sources, default_data_source
+                    from public.users
+                    where id = %s
+                    """,
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+
+        if not row:
+            return {
+                "allowed_data_sources": ["simulator"],
+                "default_data_source": "simulator",
+            }
+
+        allowed_sources, default_source = normalize_user_data_source_policy(
+            row["allowed_data_sources"],
+            row["default_data_source"],
+        )
+
+        return {
+            "allowed_data_sources": allowed_sources,
+            "default_data_source": default_source,
+        }
+
+    return _without_sqlite_fallback(
+        "get_user_data_source_policy",
+        postgres_operation,
+        lambda: sqlite_store.get_user_data_source_policy(user_id),
+    )
+
+
+def update_user_data_source_policy(
+    user_id,
+    allowed_data_sources=None,
+    default_data_source="simulator",
+):
+    allowed_sources, default_source = normalize_user_data_source_policy(
+        allowed_data_sources,
+        default_data_source,
+    )
+
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update public.users
+                    set allowed_data_sources = %s,
+                        default_data_source = %s
+                    where id = %s
+                    """,
+                    (
+                        serialize_data_sources(allowed_sources),
+                        default_source,
+                        user_id,
+                    ),
+                )
+                updated = cursor.rowcount
+            conn.commit()
+            return updated > 0
+
+    return _without_sqlite_fallback(
+        "update_user_data_source_policy",
+        postgres_operation,
+        lambda: sqlite_store.update_user_data_source_policy(
+            user_id,
+            allowed_data_sources=allowed_sources,
+            default_data_source=default_source,
+        ),
+    )
+
+
 def upsert_telegram_identity(
     telegram_user_id,
     user_id,

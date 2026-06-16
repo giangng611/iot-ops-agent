@@ -14,6 +14,7 @@ from storage.relational_store import (  # noqa: E402
     get_configured_app_db_backend,
     get_user_by_username,
     init_db,
+    update_user_data_source_policy,
     upsert_telegram_identity,
 )
 from storage.postgres_store import postgres_url_configured  # noqa: E402
@@ -74,10 +75,18 @@ def main():
         allowed_data_sources=parse_data_sources(args.data_sources),
         is_active=not args.inactive,
     )
+    allowed_sources = parse_data_sources(args.data_sources)
+    default_source = "company" if "company" in allowed_sources else "simulator"
+    update_user_data_source_policy(
+        user["id"],
+        allowed_data_sources=allowed_sources,
+        default_data_source=default_source,
+    )
     print(
         "Mapped Telegram user "
         f"{args.telegram_user_id} to {args.username} "
-        f"with data sources: {args.data_sources}"
+        f"with data sources: {args.data_sources}. "
+        f"Platform default data source: {default_source}"
     )
     return 0
 

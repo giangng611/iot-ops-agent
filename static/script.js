@@ -269,6 +269,7 @@ let assistantMessageActionStore = {};
 let userMessageActionStore = {};
 let workflowNodeDetailStore = {};
 let selectedDataSource = "simulator";
+let allowedDataSources = ["simulator"];
 const LIVE_REASONING_VIEW_ID = "__live_reasoning_trace__";
 
 function isLiveReasoningDrawerOpen() {
@@ -1451,6 +1452,7 @@ async function refreshDevices() {
         const data = await response.json();
 
         selectedDataSource = data.selected_source || selectedDataSource;
+        allowedDataSources = data.allowed_data_sources || allowedDataSources;
         currentDataSourceState = {
             selected_source: data.selected_source || selectedDataSource,
             active_source: data.active_source || data.source || "simulator",
@@ -1479,6 +1481,12 @@ async function refreshDevices() {
 }
 
 async function changeDataSource(value) {
+    if (!allowedDataSources.includes(value)) {
+        updateDataSourceControl();
+        updateRealtimeStatusDisplay();
+        return;
+    }
+
     selectedDataSource = value;
     updateDataSourceControl();
     updateRealtimeStatusDisplay();
@@ -1494,10 +1502,17 @@ async function changeDataSource(value) {
             })
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
+            selectedDataSource = data.selected_source || selectedDataSource;
+            allowedDataSources = data.allowed_data_sources || allowedDataSources;
+            updateDataSourceControl();
             throw new Error("Unable to update data source.");
         }
 
+        selectedDataSource = data.selected_source || selectedDataSource;
+        allowedDataSources = data.allowed_data_sources || allowedDataSources;
         await refreshDevices();
     } catch (error) {
         console.error("Failed to switch data source:", error);
@@ -1514,7 +1529,10 @@ function updateDataSourceControl() {
     control.dataset.selected = selectedDataSource;
     control.querySelectorAll("button").forEach(button => {
         const isSelected = button.dataset.source === selectedDataSource;
+        const isAllowed = allowedDataSources.includes(button.dataset.source);
         button.setAttribute("aria-pressed", String(isSelected));
+        button.disabled = !isAllowed;
+        button.classList.toggle("disabled-option", !isAllowed);
     });
 }
 

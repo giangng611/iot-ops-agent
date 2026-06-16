@@ -20,7 +20,6 @@ PUBLIC_BASE_URL=https://iot-ops-agent.onrender.com
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret
 TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
-TELEGRAM_DEFAULT_DATA_SOURCE=simulator
 TELEGRAM_LINK_CODE_TTL_MINUTES=15
 ```
 
@@ -53,6 +52,9 @@ Security properties:
 * New self-service Telegram links get `role=viewer` and
   `allowed_data_sources=simulator`.
 * Company DB access is never self-granted by `/link`.
+* New IoT Ops Agent accounts default to simulator on the web platform.
+* When an admin grants `simulator,company`, the user's platform default can be
+  set to Company DB by the grant script.
 
 Admin bootstrap or emergency mapping is still available with:
 
@@ -158,15 +160,20 @@ Telegram identity must include `company` in `allowed_data_sources`; otherwise
 the request is rejected before LangGraph runs.
 
 For a demo that should start on company data before the UI is opened, launch
-the local app with:
+grant the user Company DB access first:
 
 ```bash
-TELEGRAM_DEFAULT_DATA_SOURCE=company PORT=5002 python app.py
+python -m scripts.upsert_telegram_identity \
+  --telegram-user-id 123456789 \
+  --username company-operator \
+  --telegram-username operator_handle \
+  --role operator \
+  --data-sources simulator,company
 ```
 
-Once the mapped user changes the source in the UI, that in-process choice
-takes priority. After an app restart, the default is used until the UI source
-is remembered again.
+The grant updates both Telegram scope and the web platform data-source policy.
+Users without the `company` grant cannot switch the web workspace to Company
+DB.
 
 After testing, restore the deployed webhook:
 

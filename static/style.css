@@ -1290,6 +1290,12 @@ pre {
     color: #18181b;
 }
 
+.data-source-segmented button.disabled-option,
+.data-source-segmented button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
 .drawer-source-note {
     color: #d4d4d8 !important;
     line-height: 1.5;
@@ -2280,10 +2286,28 @@ th {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 18px;
+    max-height: calc(100vh - 360px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 8px;
 }
 
 #profileTab.drawer-open .profile-settings-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.profile-settings-grid::-webkit-scrollbar {
+    width: 8px;
+}
+
+.profile-settings-grid::-webkit-scrollbar-track {
+    background: #171717;
+    border-radius: 999px;
+}
+
+.profile-settings-grid::-webkit-scrollbar-thumb {
+    background: #3f3f46;
+    border-radius: 999px;
 }
 
 .clickable-card {

@@ -63,7 +63,7 @@ fallback records as company data.
 
 ## App Data
 
-Users, chats, messages, and prompts are routed by
+Users, chats, messages, prompts, Telegram identities, and data-source policies are routed by
 `storage/relational_store.py`:
 
 * `APP_DB_BACKEND=sqlite` uses local SQLite.

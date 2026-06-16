@@ -15,7 +15,7 @@ Web UI / Telegram -> Flask routes -> source resolver -> agent runtime
                                                    v
                                   answer + reasoning trace + runtime metadata
 
-App data -> Supabase/Postgres -> optional SQLite fallback
+App data -> Supabase/Postgres -> fail-closed by default
 ```
 
 The storage systems are parallel responsibilities. MongoDB telemetry does not
@@ -68,8 +68,8 @@ Users, chats, messages, and prompts are routed by
 
 * `APP_DB_BACKEND=sqlite` uses local SQLite.
 * `APP_DB_BACKEND=supabase` uses Supabase/Postgres.
-* `APP_DB_FALLBACK_ENABLED=true` permits SQLite fallback.
 * `APP_DB_FALLBACK_ENABLED=false` fails closed when Postgres is unavailable.
+* `APP_DB_FALLBACK_ENABLED=true` is only for explicit local/demo fallback.
 
 The browser does not query Supabase directly. Flask uses a server-side Postgres
 connection, and the schema revokes direct table access from Supabase client

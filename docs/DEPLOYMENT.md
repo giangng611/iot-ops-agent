@@ -279,13 +279,12 @@ Only users with the configured `ACCESS_CODE` can create accounts.
 
 ### Storage Model
 
-SQLite works well for local fallback and demos, but production-like deployments
-should use external storage:
+Production-like deployments should use external storage:
 
 ```text
 MongoDB for telemetry
 Supabase/Postgres for app data
-SQLite only as local fallback
+SQLite only for explicit legacy/local demos
 ```
 
 Set `APP_DB_FALLBACK_ENABLED=false` when Supabase/Postgres should be the source

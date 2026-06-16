@@ -127,9 +127,21 @@ Telegram requires a public HTTPS webhook, so it cannot call `localhost`
 directly. Use a temporary Cloudflare tunnel:
 
 ```bash
+APP_DB_BACKEND=supabase \
+APP_DB_FALLBACK_ENABLED=false \
+SUPABASE_DB_URL="postgresql://postgres.project-ref:password@region.pooler.supabase.com:6543/postgres" \
+POSTGRES_POOL_TIMEOUT_SECONDS=5 \
+POSTGRES_CONNECT_TIMEOUT_SECONDS=5 \
+POSTGRES_STATEMENT_TIMEOUT_MS=4000 \
+PORT=5001 \
 python app.py
+
 cloudflared tunnel --url http://127.0.0.1:5001
 ```
+
+Do not use SQLite fallback for this test. If Supabase cannot be reached, fix
+the Supabase connection string, network, or pooler setting before testing
+Telegram linking.
 
 Copy the generated `https://...trycloudflare.com` URL, then point Telegram to
 the local app:

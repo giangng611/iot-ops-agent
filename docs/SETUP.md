@@ -70,8 +70,8 @@ TELEMETRY_WRITE_BACKEND=sqlite
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB=iot_ops_agent
 MONGODB_TELEMETRY_COLLECTION=telemetry
-APP_DB_BACKEND=sqlite
-APP_DB_FALLBACK_ENABLED=true
+APP_DB_BACKEND=supabase
+APP_DB_FALLBACK_ENABLED=false
 SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:6543/postgres
 POSTGRES_POOL_MIN_SIZE=1
 POSTGRES_POOL_MAX_SIZE=5
@@ -324,8 +324,8 @@ simplest starting point.
 Add it to `.env`:
 
 ```env
-APP_DB_BACKEND=sqlite
-APP_DB_FALLBACK_ENABLED=true
+APP_DB_BACKEND=supabase
+APP_DB_FALLBACK_ENABLED=false
 SUPABASE_DB_URL=postgresql://postgres.project-ref:password@region.pooler.supabase.com:6543/postgres
 POSTGRES_POOL_MIN_SIZE=1
 POSTGRES_POOL_MAX_SIZE=5
@@ -381,11 +381,10 @@ Verify migrated app-data integrity:
 python -m scripts.verify_supabase_app_data_migration
 ```
 
-When `APP_DB_BACKEND=supabase`, the app writes users, chats, messages, and
-prompts to Supabase/Postgres. SQLite remains the local fallback if the
-Supabase/Postgres connection fails.
+When `APP_DB_BACKEND=supabase`, the app writes users, chats, messages, prompts,
+Telegram identities, and Telegram link codes to Supabase/Postgres.
 
-For production-like deployments, disable silent SQLite fallback:
+Keep silent SQLite fallback disabled when Supabase is the source of truth:
 
 ```env
 APP_DB_BACKEND=supabase

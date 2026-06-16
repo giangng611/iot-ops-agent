@@ -37,7 +37,7 @@ def get_app_db_backend():
 
 
 def app_db_fallback_enabled():
-    return os.getenv("APP_DB_FALLBACK_ENABLED", "true").lower() == "true"
+    return os.getenv("APP_DB_FALLBACK_ENABLED", "false").lower() == "true"
 
 
 def get_last_fallback():

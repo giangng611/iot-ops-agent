@@ -71,7 +71,7 @@ Simulator telemetry ─┐
                      ├─> Flask + Socket.IO -> AI runtimes -> Web UI / Telegram
 Company MongoDB ─────┘
 
-App data: Supabase/Postgres, with optional SQLite fallback
+App data: Supabase/Postgres, fail-closed by default
 Simulator telemetry: MongoDB or SQLite, selected by environment
 ```
 

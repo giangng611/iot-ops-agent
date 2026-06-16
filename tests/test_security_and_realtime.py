@@ -2196,7 +2196,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["app_data"]["configured_backend"], "sqlite")
         self.assertEqual(payload["app_data"]["active_backend"], "sqlite")
-        self.assertTrue(payload["app_data"]["fallback_enabled"])
+        self.assertFalse(payload["app_data"]["fallback_enabled"])
         self.assertEqual(payload["telemetry"]["source"], "sqlite")
 
     def test_supabase_url_enables_postgres_when_backend_flag_is_missing(self):

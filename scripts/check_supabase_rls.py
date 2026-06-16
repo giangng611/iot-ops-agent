@@ -17,6 +17,7 @@ APP_TABLES = (
     "messages",
     "prompts",
     "telegram_identities",
+    "telegram_link_codes",
 )
 
 

@@ -140,12 +140,15 @@ TELEGRAM_BOT_TOKEN=...
 TELEGRAM_WEBHOOK_SECRET=...
 TELEGRAM_ALLOWED_USER_IDS=
 TELEGRAM_DEFAULT_DATA_SOURCE=simulator
+TELEGRAM_LINK_CODE_TTL_MINUTES=15
 ```
 
-Telegram access also requires a database mapping from Telegram user ID to an
-IoT Ops Agent user. Use `python -m scripts.upsert_telegram_identity` after the
-target app user exists. Grant `company` in `--data-sources` only to operators
-approved to query Company DB through Telegram.
+Telegram access requires users to link their Telegram account to an IoT Ops
+Agent account. The normal flow is Profile -> Telegram -> Generate Link Code,
+then send `/link CODE` to the bot. Admin bootstrap remains available through
+`python -m scripts.upsert_telegram_identity`. Grant `company` in
+`--data-sources` only to operators approved to query Company DB through
+Telegram.
 
 Company MongoDB variables should be configured only when the Render service
 can reach the company network:

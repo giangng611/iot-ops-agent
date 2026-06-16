@@ -42,13 +42,16 @@ from services.company_poc_rule_service import (  # noqa: E402
 )
 from storage.relational_store import (  # noqa: E402
     add_message,
+    create_telegram_link_code,
     create_chat,
     create_user,
+    get_telegram_identity,
     get_messages,
     init_db,
     upsert_telegram_identity,
     verify_user,
 )
+from services.telegram_link_service import hash_link_code  # noqa: E402
 
 
 class SecurityAndRealtimeTests(unittest.TestCase):
@@ -1592,6 +1595,148 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             finally:
                 os.environ.pop("TELEGRAM_BOT_TOKEN", None)
 
+    def test_telegram_link_code_api_requires_login(self):
+        response = self.client.post("/api/profile/telegram-link-code")
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_logged_in_user_can_create_telegram_link_code(self):
+        user = self.create_user_once("telegram-link-owner", "link-pass")
+        self.login_as(user)
+
+        response = self.client.post("/api/profile/telegram-link-code")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertRegex(payload["code"], r"^[A-Z2-9]{8}$")
+        self.assertEqual(payload["ttl_minutes"], 15)
+        self.assertIn("expires_at", payload)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_link_command_maps_identity_without_agent(self, mock_post):
+        user = self.create_user_once("telegram-link-user", "link-pass")
+        self.login_as(user)
+        code = self.client.post(
+            "/api/profile/telegram-link-code"
+        ).get_json()["code"]
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        with patch.object(
+            app_module.langgraph_agent,
+            "run_stream",
+        ) as mock_run_stream:
+            payload = telegram_service.process_telegram_update(
+                {
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 8806645598, "username": "tg_user"},
+                        "text": f"/link {code}",
+                    },
+                },
+                app_module.langgraph_agent,
+            )
+
+        self.assertEqual(payload["status"], "linked")
+        identity = get_telegram_identity(8806645598)
+        self.assertEqual(identity["user_id"], user["id"])
+        self.assertEqual(identity["telegram_username"], "tg_user")
+        self.assertEqual(identity["role"], "viewer")
+        self.assertEqual(identity["allowed_data_sources"], ["simulator"])
+        mock_run_stream.assert_not_called()
+        sent_payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("linked", sent_payload["text"])
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_link_code_cannot_be_reused(self, mock_post):
+        first_user = self.create_user_once("telegram-link-first", "link-pass")
+        second_user = self.create_user_once("telegram-link-second", "link-pass")
+        self.login_as(first_user)
+        code = self.client.post(
+            "/api/profile/telegram-link-code"
+        ).get_json()["code"]
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        first_payload = telegram_service.process_telegram_update(
+            {
+                "message": {
+                    "chat": {"id": 123},
+                    "from": {"id": 111, "username": "first"},
+                    "text": f"/link {code}",
+                },
+            },
+            app_module.langgraph_agent,
+        )
+        self.login_as(second_user)
+        second_payload = telegram_service.process_telegram_update(
+            {
+                "message": {
+                    "chat": {"id": 124},
+                    "from": {"id": 222, "username": "second"},
+                    "text": f"/link {code}",
+                },
+            },
+            app_module.langgraph_agent,
+        )
+
+        self.assertEqual(first_payload["status"], "linked")
+        self.assertEqual(second_payload["status"], "link_failed")
+        self.assertEqual(second_payload["reason"], "code_already_used")
+        self.assertIsNone(get_telegram_identity(222))
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_expired_link_code_is_rejected(self, mock_post):
+        user = self.create_user_once("telegram-expired-link", "link-pass")
+        code = "ABCDEFGH"
+        create_telegram_link_code(
+            hash_link_code(code),
+            user["id"],
+            "2000-01-01T00:00:00+00:00",
+        )
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        payload = telegram_service.process_telegram_update(
+            {
+                "message": {
+                    "chat": {"id": 123},
+                    "from": {"id": 333, "username": "expired"},
+                    "text": f"/link {code}",
+                },
+            },
+            app_module.langgraph_agent,
+        )
+
+        self.assertEqual(payload["status"], "link_failed")
+        self.assertEqual(payload["reason"], "code_expired")
+        self.assertIsNone(get_telegram_identity(333))
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_link_requires_sender_id(self, mock_post):
+        user = self.create_user_once("telegram-missing-id-link", "link-pass")
+        self.login_as(user)
+        code = self.client.post(
+            "/api/profile/telegram-link-code"
+        ).get_json()["code"]
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        payload = telegram_service.process_telegram_update(
+            {
+                "message": {
+                    "chat": {"id": 123},
+                    "from": {"username": "missing_id"},
+                    "text": f"/link {code}",
+                },
+            },
+            app_module.langgraph_agent,
+        )
+
+        self.assertEqual(payload["status"], "link_failed")
+        self.assertEqual(payload["reason"], "missing_telegram_user_id")
+        self.assertIsNone(get_telegram_identity("None"))
+
     @patch("services.telegram_service.requests.post")
     def test_telegram_inactive_identity_is_denied(self, mock_post):
         user = self.create_user_once("telegram-inactive-user", "inactive-pass")
@@ -1854,6 +1999,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 "pocalerts",
                 "disconnected",
                 "ruleready",
+                "link",
                 "help",
             },
         )

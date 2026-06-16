@@ -21,16 +21,40 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret
 TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
 TELEGRAM_DEFAULT_DATA_SOURCE=simulator
+TELEGRAM_LINK_CODE_TTL_MINUTES=15
 ```
 
 `TELEGRAM_ALLOWED_USER_IDS` is an optional outer allowlist. Set it before
 company testing so only approved Telegram accounts can reach the bot.
 
-Every Telegram account must also be mapped to an IoT Ops Agent user in the
+Every Telegram account must also be linked to an IoT Ops Agent user in the
 application database. The Telegram runtime fails closed when the Telegram user
-ID is missing, unmapped, inactive, or outside the optional allowlist.
+ID is missing, unlinked, inactive, or outside the optional allowlist.
 
-Create or update a mapping with:
+## Account Linking
+
+Recommended user flow:
+
+```text
+1. User logs in to the IoT Ops Agent web platform.
+2. User opens Profile -> Telegram.
+3. User clicks Generate Link Code.
+4. The web UI shows a one-time command such as /link ABCD2345.
+5. User sends that command to the Telegram bot.
+6. Telegram stores telegram_user_id -> app user_id.
+```
+
+Security properties:
+
+* Link codes are generated only for authenticated web users.
+* Link codes are stored as SHA-256 hashes, not plaintext.
+* Link codes expire after `TELEGRAM_LINK_CODE_TTL_MINUTES`, default 15.
+* Link codes are single-use.
+* New self-service Telegram links get `role=viewer` and
+  `allowed_data_sources=simulator`.
+* Company DB access is never self-granted by `/link`.
+
+Admin bootstrap or emergency mapping is still available with:
 
 ```bash
 python -m scripts.upsert_telegram_identity \
@@ -82,6 +106,7 @@ Supported commands:
 /pocalerts
 /disconnected
 /ruleready
+/link CODE
 /help
 ```
 

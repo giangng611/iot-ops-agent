@@ -594,6 +594,91 @@ def get_telegram_identity(telegram_user_id):
     )
 
 
+def create_telegram_link_code(code_hash, user_id, expires_at):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into public.telegram_link_codes (
+                        code_hash,
+                        user_id,
+                        expires_at,
+                        created_at
+                    )
+                    values (%s, %s, %s, %s)
+                    """,
+                    (code_hash, user_id, expires_at, now_iso()),
+                )
+            conn.commit()
+
+    return _with_fallback(
+        "create_telegram_link_code",
+        postgres_operation,
+        lambda: sqlite_store.create_telegram_link_code(
+            code_hash,
+            user_id,
+            expires_at,
+        ),
+    )
+
+
+def get_telegram_link_code(code_hash):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select code_hash, user_id, expires_at, used_at, created_at
+                    from public.telegram_link_codes
+                    where code_hash = %s
+                    """,
+                    (code_hash,),
+                )
+                row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "code_hash": row["code_hash"],
+            "user_id": row["user_id"],
+            "expires_at": row["expires_at"],
+            "used_at": row["used_at"],
+            "created_at": row["created_at"],
+        }
+
+    return _with_fallback(
+        "get_telegram_link_code",
+        postgres_operation,
+        lambda: sqlite_store.get_telegram_link_code(code_hash),
+    )
+
+
+def mark_telegram_link_code_used(code_hash):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update public.telegram_link_codes
+                    set used_at = %s
+                    where code_hash = %s
+                    and used_at is null
+                    """,
+                    (now_iso(), code_hash),
+                )
+                updated = cursor.rowcount
+            conn.commit()
+            return updated > 0
+
+    return _with_fallback(
+        "mark_telegram_link_code_used",
+        postgres_operation,
+        lambda: sqlite_store.mark_telegram_link_code_used(code_hash),
+    )
+
+
 def delete_chat(chat_id, user_id):
     def postgres_operation():
         with get_postgres_connection() as conn:

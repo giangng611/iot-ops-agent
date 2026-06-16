@@ -4543,6 +4543,37 @@ async function openProfileDrawer(type) {
         `;
     }
 
+    if (type === "telegram") {
+        title.textContent = "Telegram";
+        subtitle.textContent = "Link your Telegram account with a one-time code.";
+
+        content.innerHTML = `
+            <div class="drawer-info-list">
+                <div>
+                    <strong>Secure account linking</strong>
+                    <p>
+                        Generate a short-lived code, then send it to the Telegram bot.
+                        New links start with simulator access only.
+                    </p>
+
+                    <button class="secondary-btn" onclick="generateTelegramLinkCode()">
+                        Generate Link Code
+                    </button>
+
+                    <div id="telegramLinkResult" class="profile-form"></div>
+                </div>
+
+                <div>
+                    <strong>Company DB access</strong>
+                    <p>
+                        Company DB access is not self-granted through Telegram.
+                        An approved operator/admin must grant company scope after review.
+                    </p>
+                </div>
+            </div>
+        `;
+    }
+
     if (type === "usage") {
         title.textContent = "Usage Statistics";
         subtitle.textContent = "Account-level activity across your workspace.";
@@ -4559,6 +4590,55 @@ async function openProfileDrawer(type) {
         loadUsageStats(content);
     }
 
+}
+
+async function generateTelegramLinkCode() {
+    const result = document.getElementById("telegramLinkResult");
+
+    if (!result) {
+        return;
+    }
+
+    result.innerHTML = "<p>Generating link code...</p>";
+
+    try {
+        const response = await fetch("/api/profile/telegram-link-code", {
+            method: "POST",
+        });
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+            result.innerHTML = `<p>${escapeHtml(data.error || "Unable to create link code.")}</p>`;
+            return;
+        }
+
+        const command = `/link ${data.code}`;
+        result.innerHTML = `
+            <label>Send this command to the Telegram bot</label>
+            <input id="telegramLinkCommand" readonly value="${escapeHtml(command)}">
+            <div class="inline-form-actions">
+                <button class="secondary-btn" onclick="copyTelegramLinkCommand()">
+                    Copy Command
+                </button>
+            </div>
+            <p>
+                Expires in ${Number(data.ttl_minutes || 15)} minutes.
+                The code can be used once.
+            </p>
+        `;
+    } catch (error) {
+        result.innerHTML = "<p>Unable to create link code.</p>";
+    }
+}
+
+async function copyTelegramLinkCommand() {
+    const input = document.getElementById("telegramLinkCommand");
+
+    if (!input) {
+        return;
+    }
+
+    await copyTextToClipboard(input.value);
 }
 
 function closeProfileDrawer() {

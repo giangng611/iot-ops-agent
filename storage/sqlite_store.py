@@ -115,6 +115,23 @@ def init_db():
         ON telegram_identities (user_id)
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_link_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_hash TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS telegram_link_codes_user_id_idx
+        ON telegram_link_codes (user_id)
+    """)
+
     conn.commit()
     conn.close()
 
@@ -558,6 +575,69 @@ def get_telegram_identity(telegram_user_id):
         "allowed_data_sources": deserialize_data_sources(row[4]),
         "is_active": bool(row[5]),
     }
+
+def create_telegram_link_code(code_hash, user_id, expires_at):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO telegram_link_codes (
+            code_hash,
+            user_id,
+            expires_at,
+            created_at
+        )
+        VALUES (?, ?, ?, ?)
+    """, (
+        code_hash,
+        user_id,
+        expires_at,
+        now_iso(),
+    ))
+
+    conn.commit()
+    conn.close()
+
+def get_telegram_link_code(code_hash):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT code_hash, user_id, expires_at, used_at, created_at
+        FROM telegram_link_codes
+        WHERE code_hash = ?
+    """, (code_hash,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "code_hash": row[0],
+        "user_id": row[1],
+        "expires_at": row[2],
+        "used_at": row[3],
+        "created_at": row[4],
+    }
+
+def mark_telegram_link_code_used(code_hash):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE telegram_link_codes
+        SET used_at = ?
+        WHERE code_hash = ?
+        AND used_at IS NULL
+    """, (now_iso(), code_hash))
+
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+
+    return updated > 0
 
 def delete_chat(chat_id, user_id):
     conn = get_connection()

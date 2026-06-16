@@ -154,6 +154,20 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
         return sqlite_operation()
 
 
+def _without_sqlite_fallback(operation_name, postgres_operation, sqlite_operation):
+    if not using_postgres():
+        return sqlite_operation()
+
+    try:
+        return postgres_operation()
+    except Exception as exc:
+        print(
+            f"Supabase/Postgres app-data {operation_name} failed; "
+            f"SQLite fallback is disabled for security-sensitive identity data: {exc}"
+        )
+        raise
+
+
 def get_storage_status():
     status = {
         "app_data": {
@@ -539,7 +553,7 @@ def upsert_telegram_identity(
                 )
             conn.commit()
 
-    return _with_fallback(
+    return _without_sqlite_fallback(
         "upsert_telegram_identity",
         postgres_operation,
         lambda: sqlite_store.upsert_telegram_identity(
@@ -587,7 +601,7 @@ def get_telegram_identity(telegram_user_id):
             "is_active": bool(row["is_active"]),
         }
 
-    return _with_fallback(
+    return _without_sqlite_fallback(
         "get_telegram_identity",
         postgres_operation,
         lambda: sqlite_store.get_telegram_identity(telegram_user_id),
@@ -612,7 +626,7 @@ def create_telegram_link_code(code_hash, user_id, expires_at):
                 )
             conn.commit()
 
-    return _with_fallback(
+    return _without_sqlite_fallback(
         "create_telegram_link_code",
         postgres_operation,
         lambda: sqlite_store.create_telegram_link_code(
@@ -648,7 +662,7 @@ def get_telegram_link_code(code_hash):
             "created_at": row["created_at"],
         }
 
-    return _with_fallback(
+    return _without_sqlite_fallback(
         "get_telegram_link_code",
         postgres_operation,
         lambda: sqlite_store.get_telegram_link_code(code_hash),
@@ -672,7 +686,7 @@ def mark_telegram_link_code_used(code_hash):
             conn.commit()
             return updated > 0
 
-    return _with_fallback(
+    return _without_sqlite_fallback(
         "mark_telegram_link_code_used",
         postgres_operation,
         lambda: sqlite_store.mark_telegram_link_code_used(code_hash),

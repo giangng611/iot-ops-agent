@@ -1600,6 +1600,29 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_telegram_identity_writes_do_not_fallback_to_sqlite(self):
+        os.environ["APP_DB_BACKEND"] = "supabase"
+        os.environ["SUPABASE_DB_URL"] = "postgresql://example"
+
+        try:
+            with patch(
+                "storage.relational_store.get_postgres_connection",
+                side_effect=RuntimeError("missing telegram migration"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    relational_store.create_telegram_link_code(
+                        "hash",
+                        1,
+                        "2099-01-01T00:00:00+00:00",
+                    )
+
+            self.assertIsNone(
+                relational_store.sqlite_store.get_telegram_link_code("hash")
+            )
+        finally:
+            os.environ["APP_DB_BACKEND"] = "sqlite"
+            os.environ.pop("SUPABASE_DB_URL", None)
+
     def test_logged_in_user_can_create_telegram_link_code(self):
         user = self.create_user_once("telegram-link-owner", "link-pass")
         self.login_as(user)

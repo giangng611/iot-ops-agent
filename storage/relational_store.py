@@ -493,6 +493,9 @@ def verify_user(username, password):
 
 
 def serialize_data_sources(data_sources):
+    if isinstance(data_sources, str):
+        data_sources = deserialize_data_sources(data_sources)
+
     return ",".join([
         str(item).strip()
         for item in (data_sources or ["simulator"])

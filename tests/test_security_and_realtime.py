@@ -2267,6 +2267,17 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             "company",
         )
 
+    def test_data_source_policy_parses_comma_separated_strings(self):
+        allowed_sources, default_source = (
+            relational_store.normalize_user_data_source_policy(
+                "simulator,company",
+                "company",
+            )
+        )
+
+        self.assertEqual(allowed_sources, ["simulator", "company"])
+        self.assertEqual(default_source, "company")
+
     def test_storage_status_api_reports_backend_shape(self):
         user = self.create_user_once("storage-api-user", "storage-pass")
         self.login_as(user)

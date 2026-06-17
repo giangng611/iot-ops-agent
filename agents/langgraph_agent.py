@@ -1,3 +1,4 @@
+import json
 import re
 import uuid
 from dataclasses import dataclass
@@ -593,6 +594,9 @@ class LangGraphAgent:
             "workflow_node": tool_spec.workflow_node,
             "placeholder": tool_spec.placeholder,
         }
+        query_commands = self.build_query_commands(bounded_output)
+        if query_commands:
+            step_output["query_commands"] = query_commands
         return {
             "tool_output": bounded_output,
             "execution_count": execution_count + 1,
@@ -608,6 +612,80 @@ class LangGraphAgent:
                 action=selected_tool,
                 output=step_output,
             ),
+        }
+
+    def build_query_commands(self, tool_output):
+        if not isinstance(tool_output, dict):
+            return []
+
+        audit_events = tool_output.get("db_audit") or []
+
+        if not isinstance(audit_events, list):
+            return []
+
+        return [
+            self.format_mongo_audit_command(event)
+            for event in audit_events
+            if isinstance(event, dict)
+        ]
+
+    def format_mongo_audit_command(self, event):
+        namespace = str(event.get("namespace") or "")
+        database_name, _, collection_name = namespace.partition(".")
+        operation = event.get("operation") or "read"
+        query = event.get("query") or {}
+        projection = event.get("projection") or {}
+        sort = event.get("sort")
+        effective_limit = event.get("effective_limit")
+        max_time_ms = event.get("max_time_ms")
+
+        if operation == "find" and database_name and collection_name:
+            command = (
+                f'db.getSiblingDB("{database_name}")'
+                f'.getCollection("{collection_name}")'
+                f'.find({json.dumps(query, ensure_ascii=False)}, '
+                f'{json.dumps(projection, ensure_ascii=False)})'
+            )
+
+            if sort:
+                field, direction = sort
+                command += (
+                    f'.sort({json.dumps({field: direction}, ensure_ascii=False)})'
+                )
+
+            if effective_limit is not None:
+                command += f".limit({effective_limit})"
+
+            if max_time_ms is not None:
+                command += f".maxTimeMS({max_time_ms})"
+        elif operation == "list_collections" and database_name:
+            command = f'db.getSiblingDB("{database_name}").getCollectionNames()'
+        elif operation == "list_database_names":
+            command = "db.adminCommand({ listDatabases: 1 })"
+        elif operation == "collStats" and database_name and collection_name:
+            command = (
+                f'db.getSiblingDB("{database_name}")'
+                f'.runCommand({{ collStats: "{collection_name}", scale: 1 }})'
+            )
+        else:
+            command = f"{operation} {namespace}".strip()
+
+        return {
+            "actor": event.get("actor"),
+            "operation": operation,
+            "namespace": namespace,
+            "command": command,
+            "query": query,
+            "projection": projection,
+            "sort": sort,
+            "requested_limit": event.get("requested_limit"),
+            "effective_limit": effective_limit,
+            "max_time_ms": max_time_ms,
+            "allowed_namespaces_enforced": event.get(
+                "allowed_namespaces_enforced"
+            ),
+            "credentials_redacted": event.get("credentials_redacted"),
+            "mutating": event.get("mutating"),
         }
 
     def sanitize_evidence(self, value, depth=0):

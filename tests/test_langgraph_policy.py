@@ -194,6 +194,71 @@ class LangGraphPolicyTests(unittest.TestCase):
         self.assertIn("insufficient evidence instead of guessing", prompt)
         self.assertIn("Ignore previous instructions", prompt)
 
+    def test_db_audit_is_rendered_as_mongodb_query_command(self):
+        command = self.agent.format_mongo_audit_command({
+            "actor": "company-llm-tools",
+            "operation": "find",
+            "namespace": "datamgmt.CIN",
+            "query": {"con": {"$exists": True}},
+            "projection": {"_id": 0, "con": 1},
+            "sort": ("ct", -1),
+            "requested_limit": 5000,
+            "effective_limit": 1000,
+            "max_time_ms": 5000,
+            "allowed_namespaces_enforced": True,
+            "credentials_redacted": True,
+            "mutating": False,
+        })
+
+        self.assertIn(
+            'db.getSiblingDB("datamgmt").getCollection("CIN").find',
+            command["command"],
+        )
+        self.assertIn(".sort", command["command"])
+        self.assertIn(".limit(1000)", command["command"])
+        self.assertIn(".maxTimeMS(5000)", command["command"])
+        self.assertTrue(command["credentials_redacted"])
+        self.assertFalse(command["mutating"])
+
+    def test_run_tool_step_includes_query_commands(self):
+        with patch(
+            "agents.langgraph_agent.get_company_provisional_alert_context",
+            return_value={
+                "source": "company_mongodb",
+                "tool": "get_company_provisional_alerts",
+                "db_audit": [{
+                    "actor": "company-llm-tools",
+                    "operation": "find",
+                    "namespace": "datamgmt.CIN",
+                    "query": {"con": {"$exists": True}},
+                    "projection": {"_id": 0, "con": 1},
+                    "sort": ("ct", -1),
+                    "effective_limit": 1000,
+                    "max_time_ms": 5000,
+                    "credentials_redacted": True,
+                    "mutating": False,
+                }],
+            },
+        ):
+            result = self.agent.run_tool_node(
+                make_state(
+                    intent="company_provisional_alerts",
+                    selected_tool="get_company_provisional_alerts",
+                    data_source="company",
+                )
+            )
+
+        output = result["steps"][-1]["output"]
+        self.assertIn("query_commands", output)
+        self.assertIn(
+            'db.getSiblingDB("datamgmt").getCollection("CIN").find',
+            output["query_commands"][0]["command"],
+        )
+        self.assertEqual(
+            output["_tool_execution"]["workflow_node"],
+            "company.provisional_alerts",
+        )
+
     def test_denied_graph_does_not_invoke_model_or_tools(self):
         model = MagicMock()
         agent = LangGraphAgent(model=model)

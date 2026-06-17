@@ -709,6 +709,30 @@ def get_telegram_identity(telegram_user_id):
     )
 
 
+def deactivate_telegram_identity(telegram_user_id):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update public.telegram_identities
+                    set is_active = false,
+                        updated_at = %s
+                    where telegram_user_id = %s
+                    """,
+                    (now_iso(), str(telegram_user_id)),
+                )
+                updated = cursor.rowcount
+            conn.commit()
+            return updated > 0
+
+    return _without_sqlite_fallback(
+        "deactivate_telegram_identity",
+        postgres_operation,
+        lambda: sqlite_store.deactivate_telegram_identity(telegram_user_id),
+    )
+
+
 def create_telegram_link_code(code_hash, user_id, expires_at):
     def postgres_operation():
         with get_postgres_connection() as conn:

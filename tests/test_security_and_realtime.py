@@ -45,6 +45,7 @@ from storage.relational_store import (  # noqa: E402
     create_telegram_link_code,
     create_chat,
     create_user,
+    deactivate_telegram_identity,
     get_telegram_identity,
     get_user_data_source_policy,
     get_messages,
@@ -1634,6 +1635,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                         allowed_data_sources=["simulator", "company"],
                         default_data_source="company",
                     )
+                with self.assertRaises(RuntimeError):
+                    relational_store.deactivate_telegram_identity(456)
 
             self.assertIsNone(
                 relational_store.sqlite_store.get_telegram_link_code("hash")
@@ -1847,6 +1850,88 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 mock_run_stream.assert_not_called()
             finally:
                 os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_unlink_deactivates_identity(self, mock_post):
+        user = self.create_user_once("telegram-unlink-user", "unlink-pass")
+        self.map_telegram_user(
+            456,
+            user,
+            allowed_data_sources=["simulator", "company"],
+        )
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        try:
+            payload = telegram_service.process_telegram_update(
+                {
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 456, "username": "ops_user"},
+                        "text": "/unlink",
+                    },
+                },
+                app_module.langgraph_agent,
+            )
+        finally:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+
+        self.assertEqual(payload["status"], "unlinked")
+        self.assertFalse(get_telegram_identity(456)["is_active"])
+        sent_payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("unlinked", sent_payload["text"])
+
+    @patch("services.telegram_service.requests.post")
+    def test_unlinked_telegram_user_must_link_again(self, mock_post):
+        user = self.create_user_once("telegram-relink-after-unlink", "link-pass")
+        self.map_telegram_user(
+            456,
+            user,
+            allowed_data_sources=["simulator", "company"],
+        )
+        deactivate_telegram_identity(456)
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+        self.login_as(user)
+        code = self.client.post(
+            "/api/profile/telegram-link-code"
+        ).get_json()["code"]
+
+        try:
+            denied_payload = telegram_service.process_telegram_update(
+                {
+                    "update_id": 10001,
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 456, "username": "ops_user"},
+                        "text": "/overview",
+                    },
+                },
+                app_module.langgraph_agent,
+            )
+            link_payload = telegram_service.process_telegram_update(
+                {
+                    "update_id": 10002,
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 456, "username": "ops_user"},
+                        "text": f"/link {code}",
+                    },
+                },
+                app_module.langgraph_agent,
+            )
+        finally:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+
+        self.assertEqual(denied_payload["status"], "forbidden")
+        self.assertEqual(denied_payload["reason"], "telegram_identity_inactive")
+        self.assertEqual(link_payload["status"], "linked")
+        identity = get_telegram_identity(456)
+        self.assertTrue(identity["is_active"])
+        self.assertEqual(
+            identity["allowed_data_sources"],
+            ["company", "simulator"],
+        )
 
     @patch("services.telegram_service.requests.post")
     def test_telegram_allowlist_still_blocks_mapped_user(self, mock_post):
@@ -2084,6 +2169,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 "disconnected",
                 "ruleready",
                 "link",
+                "unlink",
                 "help",
             },
         )

@@ -665,6 +665,22 @@ def get_telegram_identity(telegram_user_id):
         "is_active": bool(row[5]),
     }
 
+def deactivate_telegram_identity(telegram_user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE telegram_identities
+        SET is_active = 0,
+            updated_at = ?
+        WHERE telegram_user_id = ?
+    """, (now_iso(), str(telegram_user_id)))
+    updated = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+    return updated > 0
+
 def create_telegram_link_code(code_hash, user_id, expires_at):
     conn = get_connection()
     cursor = conn.cursor()

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from storage.relational_store import (
     create_telegram_link_code,
+    get_telegram_identity,
     get_telegram_link_code,
     mark_telegram_link_code_used,
     upsert_telegram_identity,
@@ -97,12 +98,26 @@ def consume_link_code(
     if not mark_telegram_link_code_used(link_code["code_hash"]):
         return False, "code_already_used"
 
+    existing_identity = get_telegram_identity(telegram_user_id)
+    role = "viewer"
+    allowed_data_sources = ["simulator"]
+
+    if existing_identity:
+        if int(existing_identity["user_id"]) != int(link_code["user_id"]):
+            return False, "telegram_already_linked"
+
+        role = existing_identity.get("role") or role
+        allowed_data_sources = sorted(set(
+            (existing_identity.get("allowed_data_sources") or [])
+            + allowed_data_sources
+        ))
+
     upsert_telegram_identity(
         telegram_user_id,
         link_code["user_id"],
         telegram_username=telegram_username,
-        role="viewer",
-        allowed_data_sources=["simulator"],
+        role=role,
+        allowed_data_sources=allowed_data_sources,
         is_active=True,
     )
 

@@ -1688,6 +1688,42 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertIn("linked", sent_payload["text"])
 
     @patch("services.telegram_service.requests.post")
+    def test_telegram_relink_preserves_existing_company_scope(self, mock_post):
+        user = self.create_user_once("telegram-relink-user", "link-pass")
+        self.grant_company_data_source(user)
+        self.map_telegram_user(
+            8806645598,
+            user,
+            role="operator",
+            allowed_data_sources=["simulator", "company"],
+        )
+        self.login_as(user)
+        code = self.client.post(
+            "/api/profile/telegram-link-code"
+        ).get_json()["code"]
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        payload = telegram_service.process_telegram_update(
+            {
+                "message": {
+                    "chat": {"id": 123},
+                    "from": {"id": 8806645598, "username": "tg_user"},
+                    "text": f"/link {code}",
+                },
+            },
+            app_module.langgraph_agent,
+        )
+
+        self.assertEqual(payload["status"], "linked")
+        identity = get_telegram_identity(8806645598)
+        self.assertEqual(identity["role"], "operator")
+        self.assertEqual(
+            identity["allowed_data_sources"],
+            ["company", "simulator"],
+        )
+
+    @patch("services.telegram_service.requests.post")
     def test_telegram_link_code_cannot_be_reused(self, mock_post):
         first_user = self.create_user_once("telegram-link-first", "link-pass")
         second_user = self.create_user_once("telegram-link-second", "link-pass")

@@ -268,6 +268,10 @@ def handle_telegram_link_command(message):
         "invalid_code": "Invalid Telegram link code.",
         "code_expired": "This Telegram link code has expired.",
         "code_already_used": "This Telegram link code was already used.",
+        "telegram_already_linked": (
+            "This Telegram account is already linked to another "
+            "IoT Ops Agent account."
+        ),
     }
     send_telegram_message(
         message["chat_id"],

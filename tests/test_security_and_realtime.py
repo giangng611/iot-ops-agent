@@ -908,6 +908,43 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             "authoritative data source",
             payload["system_prompt"],
         )
+        policy = payload["workflow_policy"]
+        self.assertEqual(policy["policy_source"], "company")
+        self.assertTrue(policy["deny_by_default"])
+        self.assertIn(
+            "generic_database_query",
+            policy["forbidden_capabilities"],
+        )
+        self.assertTrue(all(
+            workflow["data_source"] == "company"
+            for workflow in policy["allowed_workflows"]
+        ))
+        self.assertIn(
+            "Workflow policy JSON",
+            payload["n8n_llm_prompt"],
+        )
+
+    def test_n8n_payload_fallback_exposes_only_simulator_workflows(self):
+        payload = diagnose_service.build_n8n_payload(
+            "show fleet status",
+            {
+                "selected_source": "company",
+                "active_source": "simulator_fallback",
+                "operational_context": None,
+                "fallback_reason": "company DB disconnected",
+            },
+        )
+
+        policy = payload["workflow_policy"]
+        self.assertEqual(policy["policy_source"], "simulator")
+        self.assertTrue(all(
+            workflow["data_source"] == "simulator"
+            for workflow in policy["allowed_workflows"]
+        ))
+        self.assertFalse(any(
+            workflow["tool"].startswith("get_company")
+            for workflow in policy["allowed_workflows"]
+        ))
 
     def test_all_sync_agent_modes_receive_resolved_company_source(self):
         user = self.create_user_once("all-company-agents", "company-pass")

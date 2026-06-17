@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from agents.langgraph_agent import (
     MAX_EVIDENCE_STRING_CHARS,
     LangGraphAgent,
+    TOOL_REGISTRY,
 )
 
 
@@ -11,6 +12,9 @@ def make_state(**overrides):
     state = {
         "user_input": "show fleet",
         "data_source": "simulator",
+        "intent": "",
+        "intent_confidence": 0.0,
+        "intent_reason": "",
         "selected_tool": "",
         "tool_output": None,
         "final_answer": "",
@@ -53,6 +57,35 @@ class LangGraphPolicyTests(unittest.TestCase):
         selection = self.agent.select_tool_node(state)
 
         self.assertEqual(selection["selected_tool"], "get_fleet_status")
+        self.assertEqual(selection["intent"], "simulator_fleet_status")
+
+    def test_tool_registry_defines_workflow_contracts(self):
+        company_tools = {
+            name: spec for name, spec in TOOL_REGISTRY.items()
+            if spec.data_source == "company"
+        }
+
+        self.assertIn("get_company_fleet_summary", company_tools)
+        self.assertTrue(all(
+            spec.execution_target == "local_context"
+            for spec in TOOL_REGISTRY.values()
+        ))
+        self.assertTrue(all(
+            spec.workflow_node for spec in TOOL_REGISTRY.values()
+        ))
+
+    def test_classifier_returns_intent_contract(self):
+        decision = self.agent.classify_intent(
+            "show disconnected company devices",
+            "company",
+        )
+
+        self.assertEqual(decision.intent, "company_disconnected_devices")
+        self.assertEqual(
+            decision.tool_name,
+            "get_company_disconnected_devices",
+        )
+        self.assertGreaterEqual(decision.confidence, 0.8)
 
     def test_company_tool_is_denied_for_simulator_source(self):
         result = self.agent.authorize_tool_node(
@@ -69,6 +102,18 @@ class LangGraphPolicyTests(unittest.TestCase):
 
         self.assertFalse(result["policy_allowed"])
         self.assertEqual(result["policy_reason"], "unknown_tool")
+
+    def test_intent_tool_mismatch_is_denied(self):
+        result = self.agent.authorize_tool_node(
+            make_state(
+                intent="company_inventory",
+                selected_tool="get_company_fleet_summary",
+                data_source="company",
+            ),
+        )
+
+        self.assertFalse(result["policy_allowed"])
+        self.assertEqual(result["policy_reason"], "intent_tool_mismatch")
 
     def test_tool_execution_budget_is_enforced(self):
         result = self.agent.authorize_tool_node(

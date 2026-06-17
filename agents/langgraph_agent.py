@@ -1,5 +1,6 @@
 import re
 import uuid
+from dataclasses import dataclass
 from typing import Any, Dict, List, TypedDict
 
 from langchain_openai import ChatOpenAI
@@ -23,34 +24,123 @@ from storage.telemetry_store import (
 )
 
 
-SIMULATOR_TOOLS = frozenset({
-    "get_device_history",
-    "get_device_status",
-    "get_fleet_status",
-})
-COMPANY_TOOLS = frozenset({
-    "get_company_device",
-    "get_company_disconnected_devices",
-    "get_company_fleet_summary",
-    "get_company_inventory",
-    "get_company_provisional_alerts",
-    "get_company_rule_readiness",
-    "get_company_telemetry_coverage",
-    "scan_company_threshold",
-})
-TOOL_DATA_SOURCES = {
-    **{tool: "simulator" for tool in SIMULATOR_TOOLS},
-    **{tool: "company" for tool in COMPANY_TOOLS},
-}
 MAX_USER_INPUT_CHARS = 2000
 MAX_EVIDENCE_ITEMS = 100
 MAX_EVIDENCE_DEPTH = 6
 MAX_EVIDENCE_STRING_CHARS = 2000
 
 
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    data_source: str
+    intent: str
+    execution_target: str = "local_context"
+    workflow_node: str = ""
+    requires_device_id: bool = False
+    requires_company_device_id: bool = False
+    placeholder: bool = True
+
+
+@dataclass(frozen=True)
+class IntentDecision:
+    intent: str
+    tool_name: str
+    confidence: float
+    reason: str
+
+
+TOOL_REGISTRY = {
+    "get_device_history": ToolSpec(
+        name="get_device_history",
+        data_source="simulator",
+        intent="simulator_device_history",
+        workflow_node="simulator.device_history",
+        requires_device_id=True,
+    ),
+    "get_device_status": ToolSpec(
+        name="get_device_status",
+        data_source="simulator",
+        intent="simulator_device_status",
+        workflow_node="simulator.device_status",
+        requires_device_id=True,
+    ),
+    "get_fleet_status": ToolSpec(
+        name="get_fleet_status",
+        data_source="simulator",
+        intent="simulator_fleet_status",
+        workflow_node="simulator.fleet_status",
+    ),
+    "get_company_device": ToolSpec(
+        name="get_company_device",
+        data_source="company",
+        intent="company_device_inspection",
+        workflow_node="company.device_inspection",
+        requires_company_device_id=True,
+    ),
+    "get_company_disconnected_devices": ToolSpec(
+        name="get_company_disconnected_devices",
+        data_source="company",
+        intent="company_disconnected_devices",
+        workflow_node="company.disconnected_devices",
+    ),
+    "get_company_fleet_summary": ToolSpec(
+        name="get_company_fleet_summary",
+        data_source="company",
+        intent="company_fleet_summary",
+        workflow_node="company.fleet_summary",
+    ),
+    "get_company_inventory": ToolSpec(
+        name="get_company_inventory",
+        data_source="company",
+        intent="company_inventory",
+        workflow_node="company.inventory",
+    ),
+    "get_company_provisional_alerts": ToolSpec(
+        name="get_company_provisional_alerts",
+        data_source="company",
+        intent="company_provisional_alerts",
+        workflow_node="company.provisional_alerts",
+    ),
+    "get_company_rule_readiness": ToolSpec(
+        name="get_company_rule_readiness",
+        data_source="company",
+        intent="company_rule_readiness",
+        workflow_node="company.rule_readiness",
+    ),
+    "get_company_telemetry_coverage": ToolSpec(
+        name="get_company_telemetry_coverage",
+        data_source="company",
+        intent="company_telemetry_coverage",
+        workflow_node="company.telemetry_coverage",
+    ),
+    "scan_company_threshold": ToolSpec(
+        name="scan_company_threshold",
+        data_source="company",
+        intent="company_threshold_scan",
+        workflow_node="company.threshold_scan",
+    ),
+}
+SIMULATOR_TOOLS = frozenset(
+    name for name, spec in TOOL_REGISTRY.items()
+    if spec.data_source == "simulator"
+)
+COMPANY_TOOLS = frozenset(
+    name for name, spec in TOOL_REGISTRY.items()
+    if spec.data_source == "company"
+)
+TOOL_DATA_SOURCES = {
+    name: spec.data_source
+    for name, spec in TOOL_REGISTRY.items()
+}
+
+
 class LangGraphState(TypedDict):
     user_input: str
     data_source: str
+    intent: str
+    intent_confidence: float
+    intent_reason: str
     selected_tool: str
     tool_output: Any
     final_answer: str
@@ -105,6 +195,9 @@ class LangGraphAgent:
         return {
             "user_input": user_input,
             "data_source": data_source,
+            "intent": "",
+            "intent_confidence": 0.0,
+            "intent_reason": "",
             "selected_tool": "",
             "tool_output": None,
             "final_answer": "",
@@ -185,13 +278,12 @@ class LangGraphAgent:
     def route_after_policy(self, state):
         return "allowed" if state.get("policy_allowed") else "denied"
 
-    def select_tool_node(self, state):
-        user_input = state["user_input"].lower()
-        data_source = state.get("data_source", "simulator")
+    def classify_intent(self, user_input, data_source):
+        normalized_input = user_input.lower()
 
         if (
             data_source == "company"
-            and any(keyword in user_input for keyword in (
+            and any(keyword in normalized_input for keyword in (
                 "greater than",
                 "above",
                 ">",
@@ -200,9 +292,14 @@ class LangGraphAgent:
                 "vượt",
             ))
         ):
-            selected_tool = "scan_company_threshold"
+            return IntentDecision(
+                intent="company_threshold_scan",
+                tool_name="scan_company_threshold",
+                confidence=0.9,
+                reason="company_threshold_keyword",
+            )
         elif data_source == "company" and any(
-            keyword in user_input
+            keyword in normalized_input
             for keyword in (
                 "provisional alert",
                 "poc alert",
@@ -213,9 +310,14 @@ class LangGraphAgent:
                 "risk",
             )
         ):
-            selected_tool = "get_company_provisional_alerts"
+            return IntentDecision(
+                intent="company_provisional_alerts",
+                tool_name="get_company_provisional_alerts",
+                confidence=0.9,
+                reason="company_alert_keyword",
+            )
         elif data_source == "company" and any(
-            keyword in user_input
+            keyword in normalized_input
             for keyword in (
                 "coverage",
                 "telemetry coverage",
@@ -225,9 +327,14 @@ class LangGraphAgent:
                 "metric",
             )
         ):
-            selected_tool = "get_company_telemetry_coverage"
+            return IntentDecision(
+                intent="company_telemetry_coverage",
+                tool_name="get_company_telemetry_coverage",
+                confidence=0.85,
+                reason="company_coverage_keyword",
+            )
         elif data_source == "company" and any(
-            keyword in user_input
+            keyword in normalized_input
             for keyword in (
                 "rule readiness",
                 "rule catalog",
@@ -237,9 +344,14 @@ class LangGraphAgent:
                 "luat",
             )
         ):
-            selected_tool = "get_company_rule_readiness"
+            return IntentDecision(
+                intent="company_rule_readiness",
+                tool_name="get_company_rule_readiness",
+                confidence=0.85,
+                reason="company_rule_keyword",
+            )
         elif data_source == "company" and any(
-            keyword in user_input
+            keyword in normalized_input
             for keyword in (
                 "disconnected",
                 "offline",
@@ -247,20 +359,30 @@ class LangGraphAgent:
                 "mat ket noi",
             )
         ):
-            selected_tool = "get_company_disconnected_devices"
+            return IntentDecision(
+                intent="company_disconnected_devices",
+                tool_name="get_company_disconnected_devices",
+                confidence=0.9,
+                reason="company_disconnected_keyword",
+            )
         elif (
             data_source == "company"
-            and self.extract_company_device_identifier(user_input)
-            and any(keyword in user_input for keyword in (
+            and self.extract_company_device_identifier(normalized_input)
+            and any(keyword in normalized_input for keyword in (
                 "device",
                 "diagnose",
                 "thiết bị",
                 "thiet bi",
             ))
         ):
-            selected_tool = "get_company_device"
+            return IntentDecision(
+                intent="company_device_inspection",
+                tool_name="get_company_device",
+                confidence=0.8,
+                reason="company_device_identifier",
+            )
         elif data_source == "company" and any(
-            keyword in user_input
+            keyword in normalized_input
             for keyword in (
                 "inventory",
                 "node",
@@ -270,17 +392,53 @@ class LangGraphAgent:
                 "danh sach thiet bi",
             )
         ):
-            selected_tool = "get_company_inventory"
+            return IntentDecision(
+                intent="company_inventory",
+                tool_name="get_company_inventory",
+                confidence=0.85,
+                reason="company_inventory_keyword",
+            )
         elif data_source == "company":
-            selected_tool = "get_company_fleet_summary"
-        elif "history" in user_input or "trend" in user_input:
-            selected_tool = "get_device_history"
-        elif "diagnose" in user_input and self.extract_device_id(user_input):
-            selected_tool = "get_device_status"
+            return IntentDecision(
+                intent="company_fleet_summary",
+                tool_name="get_company_fleet_summary",
+                confidence=0.6,
+                reason="company_default_fleet_summary",
+            )
+        elif "history" in normalized_input or "trend" in normalized_input:
+            return IntentDecision(
+                intent="simulator_device_history",
+                tool_name="get_device_history",
+                confidence=0.75,
+                reason="simulator_history_keyword",
+            )
+        elif "diagnose" in normalized_input and self.extract_device_id(
+            normalized_input
+        ):
+            return IntentDecision(
+                intent="simulator_device_status",
+                tool_name="get_device_status",
+                confidence=0.8,
+                reason="simulator_diagnose_device",
+            )
         else:
-            selected_tool = "get_fleet_status"
+            return IntentDecision(
+                intent="simulator_fleet_status",
+                tool_name="get_fleet_status",
+                confidence=0.55,
+                reason="simulator_default_fleet_status",
+            )
+
+    def select_tool_node(self, state):
+        data_source = state.get("data_source", "simulator")
+        decision = self.classify_intent(state["user_input"], data_source)
+        selected_tool = decision.tool_name
+        tool_spec = TOOL_REGISTRY.get(selected_tool)
 
         return {
+            "intent": decision.intent,
+            "intent_confidence": decision.confidence,
+            "intent_reason": decision.reason,
             "selected_tool": selected_tool,
             "steps": self.append_step(
                 state,
@@ -293,40 +451,49 @@ class LangGraphAgent:
                 ),
                 action=selected_tool,
                 output={
+                    "intent": decision.intent,
+                    "confidence": decision.confidence,
+                    "reason": decision.reason,
                     "selected_tool": selected_tool,
                     "data_source": data_source,
+                    "execution_target": (
+                        tool_spec.execution_target if tool_spec else None
+                    ),
+                    "workflow_node": (
+                        tool_spec.workflow_node if tool_spec else None
+                    ),
                 },
             ),
         }
 
     def authorize_tool_node(self, state):
         selected_tool = state.get("selected_tool")
+        tool_spec = TOOL_REGISTRY.get(selected_tool)
         data_source = state.get("data_source")
         execution_count = int(state.get("execution_count", 0))
         max_tool_executions = int(state.get("max_tool_executions", 1))
         allowed = True
         reason = "tool_authorized"
 
-        if TOOL_DATA_SOURCES.get(selected_tool) is None:
+        if tool_spec is None:
             allowed = False
             reason = "unknown_tool"
-        elif TOOL_DATA_SOURCES[selected_tool] != data_source:
+        elif tool_spec.data_source != data_source:
             allowed = False
             reason = "tool_source_mismatch"
+        elif state.get("intent") and state.get("intent") != tool_spec.intent:
+            allowed = False
+            reason = "intent_tool_mismatch"
         elif execution_count >= max_tool_executions:
             allowed = False
             reason = "tool_execution_budget_exhausted"
-        elif (
-            selected_tool in {"get_device_status", "get_device_history"}
-            and not self.extract_device_id(state.get("user_input", ""))
+        elif tool_spec.requires_device_id and not self.extract_device_id(
+            state.get("user_input", "")
         ):
             allowed = False
             reason = "missing_device_identifier"
-        elif (
-            selected_tool == "get_company_device"
-            and not self.extract_company_device_identifier(
-                state.get("user_input", "")
-            )
+        elif tool_spec.requires_company_device_id and not (
+            self.extract_company_device_identifier(state.get("user_input", ""))
         ):
             allowed = False
             reason = "missing_company_device_identifier"
@@ -347,7 +514,14 @@ class LangGraphAgent:
                 output={
                     "allowed": allowed,
                     "reason": reason,
+                    "intent": state.get("intent"),
                     "selected_tool": selected_tool,
+                    "execution_target": (
+                        tool_spec.execution_target if tool_spec else None
+                    ),
+                    "workflow_node": (
+                        tool_spec.workflow_node if tool_spec else None
+                    ),
                     "execution_count": execution_count,
                     "max_tool_executions": max_tool_executions,
                 },
@@ -356,12 +530,14 @@ class LangGraphAgent:
 
     def run_tool_node(self, state):
         selected_tool = state["selected_tool"]
+        tool_spec = TOOL_REGISTRY.get(selected_tool)
         user_input = state["user_input"]
         execution_count = int(state.get("execution_count", 0))
 
         if (
             not state.get("policy_allowed")
-            or TOOL_DATA_SOURCES.get(selected_tool) != state.get("data_source")
+            or tool_spec is None
+            or tool_spec.data_source != state.get("data_source")
         ):
             raise PermissionError(
                 "Tool execution reached without an approved policy decision."
@@ -420,7 +596,12 @@ class LangGraphAgent:
                     "operational evidence."
                 ),
                 action=selected_tool,
-                output=bounded_output,
+                output={
+                    "execution_target": tool_spec.execution_target,
+                    "workflow_node": tool_spec.workflow_node,
+                    "placeholder": tool_spec.placeholder,
+                    "evidence": bounded_output,
+                },
             ),
         }
 

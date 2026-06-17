@@ -8,6 +8,7 @@ from storage.relational_store import (
     deactivate_telegram_identity,
     get_telegram_identity,
     get_telegram_link_code,
+    get_user_data_source_policy,
     mark_telegram_link_code_used,
     update_user_data_source_policy,
     upsert_telegram_identity,
@@ -102,17 +103,14 @@ def consume_link_code(
 
     existing_identity = get_telegram_identity(telegram_user_id)
     role = "viewer"
-    allowed_data_sources = ["simulator"]
+    user_policy = get_user_data_source_policy(link_code["user_id"])
+    allowed_data_sources = user_policy.get("allowed_data_sources") or ["simulator"]
 
     if existing_identity:
         if int(existing_identity["user_id"]) != int(link_code["user_id"]):
             return False, "telegram_already_linked"
 
         role = existing_identity.get("role") or role
-        allowed_data_sources = sorted(set(
-            (existing_identity.get("allowed_data_sources") or [])
-            + allowed_data_sources
-        ))
 
     upsert_telegram_identity(
         telegram_user_id,

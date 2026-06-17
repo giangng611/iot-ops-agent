@@ -1724,8 +1724,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         identity = get_telegram_identity(8806645598)
         self.assertEqual(identity["role"], "operator")
         self.assertEqual(
-            identity["allowed_data_sources"],
-            ["company", "simulator"],
+            set(identity["allowed_data_sources"]),
+            {"company", "simulator"},
         )
         self.assertEqual(
             get_user_data_source_policy(user["id"])["default_data_source"],
@@ -1884,6 +1884,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
     @patch("services.telegram_service.requests.post")
     def test_unlinked_telegram_user_must_link_again(self, mock_post):
         user = self.create_user_once("telegram-relink-after-unlink", "link-pass")
+        self.grant_company_data_source(user)
         self.map_telegram_user(
             456,
             user,
@@ -1929,9 +1930,54 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         identity = get_telegram_identity(456)
         self.assertTrue(identity["is_active"])
         self.assertEqual(
-            identity["allowed_data_sources"],
-            ["company", "simulator"],
+            set(identity["allowed_data_sources"]),
+            {"company", "simulator"},
         )
+
+    @patch("services.telegram_service.requests.post")
+    def test_relink_uses_current_platform_policy_not_stale_telegram_scope(
+        self,
+        mock_post,
+    ):
+        user = self.create_user_once("telegram-relink-policy-user", "link-pass")
+        self.map_telegram_user(
+            456,
+            user,
+            allowed_data_sources=["simulator", "company"],
+        )
+        deactivate_telegram_identity(456)
+        update_user_data_source_policy(
+            user["id"],
+            allowed_data_sources=["simulator"],
+            default_data_source="simulator",
+        )
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+        self.login_as(user)
+        code = self.client.post(
+            "/api/profile/telegram-link-code"
+        ).get_json()["code"]
+
+        try:
+            payload = telegram_service.process_telegram_update(
+                {
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 456, "username": "ops_user"},
+                        "text": f"/link {code}",
+                    },
+                },
+                app_module.langgraph_agent,
+            )
+        finally:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+
+        self.assertEqual(payload["status"], "linked")
+        identity = get_telegram_identity(456)
+        self.assertTrue(identity["is_active"])
+        self.assertEqual(identity["allowed_data_sources"], ["simulator"])
+        sent_payload = mock_post.call_args.kwargs["json"]
+        self.assertIn("simulator only", sent_payload["text"])
 
     @patch("services.telegram_service.requests.post")
     def test_telegram_allowlist_still_blocks_mapped_user(self, mock_post):

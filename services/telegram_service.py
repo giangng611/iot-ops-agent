@@ -263,11 +263,18 @@ def handle_telegram_link_command(message):
     )
 
     if success:
+        identity = get_telegram_identity(message["telegram_user_id"]) or {}
+        allowed_sources = set(identity.get("allowed_data_sources") or [])
+        access_note = (
+            "Company DB access is enabled for this linked account."
+            if "company" in allowed_sources
+            else "Default access is simulator only."
+        )
         send_telegram_message(
             message["chat_id"],
             (
                 "Telegram is linked to your IoT Ops Agent account. "
-                "Default access is simulator only."
+                f"{access_note}"
             ),
         )
         return {"status": "linked"}

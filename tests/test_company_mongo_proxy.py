@@ -145,6 +145,21 @@ class CompanyMongoProxyTests(unittest.TestCase):
         self.assertEqual(collection.cursor.sort_args, ("ct", -1))
         self.assertEqual(collection.cursor.limit_value, 1000)
         self.assertGreater(collection.cursor.timeout_ms, 0)
+        audit_events = proxy.get_audit_events()
+        self.assertEqual(len(audit_events), 1)
+        self.assertEqual(audit_events[0]["actor"], "test")
+        self.assertEqual(audit_events[0]["operation"], "find")
+        self.assertEqual(audit_events[0]["namespace"], "datamgmt.CIN")
+        self.assertEqual(
+            audit_events[0]["query"],
+            {"con": {"$exists": True}},
+        )
+        self.assertEqual(audit_events[0]["projection"], {"_id": 0, "con": 1})
+        self.assertEqual(audit_events[0]["sort"], ("ct", -1))
+        self.assertEqual(audit_events[0]["requested_limit"], 5000)
+        self.assertEqual(audit_events[0]["effective_limit"], 1000)
+        self.assertTrue(audit_events[0]["credentials_redacted"])
+        self.assertFalse(audit_events[0]["mutating"])
         self.assertFalse(hasattr(proxy, "insert_one"))
         self.assertFalse(hasattr(proxy, "update_one"))
         self.assertFalse(hasattr(proxy, "delete_one"))

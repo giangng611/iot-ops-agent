@@ -583,6 +583,16 @@ class LangGraphAgent:
             raise PermissionError(f"Tool is not executable: {selected_tool}")
 
         bounded_output = self.sanitize_evidence(tool_output)
+        step_output = (
+            dict(bounded_output)
+            if isinstance(bounded_output, dict)
+            else {"evidence": bounded_output}
+        )
+        step_output["_tool_execution"] = {
+            "execution_target": tool_spec.execution_target,
+            "workflow_node": tool_spec.workflow_node,
+            "placeholder": tool_spec.placeholder,
+        }
         return {
             "tool_output": bounded_output,
             "execution_count": execution_count + 1,
@@ -596,12 +606,7 @@ class LangGraphAgent:
                     "operational evidence."
                 ),
                 action=selected_tool,
-                output={
-                    "execution_target": tool_spec.execution_target,
-                    "workflow_node": tool_spec.workflow_node,
-                    "placeholder": tool_spec.placeholder,
-                    "evidence": bounded_output,
-                },
+                output=step_output,
             ),
         }
 
@@ -637,6 +642,11 @@ class LangGraphAgent:
             if allowed
             else {"error": "The authorized tool returned no evidence."}
         )
+        evidence_status = (
+            "available"
+            if allowed
+            else "insufficient_evidence_no_guessing"
+        )
 
         return {
             "policy_allowed": allowed,
@@ -652,7 +662,12 @@ class LangGraphAgent:
                     "language-model generation."
                 ),
                 action="validate_evidence",
-                output={"allowed": allowed, "reason": reason},
+                output={
+                    "allowed": allowed,
+                    "reason": reason,
+                    "evidence_status": evidence_status,
+                    "no_guessing_policy": True,
+                },
             ),
         }
 
@@ -664,8 +679,10 @@ class LangGraphAgent:
             "approved company alert rules are not configured. If it is "
             "available_unmapped, say rule semantics are not integrated. If it "
             "is provisional_poc, label alerts as non-official PoC findings. "
-            "Do not invent classifications. Manual threshold results are "
-            "evidence only. Summarize at most five samples."
+            "Do not invent classifications. If evidence is missing or empty, "
+            "say there is insufficient evidence instead of guessing. Manual "
+            "threshold results are evidence only. Summarize at most five "
+            "samples."
         )
 
     def build_answer_prompt(self, state):

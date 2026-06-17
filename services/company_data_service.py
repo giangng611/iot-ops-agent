@@ -1166,6 +1166,7 @@ def get_company_operational_payload(
                 proxy,
                 max(int(limit), DEFAULT_COMPANY_CIN_SCAN_LIMIT),
             )
+            db_audit = proxy.get_audit_events()
     except Exception as exc:
         return simulator_fallback_snapshot(
             f"Company MongoDB read failed: {exc}"
@@ -1197,7 +1198,9 @@ def get_company_operational_payload(
                 int(limit),
                 DEFAULT_COMPANY_CIN_SCAN_LIMIT,
             ),
+            "db_audit": db_audit,
         },
+        "db_audit": db_audit,
         "selected_source": "company",
         "active_source": "company_mongodb",
         "rules_status": "provisional_poc",
@@ -1269,6 +1272,7 @@ def get_company_agent_context(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
     return {
         "source": payload["source"],
         "provenance": payload.get("provenance"),
+        "db_audit": payload.get("db_audit"),
         "summary": payload.get("summary"),
         "alerts": {
             **{
@@ -1345,6 +1349,7 @@ def get_company_inventory_context(limit=MAX_AGENT_SAMPLE_RECORDS):
     return {
         "source": payload["source"],
         "tool": "get_company_inventory",
+        "db_audit": payload.get("db_audit"),
         "summary": payload.get("summary"),
         "inventory_device_count": len(inventory_devices),
         "telemetry_only_device_count": len(telemetry_only_devices),
@@ -1388,6 +1393,7 @@ def get_company_telemetry_coverage_context(limit=MAX_AGENT_SAMPLE_RECORDS):
     return {
         "source": payload["source"],
         "tool": "get_company_telemetry_coverage",
+        "db_audit": payload.get("db_audit"),
         "device_count": len(devices),
         "devices_with_telemetry": len(with_telemetry),
         "inventory_only_devices": len(without_telemetry),
@@ -1421,6 +1427,7 @@ def get_company_provisional_alert_context(limit=MAX_AGENT_SAMPLE_RECORDS):
     return {
         "source": payload["source"],
         "tool": "get_company_provisional_alerts",
+        "db_audit": payload.get("db_audit"),
         "rules_status": payload.get("rules_status"),
         "official_rules_status": payload.get("official_rules_status"),
         "critical_count": alerts.get("critical_count", 0),
@@ -1446,6 +1453,7 @@ def get_company_rule_readiness_context():
     return {
         "source": payload["source"],
         "tool": "get_company_rule_readiness",
+        "db_audit": payload.get("db_audit"),
         "company_rules_discovered": payload.get("summary", {}).get(
             "rule_count",
             0,
@@ -1479,6 +1487,7 @@ def get_company_disconnected_context(limit=MAX_AGENT_SAMPLE_RECORDS):
     return {
         "source": payload["source"],
         "tool": "get_company_disconnected_devices",
+        "db_audit": payload.get("db_audit"),
         "count": len(disconnected),
         "devices": disconnected[:max(1, min(int(limit), 10))],
         "classification": "raw_device_status",
@@ -1513,6 +1522,7 @@ def get_company_device_context(identifier):
     return {
         "source": payload["source"],
         "tool": "get_company_device",
+        "db_audit": payload.get("db_audit"),
         "query": identifier,
         "match_count": len(matches),
         "devices": matches[:MAX_AGENT_SAMPLE_RECORDS],
@@ -1550,6 +1560,7 @@ def scan_company_payload_threshold(threshold, limit=MAX_THRESHOLD_SCAN_RECORDS):
             sort=("ct", -1),
             limit=safe_limit,
         )
+        db_audit = proxy.get_audit_events()
 
     matches = []
     parseable_payloads = 0
@@ -1584,6 +1595,8 @@ def scan_company_payload_threshold(threshold, limit=MAX_THRESHOLD_SCAN_RECORDS):
 
     return {
         "source": "company_mongodb",
+        "tool": "scan_company_threshold",
+        "db_audit": db_audit,
         "rules_status": "available_unmapped",
         "threshold": threshold,
         "scanned_records": len(rows),

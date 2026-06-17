@@ -33,6 +33,7 @@ from services.company_data_service import (  # noqa: E402
     enrich_company_metrics,
     extract_display_metrics,
     get_company_agent_context,
+    get_company_provisional_alert_context,
     get_metric_value,
     normalize_company_key,
 )
@@ -1360,6 +1361,41 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             normalize_company_key("dvi-S123"),
             "s123",
         )
+
+    def test_company_tool_context_forwards_db_audit(self):
+        db_audit = [{
+            "actor": "company-llm-tools",
+            "operation": "find",
+            "namespace": "datamgmt.CIN",
+            "query": {"con": {"$exists": True}},
+            "projection": {"_id": 0, "con": 1},
+            "effective_limit": 1000,
+            "credentials_redacted": True,
+            "mutating": False,
+        }]
+
+        with patch(
+            "services.company_data_service.get_company_operational_payload",
+            return_value={
+                "source": "company_mongodb",
+                "rules_status": "provisional_poc",
+                "official_rules_status": "discovered_unmapped",
+                "db_audit": db_audit,
+                "alerts": {
+                    "critical_count": 0,
+                    "warning_count": 0,
+                    "total_count": 0,
+                    "ruleset_version": "company-poc-v1",
+                    "active_alerts": [],
+                    "message": "No provisional alerts.",
+                },
+            },
+        ):
+            context = get_company_provisional_alert_context()
+
+        self.assertEqual(context["db_audit"], db_audit)
+        self.assertTrue(context["db_audit"][0]["credentials_redacted"])
+        self.assertFalse(context["db_audit"][0]["mutating"])
 
     def test_company_poc_rules_generate_traceable_alerts(self):
         alerts = evaluate_company_poc_rules([

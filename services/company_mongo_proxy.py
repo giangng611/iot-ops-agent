@@ -181,6 +181,7 @@ class CompanyMongoReadProxy:
         factory = client_factory or MongoClient
         self._actor = actor
         self._statement_timeout_ms = statement_timeout_ms
+        self._audit_events = []
         self._client = factory(
             uri,
             serverSelectionTimeoutMS=timeout_ms,
@@ -197,6 +198,42 @@ class CompanyMongoReadProxy:
 
     def close(self):
         self._client.close()
+
+    def get_audit_events(self):
+        return list(self._audit_events)
+
+    def _audit_read(
+        self,
+        *,
+        operation,
+        database_name,
+        collection_name=None,
+        query=None,
+        projection=None,
+        sort=None,
+        requested_limit=None,
+        effective_limit=None,
+    ):
+        namespace = (
+            f"{database_name}.{collection_name}"
+            if collection_name
+            else database_name
+        )
+        self._audit_events.append({
+            "actor": self._actor,
+            "operation": operation,
+            "namespace": namespace,
+            "query": query or {},
+            "projection": projection or {},
+            "sort": sort,
+            "requested_limit": requested_limit,
+            "effective_limit": effective_limit,
+            "max_time_ms": self._statement_timeout_ms,
+            "allowed_namespaces_enforced": True,
+            "blocked_operators": sorted(BLOCKED_QUERY_OPERATORS),
+            "credentials_redacted": True,
+            "mutating": False,
+        })
 
     def _check_read(self, operation, database_name, collection_name=None):
         _validate_identifier(database_name, "database name")
@@ -222,11 +259,17 @@ class CompanyMongoReadProxy:
             namespace.split(".", 1)[0]
             for namespace in get_allowed_namespaces()
         }
-        return [
+        databases = [
             database_name
             for database_name in self._client.list_database_names()
             if database_name in allowed_databases
         ]
+        self._audit_read(
+            operation="list_database_names",
+            database_name="*",
+            effective_limit=len(databases),
+        )
+        return databases
 
     def list_collections(self, database_name):
         self._check_read("list_collections", database_name)
@@ -235,7 +278,7 @@ class CompanyMongoReadProxy:
             for namespace in get_allowed_namespaces()
             if namespace.startswith(f"{database_name}.")
         }
-        return [
+        collections = [
             namespace
             for namespace in self._client[database_name].list_collections(
             filter={"type": {"$in": ["collection", "view"]}},
@@ -243,6 +286,14 @@ class CompanyMongoReadProxy:
             )
             if namespace.get("name") in allowed_collections
         ]
+        self._audit_read(
+            operation="list_collections",
+            database_name=database_name,
+            query={"type": {"$in": ["collection", "view"]}},
+            projection={"nameOnly": True},
+            effective_limit=len(collections),
+        )
+        return collections
 
     def collection_stats(self, database_name, collection_name):
         self._check_read(
@@ -250,12 +301,20 @@ class CompanyMongoReadProxy:
             database_name,
             collection_name,
         )
-        return self._client[database_name].command(
+        stats = self._client[database_name].command(
             "collStats",
             collection_name,
             scale=1,
             maxTimeMS=self._statement_timeout_ms,
         )
+        self._audit_read(
+            operation="collStats",
+            database_name=database_name,
+            collection_name=collection_name,
+            query={"command": "collStats", "scale": 1},
+            effective_limit=1,
+        )
+        return stats
 
     def find(
         self,
@@ -272,6 +331,16 @@ class CompanyMongoReadProxy:
         _validate_read_document(projection or {})
         _validate_sort(sort)
         safe_limit = max(1, min(int(limit), MAX_QUERY_LIMIT))
+        self._audit_read(
+            operation="find",
+            database_name=database_name,
+            collection_name=collection_name,
+            query=query,
+            projection=projection,
+            sort=sort,
+            requested_limit=limit,
+            effective_limit=safe_limit,
+        )
         cursor = self._client[database_name][collection_name].find(
             query,
             projection,

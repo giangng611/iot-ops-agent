@@ -514,6 +514,9 @@ def get_user_data_source_policy(user_id):
     allowed_sources = deserialize_data_sources(row[0])
     default_source = row[1] if row[1] in allowed_sources else "simulator"
 
+    if "company" in allowed_sources:
+        default_source = "company"
+
     return {
         "allowed_data_sources": allowed_sources or ["simulator"],
         "default_data_source": default_source,
@@ -530,6 +533,9 @@ def update_user_data_source_policy(
 
     if "simulator" not in allowed_sources:
         allowed_sources.insert(0, "simulator")
+
+    if "company" in allowed_sources:
+        default_data_source = "company"
 
     if default_data_source not in allowed_sources:
         default_data_source = "simulator"

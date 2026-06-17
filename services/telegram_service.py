@@ -605,6 +605,20 @@ def process_telegram_update_in_background(
         except Exception as exc:
             print(f"Telegram background processing failed: {exc}")
             history_user_id = get_telegram_failure_user_id(update)
+            message = extract_message(update)
+
+            if message is not None:
+                try:
+                    send_telegram_message(
+                        message["chat_id"],
+                        (
+                            "Telegram request failed before the IoT Ops Agent "
+                            "could finish processing it. Please try again in a "
+                            "moment or check the server logs."
+                        ),
+                    )
+                except Exception as send_exc:
+                    print(f"Telegram failure notification failed: {send_exc}")
 
             if emit_user_event and history_user_id is not None:
                 emit_user_event(

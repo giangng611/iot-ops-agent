@@ -20,6 +20,7 @@ from storage.relational_store import get_user_data_source_policy
 telemetry_bp = Blueprint("telemetry", __name__)
 _user_data_source_lock = threading.Lock()
 _user_data_sources = {}
+_user_data_source_explicit = {}
 _mongo_read_rate_limit_lock = threading.Lock()
 _mongo_read_rate_limit_log = defaultdict(deque)
 
@@ -92,21 +93,24 @@ def get_default_data_source(user_id):
 def get_selected_data_source():
     user_id = current_user_id()
     selected_source = session.get("selected_data_source")
+    selected_source_explicit = bool(session.get("selected_data_source_explicit"))
 
-    if selected_source in get_allowed_data_sources(user_id):
+    if selected_source_explicit and selected_source in get_allowed_data_sources(user_id):
         return selected_source
 
     selected_source = get_default_data_source(user_id)
     session["selected_data_source"] = selected_source
+    session["selected_data_source_explicit"] = False
     return selected_source
 
 
-def remember_user_data_source(user_id, selected_source):
+def remember_user_data_source(user_id, selected_source, explicit=False):
     if user_id is None:
         return
 
     with _user_data_source_lock:
         _user_data_sources[int(user_id)] = selected_source
+        _user_data_source_explicit[int(user_id)] = bool(explicit)
 
 
 def get_user_selected_data_source(user_id):
@@ -118,6 +122,13 @@ def get_user_selected_data_source(user_id):
 
     with _user_data_source_lock:
         selected_source = _user_data_sources.get(int(user_id), default_source)
+        selected_source_explicit = _user_data_source_explicit.get(
+            int(user_id),
+            False,
+        )
+
+    if not selected_source_explicit:
+        return default_source
 
     if selected_source not in allowed_sources:
         return default_source
@@ -133,7 +144,11 @@ def get_devices():
         return unauthorized
 
     selected_source = get_selected_data_source()
-    remember_user_data_source(current_user_id(), selected_source)
+    remember_user_data_source(
+        current_user_id(),
+        selected_source,
+        explicit=bool(session.get("selected_data_source_explicit")),
+    )
 
     payload = get_devices_payload(selected_source)
     payload["selected_source"] = selected_source
@@ -168,9 +183,14 @@ def data_source():
             }), 403
 
         session["selected_data_source"] = selected_source
+        session["selected_data_source_explicit"] = True
 
     selected_source = get_selected_data_source()
-    remember_user_data_source(current_user_id(), selected_source)
+    remember_user_data_source(
+        current_user_id(),
+        selected_source,
+        explicit=bool(session.get("selected_data_source_explicit")),
+    )
 
     return jsonify({
         "selected_source": selected_source,

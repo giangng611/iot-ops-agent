@@ -522,6 +522,9 @@ def normalize_user_data_source_policy(
     if "simulator" not in allowed_sources:
         allowed_sources.insert(0, "simulator")
 
+    if "company" in allowed_sources:
+        default_data_source = "company"
+
     if default_data_source not in allowed_sources:
         default_data_source = "simulator"
 

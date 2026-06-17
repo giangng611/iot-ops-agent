@@ -46,6 +46,7 @@ from storage.relational_store import (  # noqa: E402
     create_chat,
     create_user,
     get_telegram_identity,
+    get_user_data_source_policy,
     get_messages,
     init_db,
     update_user_data_source_policy,
@@ -62,6 +63,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         telegram_service._telegram_updates_inflight.clear()
         telegram_service._telegram_updates_processed.clear()
         telemetry_routes._user_data_sources.clear()
+        telemetry_routes._user_data_source_explicit.clear()
         telemetry_routes._mongo_read_rate_limit_log.clear()
         auth_routes._login_rate_limit_log.clear()
         for postgres_url_var in ("SUPABASE_DB_URL", "DATABASE_URL", "POSTGRES_URL"):
@@ -1722,6 +1724,10 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             identity["allowed_data_sources"],
             ["company", "simulator"],
         )
+        self.assertEqual(
+            get_user_data_source_policy(user["id"])["default_data_source"],
+            "company",
+        )
 
     @patch("services.telegram_service.requests.post")
     def test_telegram_link_code_cannot_be_reused(self, mock_post):
@@ -2216,6 +2222,40 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             )],
         )
 
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_background_failure_sends_telegram_notice(self, mock_post):
+        user = self.create_user_once("telegram-failure-message-user", "failure-pass")
+        self.map_telegram_user(456, user)
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        try:
+            with patch(
+                "services.telegram_service.process_telegram_update",
+                side_effect=RuntimeError("simulated agent failure"),
+            ):
+                worker = (
+                    telegram_service.process_telegram_update_in_background(
+                        {
+                            "update_id": 1001,
+                            "message": {
+                                "chat": {"id": 123},
+                                "from": {"id": 456, "username": "ops_user"},
+                                "text": "/overview",
+                            },
+                        },
+                        app_module.langgraph_agent,
+                    )
+                )
+                worker.join(timeout=1)
+        finally:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+
+        self.assertFalse(worker.is_alive())
+        sent_payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(sent_payload["chat_id"], 123)
+        self.assertIn("request failed", sent_payload["text"])
+
     def test_data_source_selection_is_remembered_for_telegram_user(self):
         user = self.create_user_once("source-user", "source-pass")
         self.grant_company_data_source(user)
@@ -2230,6 +2270,40 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertEqual(
             app_module.get_user_selected_data_source(user["id"]),
             "company",
+        )
+
+    def test_implicit_simulator_session_does_not_override_company_default(self):
+        user = self.create_user_once("source-implicit-default", "source-pass")
+        self.grant_company_data_source(user)
+        self.login_as(user)
+
+        with self.client.session_transaction() as session:
+            session["selected_data_source"] = "simulator"
+
+        response = self.client.get("/api/data-source")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["selected_source"], "company")
+        self.assertEqual(
+            app_module.get_user_selected_data_source(user["id"]),
+            "company",
+        )
+
+    def test_explicit_simulator_selection_is_remembered(self):
+        user = self.create_user_once("source-explicit-simulator", "source-pass")
+        self.grant_company_data_source(user)
+        self.login_as(user)
+
+        response = self.client.post(
+            "/api/data-source",
+            json={"selected_source": "simulator"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["selected_source"], "simulator")
+        self.assertEqual(
+            app_module.get_user_selected_data_source(user["id"]),
+            "simulator",
         )
 
     def test_unapproved_user_cannot_select_company_data_source(self):
@@ -2266,6 +2340,17 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             app_module.get_user_selected_data_source(user["id"]),
             "company",
         )
+
+    def test_company_access_defaults_to_company_even_if_policy_says_simulator(self):
+        allowed_sources, default_source = (
+            relational_store.normalize_user_data_source_policy(
+                ["simulator", "company"],
+                "simulator",
+            )
+        )
+
+        self.assertEqual(allowed_sources, ["simulator", "company"])
+        self.assertEqual(default_source, "company")
 
     def test_data_source_policy_parses_comma_separated_strings(self):
         allowed_sources, default_source = (

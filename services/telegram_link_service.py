@@ -8,6 +8,7 @@ from storage.relational_store import (
     get_telegram_identity,
     get_telegram_link_code,
     mark_telegram_link_code_used,
+    update_user_data_source_policy,
     upsert_telegram_identity,
 )
 
@@ -119,6 +120,13 @@ def consume_link_code(
         role=role,
         allowed_data_sources=allowed_data_sources,
         is_active=True,
+    )
+    update_user_data_source_policy(
+        link_code["user_id"],
+        allowed_data_sources=allowed_data_sources,
+        default_data_source=(
+            "company" if "company" in allowed_data_sources else "simulator"
+        ),
     )
 
     return True, "linked"

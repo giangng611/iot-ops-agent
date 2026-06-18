@@ -139,9 +139,16 @@ PUBLIC_BASE_URL=https://iot-ops-agent.onrender.com
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_WEBHOOK_SECRET=...
 TELEGRAM_ALLOWED_USER_IDS=
-TELEGRAM_HISTORY_USER_ID=
-TELEGRAM_DEFAULT_DATA_SOURCE=simulator
+TELEGRAM_LINK_CODE_TTL_MINUTES=15
 ```
+
+Telegram access requires users to link their Telegram account to an IoT Ops
+Agent account. The normal flow is Profile -> Telegram -> Generate Link Code,
+then send `/link CODE` to the bot. Admin bootstrap remains available through
+`python -m scripts.upsert_telegram_identity`. Grant `company` in
+`--data-sources` only to operators approved to query Company DB through
+Telegram. The same grant updates the user's web platform data-source policy;
+new users remain simulator-only by default.
 
 Company MongoDB variables should be configured only when the Render service
 can reach the company network:
@@ -272,13 +279,12 @@ Only users with the configured `ACCESS_CODE` can create accounts.
 
 ### Storage Model
 
-SQLite works well for local fallback and demos, but production-like deployments
-should use external storage:
+Production-like deployments should use external storage:
 
 ```text
 MongoDB for telemetry
 Supabase/Postgres for app data
-SQLite only as local fallback
+SQLite only for explicit legacy/local demos
 ```
 
 Set `APP_DB_FALLBACK_ENABLED=false` when Supabase/Postgres should be the source

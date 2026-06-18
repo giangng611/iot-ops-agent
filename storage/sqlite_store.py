@@ -77,9 +77,27 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            allowed_data_sources TEXT NOT NULL DEFAULT 'simulator',
+            default_data_source TEXT NOT NULL DEFAULT 'simulator'
         )
     """)
+
+    try:
+        cursor.execute("""
+            ALTER TABLE users ADD COLUMN allowed_data_sources TEXT
+            NOT NULL DEFAULT 'simulator'
+        """)
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("""
+            ALTER TABLE users ADD COLUMN default_data_source TEXT
+            NOT NULL DEFAULT 'simulator'
+        """)
+    except sqlite3.OperationalError:
+        pass
 
     CREATE_PROMPTS_TABLE = """
     CREATE TABLE IF NOT EXISTS prompts (
@@ -94,6 +112,43 @@ def init_db():
     """
 
     cursor.execute(CREATE_PROMPTS_TABLE)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_user_id TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            telegram_username TEXT,
+            role TEXT NOT NULL DEFAULT 'viewer',
+            allowed_data_sources TEXT NOT NULL DEFAULT 'simulator',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS telegram_identities_user_id_idx
+        ON telegram_identities (user_id)
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_link_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_hash TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS telegram_link_codes_user_id_idx
+        ON telegram_link_codes (user_id)
+    """)
 
     conn.commit()
     conn.close()
@@ -437,6 +492,74 @@ def get_user_by_username(username):
         "password_hash": row[2]
     }
 
+def get_user_data_source_policy(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT allowed_data_sources, default_data_source
+        FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return {
+            "allowed_data_sources": ["simulator"],
+            "default_data_source": "simulator",
+        }
+
+    allowed_sources = deserialize_data_sources(row[0])
+    default_source = row[1] if row[1] in allowed_sources else "simulator"
+
+    if "company" in allowed_sources:
+        default_source = "company"
+
+    return {
+        "allowed_data_sources": allowed_sources or ["simulator"],
+        "default_data_source": default_source,
+    }
+
+def update_user_data_source_policy(
+    user_id,
+    allowed_data_sources=None,
+    default_data_source="simulator",
+):
+    allowed_sources = deserialize_data_sources(
+        serialize_data_sources(allowed_data_sources)
+    )
+
+    if "simulator" not in allowed_sources:
+        allowed_sources.insert(0, "simulator")
+
+    if "company" in allowed_sources:
+        default_data_source = "company"
+
+    if default_data_source not in allowed_sources:
+        default_data_source = "simulator"
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE users
+        SET allowed_data_sources = ?,
+            default_data_source = ?
+        WHERE id = ?
+    """, (
+        serialize_data_sources(allowed_sources),
+        default_data_source,
+        user_id,
+    ))
+
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+
+    return updated > 0
+
 
 def verify_user(username, password):
     user = get_user_by_username(username)
@@ -448,6 +571,178 @@ def verify_user(username, password):
         return None
 
     return user
+
+def serialize_data_sources(data_sources):
+    if isinstance(data_sources, str):
+        data_sources = deserialize_data_sources(data_sources)
+
+    return ",".join([
+        str(item).strip()
+        for item in (data_sources or ["simulator"])
+        if str(item).strip()
+    ]) or "simulator"
+
+def deserialize_data_sources(value):
+    return [
+        item.strip()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
+
+def upsert_telegram_identity(
+    telegram_user_id,
+    user_id,
+    telegram_username=None,
+    role="viewer",
+    allowed_data_sources=None,
+    is_active=True,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+    timestamp = now_iso()
+
+    cursor.execute("""
+        INSERT INTO telegram_identities (
+            telegram_user_id,
+            user_id,
+            telegram_username,
+            role,
+            allowed_data_sources,
+            is_active,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(telegram_user_id) DO UPDATE SET
+            user_id = excluded.user_id,
+            telegram_username = excluded.telegram_username,
+            role = excluded.role,
+            allowed_data_sources = excluded.allowed_data_sources,
+            is_active = excluded.is_active,
+            updated_at = excluded.updated_at
+    """, (
+        str(telegram_user_id),
+        user_id,
+        telegram_username,
+        role or "viewer",
+        serialize_data_sources(allowed_data_sources),
+        1 if is_active else 0,
+        timestamp,
+        timestamp,
+    ))
+
+    conn.commit()
+    conn.close()
+
+def get_telegram_identity(telegram_user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            telegram_user_id,
+            user_id,
+            telegram_username,
+            role,
+            allowed_data_sources,
+            is_active
+        FROM telegram_identities
+        WHERE telegram_user_id = ?
+    """, (str(telegram_user_id),))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "telegram_user_id": row[0],
+        "user_id": row[1],
+        "telegram_username": row[2],
+        "role": row[3],
+        "allowed_data_sources": deserialize_data_sources(row[4]),
+        "is_active": bool(row[5]),
+    }
+
+def deactivate_telegram_identity(telegram_user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE telegram_identities
+        SET is_active = 0,
+            updated_at = ?
+        WHERE telegram_user_id = ?
+    """, (now_iso(), str(telegram_user_id)))
+    updated = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+    return updated > 0
+
+def create_telegram_link_code(code_hash, user_id, expires_at):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO telegram_link_codes (
+            code_hash,
+            user_id,
+            expires_at,
+            created_at
+        )
+        VALUES (?, ?, ?, ?)
+    """, (
+        code_hash,
+        user_id,
+        expires_at,
+        now_iso(),
+    ))
+
+    conn.commit()
+    conn.close()
+
+def get_telegram_link_code(code_hash):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT code_hash, user_id, expires_at, used_at, created_at
+        FROM telegram_link_codes
+        WHERE code_hash = ?
+    """, (code_hash,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "code_hash": row[0],
+        "user_id": row[1],
+        "expires_at": row[2],
+        "used_at": row[3],
+        "created_at": row[4],
+    }
+
+def mark_telegram_link_code_used(code_hash):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE telegram_link_codes
+        SET used_at = ?
+        WHERE code_hash = ?
+        AND used_at IS NULL
+    """, (now_iso(), code_hash))
+
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+
+    return updated > 0
 
 def delete_chat(chat_id, user_id):
     conn = get_connection()

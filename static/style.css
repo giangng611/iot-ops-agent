@@ -1171,6 +1171,95 @@ pre {
     overflow-x: auto;
 }
 
+.reasoning-observation-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reasoning-section {
+    background: #101010;
+    border: 1px solid #2b2b2b;
+    border-radius: 10px;
+    padding: 12px;
+}
+
+.reasoning-section-title {
+    margin-bottom: 10px;
+    color: #d4d4d8;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.reasoning-json-block {
+    margin: 0;
+}
+
+.reasoning-kv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+}
+
+.reasoning-kv-item {
+    background: #171717;
+    border: 1px solid #303030;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.reasoning-kv-item span {
+    display: block;
+    margin-bottom: 6px;
+    color: #a1a1aa;
+    font-size: 12px;
+}
+
+.reasoning-kv-item strong {
+    color: #ffffff;
+    font-size: 14px;
+    word-break: break-word;
+}
+
+.query-command-section {
+    border-color: #3f3f46;
+}
+
+.query-command-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.query-command-header,
+.query-command-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: space-between;
+    color: #a1a1aa;
+    font-size: 12px;
+}
+
+.query-command-header span:first-child {
+    color: #ffffff;
+    font-weight: 700;
+}
+
+.query-command-code {
+    border-color: #4b5563;
+    color: #f8fafc;
+}
+
+.query-command-details summary {
+    cursor: pointer;
+    color: #d4d4d8;
+    font-size: 12px;
+}
+
 /* Devices */
 
 .page-header {
@@ -1288,6 +1377,12 @@ pre {
 
 .data-source-segmented button[aria-pressed="true"] {
     color: #18181b;
+}
+
+.data-source-segmented button.disabled-option,
+.data-source-segmented button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
 }
 
 .drawer-source-note {
@@ -2204,6 +2299,34 @@ th {
     height: 52px;
 }
 
+.telegram-link-command-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.telegram-link-command-box input {
+    padding-right: 92px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.telegram-link-copy-btn {
+    position: absolute;
+    right: 8px;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 8px;
+    background: #2f2f2f;
+    color: #ffffff;
+    font-size: 13px;
+}
+
+.telegram-link-copy-btn:hover,
+.telegram-link-copy-btn.copied {
+    background: #ffffff;
+    color: #111111;
+}
+
 .profile-form .password-field {
     position: relative;
     height: 52px;
@@ -2280,10 +2403,28 @@ th {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 18px;
+    max-height: calc(100vh - 360px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 8px;
 }
 
 #profileTab.drawer-open .profile-settings-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.profile-settings-grid::-webkit-scrollbar {
+    width: 8px;
+}
+
+.profile-settings-grid::-webkit-scrollbar-track {
+    background: #171717;
+    border-radius: 999px;
+}
+
+.profile-settings-grid::-webkit-scrollbar-thumb {
+    background: #3f3f46;
+    border-radius: 999px;
 }
 
 .clickable-card {

@@ -49,7 +49,7 @@ def create_telegram_blueprint(runtime):
             "configured": telegram_enabled(),
             "webhook_url": webhook_url,
             "secret_configured": bool(get_telegram_secret_token()),
-            "history_user_id_configured": bool(os.getenv("TELEGRAM_HISTORY_USER_ID")),
+            "identity_mapping_required": True,
             "allowed_user_ids_configured": bool(os.getenv("TELEGRAM_ALLOWED_USER_IDS")),
         })
 

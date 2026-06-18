@@ -37,7 +37,7 @@ def get_app_db_backend():
 
 
 def app_db_fallback_enabled():
-    return os.getenv("APP_DB_FALLBACK_ENABLED", "true").lower() == "true"
+    return os.getenv("APP_DB_FALLBACK_ENABLED", "false").lower() == "true"
 
 
 def get_last_fallback():
@@ -152,6 +152,20 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
             f"falling back to SQLite: {exc}"
         )
         return sqlite_operation()
+
+
+def _without_sqlite_fallback(operation_name, postgres_operation, sqlite_operation):
+    if not using_postgres():
+        return sqlite_operation()
+
+    try:
+        return postgres_operation()
+    except Exception as exc:
+        print(
+            f"Supabase/Postgres app-data {operation_name} failed; "
+            f"SQLite fallback is disabled for security-sensitive identity data: {exc}"
+        )
+        raise
 
 
 def get_storage_status():
@@ -476,6 +490,332 @@ def verify_user(username, password):
         return None
 
     return user
+
+
+def serialize_data_sources(data_sources):
+    if isinstance(data_sources, str):
+        data_sources = deserialize_data_sources(data_sources)
+
+    return ",".join([
+        str(item).strip()
+        for item in (data_sources or ["simulator"])
+        if str(item).strip()
+    ]) or "simulator"
+
+
+def deserialize_data_sources(value):
+    return [
+        item.strip()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
+
+
+def normalize_user_data_source_policy(
+    allowed_data_sources=None,
+    default_data_source="simulator",
+):
+    allowed_sources = deserialize_data_sources(
+        serialize_data_sources(allowed_data_sources)
+    )
+
+    if "simulator" not in allowed_sources:
+        allowed_sources.insert(0, "simulator")
+
+    if "company" in allowed_sources:
+        default_data_source = "company"
+
+    if default_data_source not in allowed_sources:
+        default_data_source = "simulator"
+
+    return allowed_sources, default_data_source
+
+
+def get_user_data_source_policy(user_id):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select allowed_data_sources, default_data_source
+                    from public.users
+                    where id = %s
+                    """,
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+
+        if not row:
+            return {
+                "allowed_data_sources": ["simulator"],
+                "default_data_source": "simulator",
+            }
+
+        allowed_sources, default_source = normalize_user_data_source_policy(
+            row["allowed_data_sources"],
+            row["default_data_source"],
+        )
+
+        return {
+            "allowed_data_sources": allowed_sources,
+            "default_data_source": default_source,
+        }
+
+    return _without_sqlite_fallback(
+        "get_user_data_source_policy",
+        postgres_operation,
+        lambda: sqlite_store.get_user_data_source_policy(user_id),
+    )
+
+
+def update_user_data_source_policy(
+    user_id,
+    allowed_data_sources=None,
+    default_data_source="simulator",
+):
+    allowed_sources, default_source = normalize_user_data_source_policy(
+        allowed_data_sources,
+        default_data_source,
+    )
+
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update public.users
+                    set allowed_data_sources = %s,
+                        default_data_source = %s
+                    where id = %s
+                    """,
+                    (
+                        serialize_data_sources(allowed_sources),
+                        default_source,
+                        user_id,
+                    ),
+                )
+                updated = cursor.rowcount
+            conn.commit()
+            return updated > 0
+
+    return _without_sqlite_fallback(
+        "update_user_data_source_policy",
+        postgres_operation,
+        lambda: sqlite_store.update_user_data_source_policy(
+            user_id,
+            allowed_data_sources=allowed_sources,
+            default_data_source=default_source,
+        ),
+    )
+
+
+def upsert_telegram_identity(
+    telegram_user_id,
+    user_id,
+    telegram_username=None,
+    role="viewer",
+    allowed_data_sources=None,
+    is_active=True,
+):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into public.telegram_identities (
+                        telegram_user_id,
+                        user_id,
+                        telegram_username,
+                        role,
+                        allowed_data_sources,
+                        is_active,
+                        created_at,
+                        updated_at
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s)
+                    on conflict (telegram_user_id) do update set
+                        user_id = excluded.user_id,
+                        telegram_username = excluded.telegram_username,
+                        role = excluded.role,
+                        allowed_data_sources = excluded.allowed_data_sources,
+                        is_active = excluded.is_active,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        str(telegram_user_id),
+                        user_id,
+                        telegram_username,
+                        role or "viewer",
+                        serialize_data_sources(allowed_data_sources),
+                        bool(is_active),
+                        now_iso(),
+                        now_iso(),
+                    ),
+                )
+            conn.commit()
+
+    return _without_sqlite_fallback(
+        "upsert_telegram_identity",
+        postgres_operation,
+        lambda: sqlite_store.upsert_telegram_identity(
+            telegram_user_id,
+            user_id,
+            telegram_username=telegram_username,
+            role=role,
+            allowed_data_sources=allowed_data_sources,
+            is_active=is_active,
+        ),
+    )
+
+
+def get_telegram_identity(telegram_user_id):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select
+                        telegram_user_id,
+                        user_id,
+                        telegram_username,
+                        role,
+                        allowed_data_sources,
+                        is_active
+                    from public.telegram_identities
+                    where telegram_user_id = %s
+                    """,
+                    (str(telegram_user_id),),
+                )
+                row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "telegram_user_id": row["telegram_user_id"],
+            "user_id": row["user_id"],
+            "telegram_username": row["telegram_username"],
+            "role": row["role"],
+            "allowed_data_sources": deserialize_data_sources(
+                row["allowed_data_sources"]
+            ),
+            "is_active": bool(row["is_active"]),
+        }
+
+    return _without_sqlite_fallback(
+        "get_telegram_identity",
+        postgres_operation,
+        lambda: sqlite_store.get_telegram_identity(telegram_user_id),
+    )
+
+
+def deactivate_telegram_identity(telegram_user_id):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update public.telegram_identities
+                    set is_active = false,
+                        updated_at = %s
+                    where telegram_user_id = %s
+                    """,
+                    (now_iso(), str(telegram_user_id)),
+                )
+                updated = cursor.rowcount
+            conn.commit()
+            return updated > 0
+
+    return _without_sqlite_fallback(
+        "deactivate_telegram_identity",
+        postgres_operation,
+        lambda: sqlite_store.deactivate_telegram_identity(telegram_user_id),
+    )
+
+
+def create_telegram_link_code(code_hash, user_id, expires_at):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into public.telegram_link_codes (
+                        code_hash,
+                        user_id,
+                        expires_at,
+                        created_at
+                    )
+                    values (%s, %s, %s, %s)
+                    """,
+                    (code_hash, user_id, expires_at, now_iso()),
+                )
+            conn.commit()
+
+    return _without_sqlite_fallback(
+        "create_telegram_link_code",
+        postgres_operation,
+        lambda: sqlite_store.create_telegram_link_code(
+            code_hash,
+            user_id,
+            expires_at,
+        ),
+    )
+
+
+def get_telegram_link_code(code_hash):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select code_hash, user_id, expires_at, used_at, created_at
+                    from public.telegram_link_codes
+                    where code_hash = %s
+                    """,
+                    (code_hash,),
+                )
+                row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "code_hash": row["code_hash"],
+            "user_id": row["user_id"],
+            "expires_at": row["expires_at"],
+            "used_at": row["used_at"],
+            "created_at": row["created_at"],
+        }
+
+    return _without_sqlite_fallback(
+        "get_telegram_link_code",
+        postgres_operation,
+        lambda: sqlite_store.get_telegram_link_code(code_hash),
+    )
+
+
+def mark_telegram_link_code_used(code_hash):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update public.telegram_link_codes
+                    set used_at = %s
+                    where code_hash = %s
+                    and used_at is null
+                    """,
+                    (now_iso(), code_hash),
+                )
+                updated = cursor.rowcount
+            conn.commit()
+            return updated > 0
+
+    return _without_sqlite_fallback(
+        "mark_telegram_link_code_used",
+        postgres_operation,
+        lambda: sqlite_store.mark_telegram_link_code_used(code_hash),
+    )
 
 
 def delete_chat(chat_id, user_id):

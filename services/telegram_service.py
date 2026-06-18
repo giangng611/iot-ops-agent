@@ -8,7 +8,8 @@ from collections import OrderedDict
 import requests
 
 from services.chat_service import save_chat_message
-from storage.relational_store import create_chat
+from services.telegram_link_service import consume_link_code, unlink_telegram_identity
+from storage.relational_store import create_chat, get_telegram_identity
 
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -27,6 +28,8 @@ TELEGRAM_COMMANDS = [
     {"command": "pocalerts", "description": "Provisional company PoC alerts"},
     {"command": "disconnected", "description": "Disconnected company devices"},
     {"command": "ruleready", "description": "Company rule integration readiness"},
+    {"command": "link", "description": "Link Telegram to your IoT Ops Agent account"},
+    {"command": "unlink", "description": "Unlink this Telegram account"},
     {"command": "help", "description": "Show available commands"},
 ]
 TELEGRAM_COMMAND_PROMPTS = {
@@ -158,6 +161,31 @@ def telegram_user_is_allowed(telegram_user_id):
     return str(telegram_user_id) in allowed_user_ids
 
 
+def resolve_telegram_identity(message):
+    telegram_user_id = message.get("telegram_user_id")
+
+    if telegram_user_id is None:
+        return None, "missing_telegram_user_id"
+
+    if not telegram_user_is_allowed(telegram_user_id):
+        return None, "telegram_user_not_allowlisted"
+
+    identity = get_telegram_identity(telegram_user_id)
+
+    if not identity:
+        return None, "telegram_identity_not_mapped"
+
+    if not identity.get("is_active"):
+        return None, "telegram_identity_inactive"
+
+    return identity, None
+
+
+def data_source_is_allowed(identity, data_source):
+    allowed_sources = set(identity.get("allowed_data_sources") or [])
+    return data_source in allowed_sources
+
+
 def build_help_text():
     return "\n".join([
         "What would you like to check?",
@@ -171,6 +199,8 @@ def build_help_text():
         "/pocalerts - Provisional PoC alerts with evidence",
         "/disconnected - Company devices reporting disconnected",
         "/ruleready - Company rule and Grafana integration gaps",
+        "/link CODE - Link Telegram to your IoT Ops Agent account",
+        "/unlink - Revoke this Telegram account link",
         "/diagnose - Diagnose the whole system",
         "/diagnose gateway-001 - Diagnose one simulator device",
         "/diagnose SmartAsset_9b47fedc - Inspect one company device",
@@ -195,6 +225,108 @@ def normalize_telegram_prompt(text):
         )
 
     return text, None
+
+
+def parse_link_command(text):
+    command_text, _, arguments = str(text or "").partition(" ")
+    command = command_text.split("@", 1)[0].lstrip("/").lower()
+
+    if command != "link":
+        return None
+
+    return arguments.strip()
+
+
+def is_unlink_command(text):
+    command_text, _, _ = str(text or "").partition(" ")
+    command = command_text.split("@", 1)[0].lstrip("/").lower()
+    return command == "unlink"
+
+
+def handle_telegram_link_command(message):
+    code = parse_link_command(message["text"])
+
+    if code is None:
+        return None
+
+    if message.get("telegram_user_id") is None:
+        send_telegram_message(
+            message["chat_id"],
+            "Telegram could not identify your user ID for account linking.",
+        )
+        return {"status": "link_failed", "reason": "missing_telegram_user_id"}
+
+    success, reason = consume_link_code(
+        code,
+        message["telegram_user_id"],
+        telegram_username=message.get("telegram_username"),
+    )
+
+    if success:
+        identity = get_telegram_identity(message["telegram_user_id"]) or {}
+        allowed_sources = set(identity.get("allowed_data_sources") or [])
+        access_note = (
+            "Company DB access is enabled for this linked account."
+            if "company" in allowed_sources
+            else "Default access is simulator only."
+        )
+        send_telegram_message(
+            message["chat_id"],
+            (
+                "Telegram is linked to your IoT Ops Agent account. "
+                f"{access_note}"
+            ),
+        )
+        return {"status": "linked"}
+
+    messages = {
+        "invalid_code": "Invalid Telegram link code.",
+        "code_expired": "This Telegram link code has expired.",
+        "code_already_used": "This Telegram link code was already used.",
+        "telegram_already_linked": (
+            "This Telegram account is already linked to another "
+            "IoT Ops Agent account."
+        ),
+    }
+    send_telegram_message(
+        message["chat_id"],
+        messages.get(reason, "Unable to link this Telegram account."),
+    )
+    return {"status": "link_failed", "reason": reason}
+
+
+def handle_telegram_unlink_command(message):
+    if not is_unlink_command(message["text"]):
+        return None
+
+    success, reason = unlink_telegram_identity(message.get("telegram_user_id"))
+
+    if success:
+        send_telegram_message(
+            message["chat_id"],
+            (
+                "Telegram has been unlinked from your IoT Ops Agent account. "
+                "Use a new link code from the platform to link it again."
+            ),
+        )
+        return {"status": "unlinked"}
+
+    messages = {
+        "missing_telegram_user_id": (
+            "Telegram could not identify your user ID for unlinking."
+        ),
+        "telegram_identity_not_mapped": (
+            "This Telegram account is not linked to an IoT Ops Agent account."
+        ),
+        "telegram_identity_inactive": (
+            "This Telegram account link is already inactive."
+        ),
+    }
+    send_telegram_message(
+        message["chat_id"],
+        messages.get(reason, "Unable to unlink this Telegram account."),
+    )
+    return {"status": "unlink_failed", "reason": reason}
 
 
 def format_conversational_text(text):
@@ -265,12 +397,7 @@ def make_chat_title(message):
     return f"Telegram: {compact_message or 'New request'}"
 
 
-def start_telegram_history(message):
-    user_id = get_history_user_id()
-
-    if user_id is None:
-        return None, None
-
+def start_telegram_history(user_id, message):
     chat_id = create_chat(user_id, make_chat_title(message["text"]))
     save_chat_message(
         chat_id=chat_id,
@@ -345,6 +472,18 @@ def handle_telegram_update(update, langgraph_agent, emit_user_event=None):
     )
 
 
+def get_telegram_failure_user_id(update):
+    message = extract_message(update)
+
+    if message is not None:
+        identity, deny_reason = resolve_telegram_identity(message)
+
+        if not deny_reason:
+            return identity["user_id"]
+
+    return get_history_user_id()
+
+
 def process_telegram_update(
     update,
     langgraph_agent,
@@ -362,109 +501,139 @@ def process_telegram_update(
         return {"status": "duplicate"}
 
     try:
-        if not telegram_user_is_allowed(message["telegram_user_id"]):
-            send_telegram_message(
-                message["chat_id"],
-                "You are not allowed to use this IoT Ops Agent bot.",
-            )
-            result = {"status": "forbidden"}
+        link_result = handle_telegram_link_command(message)
+
+        if link_result is not None:
+            result = link_result
         else:
-            prompt, help_text = normalize_telegram_prompt(message["text"])
+            unlink_result = handle_telegram_unlink_command(message)
 
-            if help_text:
-                send_telegram_message(message["chat_id"], help_text)
-                result = {"status": "help_sent"}
+            if unlink_result is not None:
+                result = unlink_result
             else:
-                history_user_id, history_chat_id = start_telegram_history(
-                    message
-                )
-                title = make_chat_title(message["text"])
+                identity, deny_reason = resolve_telegram_identity(message)
 
-                if (
-                    emit_user_event
-                    and history_user_id is not None
-                    and history_chat_id is not None
-                ):
-                    emit_user_event(
-                        history_user_id,
-                        "telegram_chat_started",
-                        {
-                            "chat_id": history_chat_id,
-                            "title": title,
-                            "message": message["text"],
-                        },
+                if deny_reason:
+                    send_telegram_message(
+                        message["chat_id"],
+                        "You are not allowed to use this IoT Ops Agent bot.",
                     )
+                    result = {"status": "forbidden", "reason": deny_reason}
+                else:
+                    prompt, help_text = normalize_telegram_prompt(message["text"])
 
-                steps = []
-                final_answer = "No answer was generated."
-                token_usage = None
-                data_source = (
-                    get_user_data_source(history_user_id)
-                    if get_user_data_source
-                    else "simulator"
-                )
+                    if help_text:
+                        send_telegram_message(message["chat_id"], help_text)
+                        result = {"status": "help_sent"}
+                    else:
+                        history_user_id = identity["user_id"]
+                        history_chat_id = None
+                        title = make_chat_title(message["text"])
 
-                for stream_event in langgraph_agent.run_stream(
-                    prompt,
-                    data_source=data_source,
-                ):
-                    merge_stream_event(steps, stream_event)
-
-                    if stream_event.get("type") == "final":
-                        final_answer = format_conversational_text(
-                            stream_event.get("final_answer") or final_answer
-                        )
-                        token_usage = add_telegram_runtime_metadata(
-                            stream_event.get("token_usage")
+                        steps = []
+                        final_answer = "No answer was generated."
+                        token_usage = None
+                        data_source = (
+                            get_user_data_source(history_user_id)
+                            if get_user_data_source
+                            else "simulator"
                         )
 
-                    if (
-                        emit_user_event
-                        and history_user_id is not None
-                        and history_chat_id is not None
-                    ):
-                        emit_user_event(
+                        if not data_source_is_allowed(identity, data_source):
+                            send_telegram_message(
+                                message["chat_id"],
+                                (
+                                    "You are not allowed to use the selected "
+                                    "IoT Ops Agent data source."
+                                ),
+                            )
+                            result = {
+                                "status": "forbidden",
+                                "reason": "data_source_not_allowed",
+                                "data_source": data_source,
+                            }
+                            complete_telegram_update(update_key)
+                            return result
+
+                        history_user_id, history_chat_id = start_telegram_history(
                             history_user_id,
-                            "telegram_reasoning_event",
-                            {
-                                "chat_id": history_chat_id,
-                                "event": stream_event,
-                            },
+                            message,
                         )
 
-                agent_result = {
-                    "final_answer": final_answer,
-                    "steps": steps,
-                    "token_usage": token_usage,
-                }
-                finish_telegram_history(
-                    history_user_id,
-                    history_chat_id,
-                    agent_result,
-                )
+                        if emit_user_event:
+                            emit_user_event(
+                                history_user_id,
+                                "telegram_chat_started",
+                                {
+                                    "chat_id": history_chat_id,
+                                    "title": title,
+                                    "message": message["text"],
+                                    "telegram_user_id": identity["telegram_user_id"],
+                                    "telegram_role": identity["role"],
+                                },
+                            )
 
-                if (
-                    emit_user_event
-                    and history_user_id is not None
-                    and history_chat_id is not None
-                ):
-                    emit_user_event(
-                        history_user_id,
-                        "telegram_chat_completed",
-                        {
-                            "chat_id": history_chat_id,
+                        for stream_event in langgraph_agent.run_stream(
+                            prompt,
+                            data_source=data_source,
+                        ):
+                            merge_stream_event(steps, stream_event)
+
+                            if stream_event.get("type") == "final":
+                                final_answer = format_conversational_text(
+                                    stream_event.get("final_answer") or final_answer
+                                )
+                                token_usage = add_telegram_runtime_metadata(
+                                    stream_event.get("token_usage")
+                                )
+
+                            if (
+                                emit_user_event
+                                and history_user_id is not None
+                                and history_chat_id is not None
+                            ):
+                                emit_user_event(
+                                    history_user_id,
+                                    "telegram_reasoning_event",
+                                    {
+                                        "chat_id": history_chat_id,
+                                        "event": stream_event,
+                                    },
+                                )
+
+                        agent_result = {
                             "final_answer": final_answer,
                             "steps": steps,
                             "token_usage": token_usage,
-                        },
-                    )
+                        }
+                        finish_telegram_history(
+                            history_user_id,
+                            history_chat_id,
+                            agent_result,
+                        )
 
-                send_telegram_message(message["chat_id"], final_answer)
-                result = {
-                    "status": "answered",
-                    "history_chat_id": history_chat_id,
-                    "step_count": len(agent_result.get("steps", [])),
-                }
+                        if (
+                            emit_user_event
+                            and history_user_id is not None
+                            and history_chat_id is not None
+                        ):
+                            emit_user_event(
+                                history_user_id,
+                                "telegram_chat_completed",
+                                {
+                                    "chat_id": history_chat_id,
+                                    "final_answer": final_answer,
+                                    "steps": steps,
+                                    "token_usage": token_usage,
+                                },
+                            )
+
+                        send_telegram_message(message["chat_id"], final_answer)
+                        result = {
+                            "status": "answered",
+                            "history_chat_id": history_chat_id,
+                            "step_count": len(agent_result.get("steps", [])),
+                        }
     except Exception:
         release_telegram_update(update_key)
         raise
@@ -489,7 +658,21 @@ def process_telegram_update_in_background(
             )
         except Exception as exc:
             print(f"Telegram background processing failed: {exc}")
-            history_user_id = get_history_user_id()
+            history_user_id = get_telegram_failure_user_id(update)
+            message = extract_message(update)
+
+            if message is not None:
+                try:
+                    send_telegram_message(
+                        message["chat_id"],
+                        (
+                            "Telegram request failed before the IoT Ops Agent "
+                            "could finish processing it. Please try again in a "
+                            "moment or check the server logs."
+                        ),
+                    )
+                except Exception as send_exc:
+                    print(f"Telegram failure notification failed: {send_exc}")
 
             if emit_user_event and history_user_id is not None:
                 emit_user_event(

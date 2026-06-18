@@ -71,7 +71,7 @@ Simulator telemetry ─┐
                      ├─> Flask + Socket.IO -> AI runtimes -> Web UI / Telegram
 Company MongoDB ─────┘
 
-App data: Supabase/Postgres, with optional SQLite fallback
+App data: Supabase/Postgres, fail-closed by default
 Simulator telemetry: MongoDB or SQLite, selected by environment
 ```
 
@@ -195,8 +195,7 @@ PUBLIC_BASE_URL=https://iot-ops-agent.onrender.com
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret
 TELEGRAM_ALLOWED_USER_IDS=
-TELEGRAM_HISTORY_USER_ID=
-TELEGRAM_DEFAULT_DATA_SOURCE=simulator
+TELEGRAM_LINK_CODE_TTL_MINUTES=15
 COMPANY_MONGODB_URI=
 COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
 COMPANY_DB_STATEMENT_TIMEOUT_MS=5000

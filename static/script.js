@@ -269,6 +269,7 @@ let assistantMessageActionStore = {};
 let userMessageActionStore = {};
 let workflowNodeDetailStore = {};
 let selectedDataSource = "simulator";
+let allowedDataSources = ["simulator"];
 const LIVE_REASONING_VIEW_ID = "__live_reasoning_trace__";
 
 function isLiveReasoningDrawerOpen() {
@@ -1451,6 +1452,7 @@ async function refreshDevices() {
         const data = await response.json();
 
         selectedDataSource = data.selected_source || selectedDataSource;
+        allowedDataSources = data.allowed_data_sources || allowedDataSources;
         currentDataSourceState = {
             selected_source: data.selected_source || selectedDataSource,
             active_source: data.active_source || data.source || "simulator",
@@ -1479,6 +1481,12 @@ async function refreshDevices() {
 }
 
 async function changeDataSource(value) {
+    if (!allowedDataSources.includes(value)) {
+        updateDataSourceControl();
+        updateRealtimeStatusDisplay();
+        return;
+    }
+
     selectedDataSource = value;
     updateDataSourceControl();
     updateRealtimeStatusDisplay();
@@ -1494,10 +1502,17 @@ async function changeDataSource(value) {
             })
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
+            selectedDataSource = data.selected_source || selectedDataSource;
+            allowedDataSources = data.allowed_data_sources || allowedDataSources;
+            updateDataSourceControl();
             throw new Error("Unable to update data source.");
         }
 
+        selectedDataSource = data.selected_source || selectedDataSource;
+        allowedDataSources = data.allowed_data_sources || allowedDataSources;
         await refreshDevices();
     } catch (error) {
         console.error("Failed to switch data source:", error);
@@ -1514,7 +1529,10 @@ function updateDataSourceControl() {
     control.dataset.selected = selectedDataSource;
     control.querySelectorAll("button").forEach(button => {
         const isSelected = button.dataset.source === selectedDataSource;
+        const isAllowed = allowedDataSources.includes(button.dataset.source);
         button.setAttribute("aria-pressed", String(isSelected));
+        button.disabled = !isAllowed;
+        button.classList.toggle("disabled-option", !isAllowed);
     });
 }
 
@@ -2355,6 +2373,117 @@ function renderReasoningDrawerLive() {
     return;
 }
 
+function prettyJson(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+
+    return JSON.stringify(value, null, 2);
+}
+
+function renderJsonBlock(value, className = "") {
+    return `<pre class="reasoning-json-block ${className}">${escapeHtml(prettyJson(value))}</pre>`;
+}
+
+function renderQueryCommands(output) {
+    const commands = Array.isArray(output?.query_commands)
+        ? output.query_commands
+        : [];
+
+    if (commands.length === 0) {
+        return "";
+    }
+
+    return `
+        <section class="reasoning-section query-command-section">
+            <div class="reasoning-section-title">Query Commands</div>
+            ${commands.map((command, index) => `
+                <div class="query-command-card">
+                    <div class="query-command-header">
+                        <span>Command ${index + 1}</span>
+                        <span>${escapeHtml(command.operation || "read")} · ${escapeHtml(command.namespace || "")}</span>
+                    </div>
+                    ${renderJsonBlock(command.command || "", "query-command-code")}
+                    <div class="query-command-meta">
+                        <span>Actor: ${escapeHtml(command.actor || "unknown")}</span>
+                        <span>Limit: ${escapeHtml(String(command.effective_limit ?? "n/a"))}</span>
+                        <span>MaxTimeMS: ${escapeHtml(String(command.max_time_ms ?? "n/a"))}</span>
+                        <span>Mutating: ${command.mutating ? "yes" : "no"}</span>
+                        <span>Credentials: ${command.credentials_redacted ? "redacted" : "not reported"}</span>
+                    </div>
+                    <details class="query-command-details">
+                        <summary>Filter / projection / raw audit</summary>
+                        ${renderJsonBlock({
+                            query: command.query || {},
+                            projection: command.projection || {},
+                            sort: command.sort || null,
+                            requested_limit: command.requested_limit,
+                            effective_limit: command.effective_limit,
+                            allowed_namespaces_enforced: command.allowed_namespaces_enforced,
+                            credentials_redacted: command.credentials_redacted,
+                            mutating: command.mutating,
+                        })}
+                    </details>
+                </div>
+            `).join("")}
+        </section>
+    `;
+}
+
+function renderObjectSummary(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) {
+        return renderJsonBlock(output ?? "Waiting for observation...");
+    }
+
+    const hiddenKeys = new Set(["query_commands", "db_audit"]);
+    const entries = Object.entries(output).filter(([key]) => !hiddenKeys.has(key));
+    const scalarEntries = entries.filter(([, value]) =>
+        value === null || ["string", "number", "boolean"].includes(typeof value)
+    );
+    const complexEntries = entries.filter(([, value]) =>
+        !(value === null || ["string", "number", "boolean"].includes(typeof value))
+    );
+
+    return `
+        ${scalarEntries.length ? `
+            <div class="reasoning-kv-grid">
+                ${scalarEntries.map(([key, value]) => `
+                    <div class="reasoning-kv-item">
+                        <span>${escapeHtml(key)}</span>
+                        <strong>${escapeHtml(String(value))}</strong>
+                    </div>
+                `).join("")}
+            </div>
+        ` : ""}
+        ${complexEntries.map(([key, value]) => `
+            <section class="reasoning-section">
+                <div class="reasoning-section-title">${escapeHtml(key)}</div>
+                ${renderJsonBlock(value)}
+            </section>
+        `).join("")}
+    `;
+}
+
+function renderObservationOutput(output) {
+    if (!output) {
+        return renderJsonBlock("Waiting for observation...");
+    }
+
+    return `
+        ${renderQueryCommands(output)}
+        <section class="reasoning-section">
+            <div class="reasoning-section-title">Observation</div>
+            ${renderObjectSummary(output)}
+        </section>
+    `;
+}
+
+function observationText(output) {
+    return output
+        ? JSON.stringify(output, null, 2)
+        : "Waiting for observation...";
+}
+
 function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     const content = document.getElementById("reasoningDrawerContent");
     const safeSteps = Array.isArray(steps) ? steps : [];
@@ -2372,10 +2501,6 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     let html = "";
 
     safeSteps.forEach(step => {
-        const outputText = step.output
-            ? JSON.stringify(step.output, null, 2)
-            : "Waiting for observation...";
-
         html += `
             <div class="reasoning-step" id="reasoning-step-${step.iteration}">
                 <h4>Iteration ${step.iteration}</h4>
@@ -2391,7 +2516,9 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
                 </p>
 
                 <p><strong>Observation:</strong></p>
-                <pre class="reasoning-observation">${escapeHtml(outputText)}</pre>
+                <div class="reasoning-observation-container">
+                    ${renderObservationOutput(step.output)}
+                </div>
             </div>
         `;
     });
@@ -2411,10 +2538,6 @@ function renderReasoningSteps(steps, shouldType = false) {
     let html = "";
 
     safeSteps.forEach((step, index) => {
-        const outputText = step.output
-            ? JSON.stringify(step.output, null, 2)
-            : "Waiting for observation...";
-
         html += `
             <div class="reasoning-step" data-step-index="${index}">
                 <h4>Iteration ${step.iteration}</h4>
@@ -2430,7 +2553,11 @@ function renderReasoningSteps(steps, shouldType = false) {
                 </p>
 
                 <p><strong>Observation:</strong></p>
-                <pre class="reasoning-observation">${shouldType ? "" : escapeHtml(outputText)}</pre>
+                <div class="reasoning-observation-container">
+                    ${shouldType
+                        ? '<pre class="reasoning-observation"></pre>'
+                        : renderObservationOutput(step.output)}
+                </div>
             </div>
         `;
     });
@@ -2464,17 +2591,13 @@ function renderReasoningSteps(steps, shouldType = false) {
         const actionElement = stepElement.querySelector(".reasoning-action");
         const observationElement = stepElement.querySelector(".reasoning-observation");
 
-        const observationText = step.output
-            ? JSON.stringify(step.output, null, 2)
-            : "Waiting for observation...";
-
         typeReasoningStep(
             thoughtElement,
             step.thought,
             actionElement,
             step.action,
             observationElement,
-            observationText
+            observationText(step.output)
         );
     });
 }
@@ -2513,7 +2636,9 @@ function createReasoningStepElement(step) {
         </p>
 
         <p><strong>Observation:</strong></p>
-        <pre class="reasoning-observation"></pre>
+        <div class="reasoning-observation-container">
+            <pre class="reasoning-observation"></pre>
+        </div>
     `;
 
     const traceList = content.querySelector(".reasoning-trace-list") || content;
@@ -3129,13 +3254,20 @@ function enqueueReasoningObservation(step) {
 
         const stepElement = createReasoningStepElement(step);
         const observationElement = stepElement.querySelector(".reasoning-observation");
+        const observationContainer = stepElement.querySelector(
+            ".reasoning-observation-container"
+        );
 
-        const observationText = step.output
-            ? JSON.stringify(step.output, null, 2)
-            : "Waiting for observation...";
-
-        return typeTextIntoElementPromise(observationElement, observationText, 1)
+        return typeTextIntoElementPromise(
+            observationElement,
+            observationText(step.output),
+            1
+        )
             .then(() => {
+                if (observationContainer) {
+                    observationContainer.innerHTML = renderObservationOutput(step.output);
+                }
+
                 const existingStep = displayedWorkflowSteps.find(item =>
                     item.iteration === step.iteration
                 );
@@ -4543,6 +4675,37 @@ async function openProfileDrawer(type) {
         `;
     }
 
+    if (type === "telegram") {
+        title.textContent = "Telegram";
+        subtitle.textContent = "Link your Telegram account with a one-time code.";
+
+        content.innerHTML = `
+            <div class="drawer-info-list">
+                <div>
+                    <strong>Secure account linking</strong>
+                    <p>
+                        Generate a short-lived code, then send it to the Telegram bot.
+                        New links start with simulator access only.
+                    </p>
+
+                    <button class="secondary-btn" onclick="generateTelegramLinkCode()">
+                        Generate Link Code
+                    </button>
+
+                    <div id="telegramLinkResult" class="profile-form"></div>
+                </div>
+
+                <div>
+                    <strong>Company DB access</strong>
+                    <p>
+                        Company DB access is not self-granted through Telegram.
+                        An approved operator/admin must grant company scope after review.
+                    </p>
+                </div>
+            </div>
+        `;
+    }
+
     if (type === "usage") {
         title.textContent = "Usage Statistics";
         subtitle.textContent = "Account-level activity across your workspace.";
@@ -4559,6 +4722,71 @@ async function openProfileDrawer(type) {
         loadUsageStats(content);
     }
 
+}
+
+async function generateTelegramLinkCode() {
+    const result = document.getElementById("telegramLinkResult");
+
+    if (!result) {
+        return;
+    }
+
+    result.innerHTML = "<p>Generating link code...</p>";
+
+    try {
+        const response = await fetch("/api/profile/telegram-link-code", {
+            method: "POST",
+        });
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+            result.innerHTML = `<p>${escapeHtml(data.error || "Unable to create link code.")}</p>`;
+            return;
+        }
+
+        const command = `/link ${data.code}`;
+        result.innerHTML = `
+            <label>Send this command to the Telegram bot</label>
+            <div class="telegram-link-command-box">
+                <input id="telegramLinkCommand" readonly value="${escapeHtml(command)}">
+                <button
+                    id="telegramLinkCopyButton"
+                    class="telegram-link-copy-btn"
+                    onclick="copyTelegramLinkCommand(this)"
+                    type="button"
+                >
+                    Copy
+                </button>
+            </div>
+            <p>
+                Expires in ${Number(data.ttl_minutes || 15)} minutes.
+                The code can be used once.
+            </p>
+        `;
+    } catch (error) {
+        result.innerHTML = "<p>Unable to create link code.</p>";
+    }
+}
+
+async function copyTelegramLinkCommand(button = null) {
+    const input = document.getElementById("telegramLinkCommand");
+
+    if (!input) {
+        return;
+    }
+
+    await copyTextToClipboard(input.value);
+
+    if (button) {
+        const originalText = button.textContent;
+        button.textContent = "Copied";
+        button.classList.add("copied");
+
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.classList.remove("copied");
+        }, 1400);
+    }
 }
 
 function closeProfileDrawer() {

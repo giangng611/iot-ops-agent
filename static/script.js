@@ -454,8 +454,8 @@ function inferRuntimeMetadataFromReasoningSteps(reasoningSteps) {
 
     if (normalized === "langgraph+n8n") {
         return {
-            runtime_label: "IOA v3 · Grafana Ops Orchestrator",
-            model_name: "gpt-4o-mini + Grafana workflow"
+            runtime_label: "IOA v3 · Ops Graph",
+            model_name: "gpt-4o-mini + operational workflow"
         };
     }
 
@@ -3296,9 +3296,9 @@ function getRuntimeWorkflowTemplate(runtimeMode, frameworkName = "") {
             viewBox: "0 0 100 100",
             nodes: [
                 { id: "validate_request", label: "Validate request", shortLabel: "Validate", detail: "Check prompt size, source context, and IOA v3 policy entry.", icon: "IN", x: 11, y: 30, type: "trigger" },
-                { id: "select_workflow", label: "Select Grafana workflow", shortLabel: "Select", detail: "LangGraph chooses an allowlisted Grafana workflow/tool.", icon: "AI", x: 34, y: 30, type: "agent" },
+                { id: "select_workflow", label: "Select workflow", shortLabel: "Select", detail: "LangGraph chooses an allowlisted operational workflow/tool.", icon: "AI", x: 34, y: 30, type: "agent" },
                 { id: "authorize_workflow", label: "Authorize workflow", shortLabel: "Authorize", detail: "Check tool allowlist, params, and execution budget.", icon: "OK", x: 56, y: 30, type: "agent" },
-                { id: "call_n8n_workflow", label: "Run Grafana tool via n8n", shortLabel: "Run tool", detail: "Execute the approved Grafana workflow through n8n and collect bounded evidence.", icon: "HTTP", x: 73, y: 62, type: "tool" },
+                { id: "call_n8n_workflow", label: "Run approved tool", shortLabel: "Run tool", detail: "Execute the approved Grafana/n8n or company DB read workflow and collect bounded evidence.", icon: "HTTP", x: 73, y: 62, type: "tool" },
                 { id: "apply_kpi_rules", label: "Apply KPI rules", shortLabel: "KPI rules", detail: "Attach Grafana KPI semantics before language generation.", icon: "KPI", x: 83, y: 30, type: "agent" },
                 { id: "generate_answer", label: "Generate final answer", shortLabel: "Answer", detail: "Generate the final answer from n8n evidence and KPI rules.", icon: "OUT", x: 94, y: 30, type: "answer" }
             ],
@@ -5083,7 +5083,7 @@ async function openProfileDrawer(type) {
         }
 
         if (selectedMode === "ioa_v3_langgraph_n8n") {
-            modeLabel = "IOA v3 · Grafana Ops Orchestrator";
+            modeLabel = "IOA v3 · Ops Graph";
         }
 
         const deviceCount =

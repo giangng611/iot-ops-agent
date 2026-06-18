@@ -108,6 +108,138 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertEqual(params, {})
         self.assertEqual(reason, "redis_keywords")
 
+    def test_ioa_v3_routes_disconnected_devices_to_company_db_tool(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, reason = agent.classify_tool(
+            "list disconnected devices from company db"
+        )
+
+        self.assertEqual(tool, "get_company_disconnected_devices")
+        self.assertEqual(params, {})
+        self.assertEqual(reason, "company_disconnected_device_keywords")
+
+    def test_ioa_v3_routes_company_temperature_alerts_to_company_db_tool(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, reason = agent.classify_tool(
+            "/company temperature alerts and measured values"
+        )
+
+        self.assertEqual(tool, "get_company_provisional_alerts")
+        self.assertEqual(params, {})
+        self.assertEqual(reason, "company_alert_or_measured_value_keywords")
+
+    def test_ioa_v3_classifies_natural_company_device_prompts(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        cases = [
+            (
+                "which sensors have high temperature measured values?",
+                "get_company_provisional_alerts",
+            ),
+            (
+                "show telemetry coverage and unmapped company payloads",
+                "get_company_telemetry_coverage",
+            ),
+            (
+                "are the official company rules ready for grafana integration?",
+                "get_company_rule_readiness",
+            ),
+            (
+                "give me a company fleet snapshot",
+                "get_company_fleet_summary",
+            ),
+            (
+                "list company inventory devices",
+                "get_company_inventory",
+            ),
+        ]
+
+        for prompt, expected_tool in cases:
+            with self.subTest(prompt=prompt):
+                tool, _, _ = agent.classify_tool(prompt)
+                self.assertEqual(tool, expected_tool)
+
+    def test_ioa_v3_extracts_company_threshold_scan_prompt(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, reason = agent.classify_tool(
+            "find devices with temperature above 70"
+        )
+
+        self.assertEqual(tool, "scan_company_threshold")
+        self.assertEqual(params, {"threshold": 70.0})
+        self.assertEqual(reason, "company_threshold_keywords")
+
+    def test_ioa_v3_keeps_infra_prompts_on_grafana_route(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        cases = [
+            ("check redis health", "grafana_redis_health"),
+            ("company redis health", "grafana_redis_health"),
+            ("platform service health", "grafana_platform_service_health"),
+        ]
+
+        for prompt, expected_tool in cases:
+            with self.subTest(prompt=prompt):
+                tool, _, _ = agent.classify_tool(prompt)
+                self.assertEqual(tool, expected_tool)
+
+    def test_ioa_v3_company_db_tool_emits_query_commands(self):
+        model = MagicMock()
+        model.invoke.return_value.content = "Summary\nFound disconnected devices."
+        model.invoke.return_value.response_metadata = {}
+        agent = IOAV3LangGraphN8nAgent(model=model)
+
+        with patch(
+            "agents.ioa_v3_agent.get_company_disconnected_context",
+            return_value={
+                "source": "company_mongodb",
+                "tool": "get_company_disconnected_devices",
+                "db_audit_status": "runtime_audit_available",
+                "db_audit": [{
+                    "actor": "company-llm-tools",
+                    "operation": "find",
+                    "namespace": "devicemgmt.NODE",
+                    "query": {"status": {"$in": ["disconnected", "offline"]}},
+                    "projection": {"_id": 0, "rn": 1, "status": 1},
+                    "effective_limit": 1000,
+                    "max_time_ms": 5000,
+                    "credentials_redacted": True,
+                    "mutating": False,
+                }],
+                "count": 1,
+                "devices": [{"device_id": "dev-1", "status": "disconnected"}],
+            },
+        ):
+            events = list(agent.run_stream(
+                "list disconnected devices",
+                selected_source="company",
+                source_resolution={
+                    "selected_source": "company",
+                    "active_source": "company_mongodb",
+                },
+                user_id=1,
+            ))
+
+        observations = [
+            event for event in events
+            if event.get("type") == "observation"
+        ]
+        db_step = next(
+            event["observation"]["output"]
+            for event in observations
+            if event["observation"]["output"].get("tool")
+            == "get_company_disconnected_devices"
+        )
+        self.assertIn("query_commands", db_step)
+        self.assertIn(
+            'db.getSiblingDB("devicemgmt").getCollection("NODE").find',
+            db_step["query_commands"][0]["command"],
+        )
+        self.assertEqual(events[-1]["type"], "final")
+
     def test_ioa_v3_run_stream_emits_n8n_and_kpi_steps(self):
         model = MagicMock()
         model.invoke.return_value.content = "Summary\nRedis is healthy."

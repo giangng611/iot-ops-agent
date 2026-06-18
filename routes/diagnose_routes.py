@@ -67,8 +67,8 @@ def create_diagnose_blueprint(runtime):
             "model_name": "Dify app model",
         },
         "ioa_v3_langgraph_n8n": {
-            "runtime_label": "IOA v3 · Grafana Ops Orchestrator",
-            "model_name": "gpt-4o-mini + Grafana workflow",
+            "runtime_label": "IOA v3 · Ops Graph",
+            "model_name": "gpt-4o-mini + operational workflow",
         },
     }
 
@@ -378,7 +378,7 @@ def create_diagnose_blueprint(runtime):
                 )
 
                 log_benchmark_result(
-                    mode="IOA v3 · Grafana Ops Orchestrator",
+                    mode="IOA v3 · Ops Graph",
                     prompt=user_input,
                     latency_seconds=latency_seconds,
                     accuracy_score=0,
@@ -389,7 +389,7 @@ def create_diagnose_blueprint(runtime):
                     integration_speed_score=5,
                     ecosystem_score=5,
                     maintainability_score=4,
-                    notes="Automatic benchmark capture from IOA v3 Grafana workflow."
+                    notes="Automatic benchmark capture from IOA v3 operational workflow."
                 )
 
                 return jsonify({
@@ -763,7 +763,7 @@ def create_diagnose_blueprint(runtime):
                         latency_seconds = round(time.time() - start_time, 2)
 
                         log_benchmark_result(
-                            mode="IOA v3 · Grafana Ops Orchestrator",
+                            mode="IOA v3 · Ops Graph",
                             prompt=user_input,
                             latency_seconds=latency_seconds,
                             accuracy_score=0,
@@ -774,7 +774,7 @@ def create_diagnose_blueprint(runtime):
                             integration_speed_score=5,
                             ecosystem_score=5,
                             maintainability_score=4,
-                            notes="Automatic benchmark capture from streamed IOA v3 Grafana workflow."
+                            notes="Automatic benchmark capture from streamed IOA v3 operational workflow."
                         )
                     except Exception as exc:
                         app_logger.exception(

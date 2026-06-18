@@ -1,9 +1,9 @@
-# IOA v3 Grafana Ops Orchestrator
+# IOA v3 Ops Graph
 
-IOA v3 is a separate runtime for Grafana operational workflows. The public
-product label is `IOA v3 · Grafana Ops Orchestrator`; internally it keeps
-LangGraph as the policy and reasoning layer while n8n executes approved
-Grafana workflow steps.
+IOA v3 is a separate runtime for controlled operational workflows. The public
+product label is `IOA v3 · Ops Graph`; internally it keeps LangGraph as the
+policy and reasoning layer while n8n executes approved Grafana workflow steps
+and backend read tools provide controlled company DB evidence when needed.
 
 ## Runtime Boundary
 
@@ -11,9 +11,10 @@ Grafana workflow steps.
 Web UI
   -> Flask auth, source policy, rate limit
   -> IOA v3 LangGraph policy graph
-  -> n8n grafana_ops_gateway webhook
-  -> Grafana Dashboard Client API
-  -> n8n normalized response
+  -> approved tool route:
+       - n8n grafana_ops_gateway webhook -> Grafana Dashboard Client API
+       - backend company DB read tool -> company MongoDB read proxy
+  -> bounded evidence
   -> IOA v3 KPI rule attachment and final answer
 ```
 
@@ -257,7 +258,7 @@ The n8n response should be JSON:
 
 7. Test from the UI.
 
-   The default chat runtime is now `IOA v3 · Grafana Ops Orchestrator`.
+   The default chat runtime is now `IOA v3 · Ops Graph`.
    Try prompts such as:
 
    - `check redis health`

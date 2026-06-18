@@ -508,7 +508,34 @@ Workflow evidence and KPI rules:
             self.call_n8n_workflow_node,
             self.apply_kpi_rules_node,
         ):
-            state.update(node(state))
+            try:
+                state.update(node(state))
+            except Exception as exc:
+                state["steps"] = self.append_step(
+                    state,
+                    iteration=len(state.get("steps", [])) + 1,
+                    node_id=getattr(node, "__name__", "runtime_error"),
+                    node_label="Runtime error",
+                    thought="IOA v3 stopped because a workflow runtime dependency failed.",
+                    action="runtime_error",
+                    output={
+                        "error_type": exc.__class__.__name__,
+                        "message": str(exc),
+                    },
+                )
+                step = state["steps"][-1]
+                yield from self.stream_step(step)
+                yield {
+                    "type": "final",
+                    "final_answer": (
+                        "IOA v3 could not complete the Grafana workflow. "
+                        "Please verify N8N_V3_WEBHOOK_URL and "
+                        "GRAFANA_DASHBOARD_CLIENT_URL, then try again."
+                    ),
+                    "token_usage": None,
+                }
+                return
+
             yield from self.stream_step(state["steps"][-1])
 
             if not state.get("policy_allowed"):
@@ -520,7 +547,33 @@ Workflow evidence and KPI rules:
                 }
                 return
 
-        state.update(self.generate_answer_node(state))
+        try:
+            state.update(self.generate_answer_node(state))
+        except Exception as exc:
+            state["steps"] = self.append_step(
+                state,
+                iteration=len(state.get("steps", [])) + 1,
+                node_id="generate_answer",
+                node_label="Generate answer",
+                thought="IOA v3 collected workflow evidence but failed during final answer generation.",
+                action="runtime_error",
+                output={
+                    "error_type": exc.__class__.__name__,
+                    "message": str(exc),
+                },
+            )
+            step = state["steps"][-1]
+            yield from self.stream_step(step)
+            yield {
+                "type": "final",
+                "final_answer": (
+                    "IOA v3 collected workflow evidence, but final answer "
+                    "generation failed. Please check the configured LLM runtime."
+                ),
+                "token_usage": None,
+            }
+            return
+
         yield from self.stream_step(state["steps"][-1])
         yield {
             "type": "final",

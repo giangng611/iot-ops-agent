@@ -2,7 +2,7 @@ import json
 import time
 from collections import defaultdict, deque
 
-from flask import Blueprint, Response, jsonify, request, session
+from flask import Blueprint, Response, current_app, jsonify, request, session
 
 from benchmark_logger import log_benchmark_result
 from routes.helpers import login_required
@@ -439,7 +439,11 @@ def create_diagnose_blueprint(runtime):
                 )
             })
 
-        except Exception:
+        except Exception as exc:
+            current_app.logger.exception(
+                "Diagnose runtime failed: %s",
+                exc,
+            )
             return jsonify({
                 "error": public_runtime_error,
             }), 500
@@ -468,6 +472,8 @@ def create_diagnose_blueprint(runtime):
             else "simulator"
         )
         start_time = time.time()
+        app_logger = current_app.logger
+        session_user_id = session.get("user_id")
 
         def generate():
             try:
@@ -745,7 +751,7 @@ def create_diagnose_blueprint(runtime):
                             user_input,
                             selected_source=data_source,
                             source_resolution=source_resolution,
-                            user_id=session.get("user_id"),
+                            user_id=session_user_id,
                         ):
                             if event.get("type") == "final":
                                 event["token_usage"] = add_runtime_metadata(
@@ -770,7 +776,11 @@ def create_diagnose_blueprint(runtime):
                             maintainability_score=4,
                             notes="Automatic benchmark capture from streamed IOA v3 Grafana workflow."
                         )
-                    except Exception:
+                    except Exception as exc:
+                        app_logger.exception(
+                            "IOA v3 stream runtime failed: %s",
+                            exc,
+                        )
                         yield f"data: {json.dumps({
                             'type': 'observation',
                             'iteration': 1,
@@ -936,7 +946,11 @@ def create_diagnose_blueprint(runtime):
                     notes="Automatic benchmark capture from streamed UI execution."
                 )
 
-            except Exception:
+            except Exception as exc:
+                app_logger.exception(
+                    "Diagnose stream runtime failed: %s",
+                    exc,
+                )
                 yield f"data: {json.dumps({
                     'type': 'error',
                     'error': public_runtime_error,

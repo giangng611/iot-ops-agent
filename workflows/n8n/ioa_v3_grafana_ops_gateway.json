@@ -5,7 +5,7 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "grafana-ops-gateway",
-        "responseMode": "responseNode",
+        "responseMode": "lastNode",
         "options": {}
       },
       "id": "f21f8ff5-7d21-45a1-9f86-8206ce7d0ad1",
@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $json.body || $json;\nconst workflow = body.workflow || {};\nconst grafanaClient = body.grafana_client || {};\n\nconst allowedPaths = new Set([\n  '/platform/service-health',\n  '/grafana/queue-backlog',\n  '/grafana/throughput',\n  '/grafana/http-health',\n  '/grafana/java-errors',\n  '/grafana/trace-metrics',\n  '/grafana/logs',\n  '/grafana/emqx',\n  '/grafana/k8s',\n  '/grafana/redis',\n  '/grafana/mongodb',\n  '/grafana/mysql',\n  '/grafana/linux'\n]);\n\nconst allowedParamsByPath = {\n  '/platform/service-health': [],\n  '/grafana/queue-backlog': [],\n  '/grafana/throughput': ['queue'],\n  '/grafana/http-health': ['project', 'window'],\n  '/grafana/java-errors': ['window'],\n  '/grafana/trace-metrics': ['window'],\n  '/grafana/logs': ['service', 'level', 'hours_back', 'limit'],\n  '/grafana/emqx': [],\n  '/grafana/k8s': [],\n  '/grafana/redis': [],\n  '/grafana/mongodb': [],\n  '/grafana/mysql': [],\n  '/grafana/linux': []\n};\n\nconst method = String(workflow.method || 'GET').toUpperCase();\nconst path = String(workflow.path || '');\nconst baseUrl = String(grafanaClient.base_url || 'http://localhost:5050').replace(/\\/+$/, '');\n\nif (method !== 'GET') {\n  throw new Error(`Rejected non-read Grafana method: ${method}`);\n}\n\nif (!allowedPaths.has(path)) {\n  throw new Error(`Rejected unapproved Grafana path: ${path}`);\n}\n\nconst allowedParams = new Set(allowedParamsByPath[path] || []);\nconst rawParams = workflow.params || {};\nconst safeParams = {};\nfor (const [key, value] of Object.entries(rawParams)) {\n  if (allowedParams.has(key) && value !== null && value !== undefined && value !== '') {\n    safeParams[key] = String(value);\n  }\n}\n\nconst query = new URLSearchParams(safeParams).toString();\nconst url = `${baseUrl}${path}${query ? `?${query}` : ''}`;\n\nreturn [{\n  json: {\n    ...body,\n    request: {\n      method,\n      url,\n      path,\n      params: safeParams,\n      tool: workflow.tool,\n      workflow_id: workflow.workflow_id\n    },\n    gateway_audit: {\n      actor: 'n8n-grafana-ops-gateway',\n      mutating: false,\n      credentials: 'redacted',\n      allowed_path: path,\n      filtered_params: safeParams\n    }\n  }\n}];"
+        "jsCode": "const body = $json.body || $json;\nconst workflow = body.workflow || {};\nconst grafanaClient = body.grafana_client || {};\n\nconst allowedPaths = new Set([\n  '/platform/service-health',\n  '/grafana/queue-backlog',\n  '/grafana/throughput',\n  '/grafana/http-health',\n  '/grafana/java-errors',\n  '/grafana/trace-metrics',\n  '/grafana/logs',\n  '/grafana/emqx',\n  '/grafana/k8s',\n  '/grafana/redis',\n  '/grafana/mongodb',\n  '/grafana/mysql',\n  '/grafana/linux'\n]);\n\nconst allowedParamsByPath = {\n  '/platform/service-health': [],\n  '/grafana/queue-backlog': [],\n  '/grafana/throughput': ['queue'],\n  '/grafana/http-health': ['project', 'window'],\n  '/grafana/java-errors': ['window'],\n  '/grafana/trace-metrics': ['window'],\n  '/grafana/logs': ['service', 'level', 'hours_back', 'limit'],\n  '/grafana/emqx': [],\n  '/grafana/k8s': [],\n  '/grafana/redis': [],\n  '/grafana/mongodb': [],\n  '/grafana/mysql': [],\n  '/grafana/linux': []\n};\n\nconst method = String(workflow.method || 'GET').toUpperCase();\nconst path = String(workflow.path || '');\nconst baseUrl = String(grafanaClient.base_url || 'http://127.0.0.1:5050').replace(/\\/+$/, '');\n\nif (method !== 'GET') {\n  throw new Error(`Rejected non-read Grafana method: ${method}`);\n}\n\nif (!allowedPaths.has(path)) {\n  throw new Error(`Rejected unapproved Grafana path: ${path}`);\n}\n\nconst allowedParams = new Set(allowedParamsByPath[path] || []);\nconst rawParams = workflow.params || {};\nconst safeParams = {};\nfor (const [key, value] of Object.entries(rawParams)) {\n  if (allowedParams.has(key) && value !== null && value !== undefined && value !== '') {\n    safeParams[key] = String(value);\n  }\n}\n\nconst query = Object.entries(safeParams)\n  .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)\n  .join('&');\nconst url = `${baseUrl}${path}${query ? `?${query}` : ''}`;\n\nreturn [{\n  json: {\n    ...body,\n    request: {\n      method,\n      url,\n      path,\n      params: safeParams,\n      tool: workflow.tool,\n      workflow_id: workflow.workflow_id\n    },\n    gateway_audit: {\n      actor: 'n8n-grafana-ops-gateway',\n      mutating: false,\n      credentials: 'redacted',\n      allowed_path: path,\n      filtered_params: safeParams\n    }\n  }\n}];"
       },
       "id": "12a7f102-7560-4d7c-a80d-77bf98dbb1cc",
       "name": "Validate Grafana Request",
@@ -54,11 +54,12 @@
       "position": [
         -260,
         0
-      ]
+      ],
+      "continueOnFail": true
     },
     {
       "parameters": {
-        "jsCode": "const evidence = $json;\nconst request = $('Validate Grafana Request').first().json.request;\nconst gatewayAudit = $('Validate Grafana Request').first().json.gateway_audit;\nconst workflow = $('Validate Grafana Request').first().json.workflow || {};\nconst kpiRules = $('Validate Grafana Request').first().json.kpi_rules || [];\n\nconst level = evidence.level || evidence.overall_verdict || evidence.status || 'unknown';\nconst response = [\n  `Grafana workflow ${workflow.tool || request.workflow_id} completed.`,\n  `Endpoint: ${request.method} ${request.path}.`,\n  `Level: ${level}.`\n].join(' ');\n\nreturn [{\n  json: {\n    response,\n    evidence: {\n      source: 'grafana_dashboard_client',\n      request: {\n        method: request.method,\n        path: request.path,\n        params: request.params\n      },\n      level,\n      body: evidence,\n      kpi_rules: kpiRules\n    },\n    steps: [\n      {\n        thought: 'n8n validated the approved IOA v3 Grafana workflow request.',\n        action: 'validate_grafana_request',\n        output: gatewayAudit\n      },\n      {\n        thought: 'n8n called the approved Grafana Dashboard Client endpoint.',\n        action: `${request.method} ${request.path}`,\n        output: {\n          source: 'grafana_dashboard_client',\n          level,\n          params: request.params\n        }\n      }\n    ],\n    token_usage: null\n  }\n}];"
+        "jsCode": "const evidence = $json;\nconst request = $('Validate Grafana Request').first().json.request;\nconst gatewayAudit = $('Validate Grafana Request').first().json.gateway_audit;\nconst workflow = $('Validate Grafana Request').first().json.workflow || {};\nconst kpiRules = $('Validate Grafana Request').first().json.kpi_rules || [];\nconst error = evidence.error || evidence.message && String(evidence.message).toLowerCase().includes('error') ? evidence : null;\n\nif (error) {\n  return [{\n    json: {\n      response: `Grafana workflow ${workflow.tool || request.workflow_id} failed before evidence was collected.`,\n      evidence: {\n        source: 'n8n_grafana_gateway',\n        status: 'workflow_error',\n        request: {\n          method: request.method,\n          path: request.path,\n          url: request.url,\n          params: request.params\n        },\n        error\n      },\n      steps: [\n        {\n          thought: 'n8n validated the approved IOA v3 Grafana workflow request.',\n          action: 'validate_grafana_request',\n          output: gatewayAudit\n        },\n        {\n          thought: 'n8n attempted to call the approved Grafana Dashboard Client endpoint, but the call failed.',\n          action: `${request.method} ${request.path}`,\n          output: {\n            source: 'grafana_dashboard_client',\n            status: 'failed',\n            error\n          }\n        }\n      ],\n      token_usage: null\n    }\n  }];\n}\n\nconst level = evidence.level || evidence.overall_verdict || evidence.status || 'unknown';\nconst response = [\n  `Grafana workflow ${workflow.tool || request.workflow_id} completed.`,\n  `Endpoint: ${request.method} ${request.path}.`,\n  `Level: ${level}.`\n].join(' ');\n\nreturn [{\n  json: {\n    response,\n    evidence: {\n      source: 'grafana_dashboard_client',\n      request: {\n        method: request.method,\n        path: request.path,\n        params: request.params\n      },\n      level,\n      body: evidence,\n      kpi_rules: kpiRules\n    },\n    steps: [\n      {\n        thought: 'n8n validated the approved IOA v3 Grafana workflow request.',\n        action: 'validate_grafana_request',\n        output: gatewayAudit\n      },\n      {\n        thought: 'n8n called the approved Grafana Dashboard Client endpoint.',\n        action: `${request.method} ${request.path}`,\n        output: {\n          source: 'grafana_dashboard_client',\n          level,\n          params: request.params\n        }\n      }\n    ],\n    token_usage: null\n  }\n}];"
       },
       "id": "d7ddcb1b-e380-4bd3-b02b-093648d8c83d",
       "name": "Normalize IOA v3 Response",
@@ -66,21 +67,6 @@
       "typeVersion": 2,
       "position": [
         20,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
-      },
-      "id": "02e53fc7-b936-455c-bac4-7ff070fe8178",
-      "name": "Respond to IOA v3",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        300,
         0
       ]
     }
@@ -122,13 +108,7 @@
     },
     "Normalize IOA v3 Response": {
       "main": [
-        [
-          {
-            "node": "Respond to IOA v3",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     }
   },

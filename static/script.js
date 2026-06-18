@@ -3225,14 +3225,16 @@ function getRuntimeWorkflowTemplate(runtimeMode, frameworkName = "") {
                 { id: "validate_request", label: "Validate request", shortLabel: "Validate", detail: "Check prompt size, source context, and IOA v3 policy entry.", icon: "IN", x: 11, y: 30, type: "trigger" },
                 { id: "select_workflow", label: "Select Grafana workflow", shortLabel: "Select", detail: "LangGraph chooses an allowlisted Grafana workflow/tool.", icon: "AI", x: 34, y: 30, type: "agent" },
                 { id: "authorize_workflow", label: "Authorize workflow", shortLabel: "Authorize", detail: "Check tool allowlist, params, and execution budget.", icon: "OK", x: 56, y: 30, type: "agent" },
-                { id: "call_n8n_workflow", label: "Call n8n Grafana gateway", shortLabel: "n8n", detail: "Execute the approved Grafana workflow through n8n.", icon: "HTTP", x: 76, y: 62, type: "tool" },
-                { id: "generate_answer", label: "Generate answer", shortLabel: "Answer", detail: "Apply KPI semantics and return the final answer.", icon: "OUT", x: 90, y: 30, type: "answer" }
+                { id: "call_n8n_workflow", label: "Run Grafana tool via n8n", shortLabel: "Run tool", detail: "Execute the approved Grafana workflow through n8n and collect bounded evidence.", icon: "HTTP", x: 73, y: 62, type: "tool" },
+                { id: "apply_kpi_rules", label: "Apply KPI rules", shortLabel: "KPI rules", detail: "Attach Grafana KPI semantics before language generation.", icon: "KPI", x: 83, y: 30, type: "agent" },
+                { id: "generate_answer", label: "Generate final answer", shortLabel: "Answer", detail: "Generate the final answer from n8n evidence and KPI rules.", icon: "OUT", x: 94, y: 30, type: "answer" }
             ],
             edges: [
                 { from: "validate_request", to: "select_workflow", path: "M17 20 C23 20 27 20 29 20" },
                 { from: "select_workflow", to: "authorize_workflow", path: "M40 20 C46 20 50 20 51 20" },
                 { from: "authorize_workflow", to: "call_n8n_workflow", path: "M62 24 C70 30 71 43 73 50" },
-                { from: "call_n8n_workflow", to: "generate_answer", path: "M81 51 C86 43 86 29 86 24" }
+                { from: "call_n8n_workflow", to: "apply_kpi_rules", path: "M78 51 C82 43 82 31 82 24" },
+                { from: "apply_kpi_rules", to: "generate_answer", path: "M88 20 C90 20 91 20 92 20" }
             ]
         };
     }

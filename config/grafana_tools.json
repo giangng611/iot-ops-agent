@@ -1,7 +1,7 @@
 {
   "version": "grafana-tools-v1",
   "base_url_env": "GRAFANA_DASHBOARD_CLIENT_URL",
-  "default_base_url": "http://localhost:5050",
+  "default_base_url": "http://127.0.0.1:5050",
   "tools": [
     {
       "name": "grafana_platform_service_health",

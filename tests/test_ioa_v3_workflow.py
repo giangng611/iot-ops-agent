@@ -58,7 +58,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertEqual(payload["user_id"], 7)
         self.assertEqual(
             payload["grafana_client"]["base_url"],
-            "http://localhost:5050",
+            "http://127.0.0.1:5050",
         )
 
     def test_v3_webhook_does_not_fallback_to_legacy_n8n_url(self):

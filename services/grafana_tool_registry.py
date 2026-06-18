@@ -28,7 +28,7 @@ def get_grafana_tools():
 def get_grafana_client_base_url():
     config = load_grafana_tool_config()
     env_name = config.get("base_url_env", "GRAFANA_DASHBOARD_CLIENT_URL")
-    return os.getenv(env_name) or config.get("default_base_url", "http://localhost:5050")
+    return os.getenv(env_name) or config.get("default_base_url", "http://127.0.0.1:5050")
 
 
 def get_grafana_tool_by_name(tool_name):

@@ -21,6 +21,7 @@ def create_diagnose_blueprint(runtime):
     diagnose_bp = Blueprint("diagnose", __name__)
     ioa_v1_agent = runtime["ioa_v1_agent"]
     ioa_v2_agent = runtime["ioa_v2_agent"]
+    ioa_v3_agent = runtime.get("ioa_v3_agent")
     langchain_agent = runtime["langchain_agent"]
     langgraph_agent = runtime["langgraph_agent"]
     get_max_message_chars = runtime.get(
@@ -64,6 +65,10 @@ def create_diagnose_blueprint(runtime):
         "ioa_v2_dify": {
             "runtime_label": "IOA v2 · Dify",
             "model_name": "Dify app model",
+        },
+        "ioa_v3_langgraph_n8n": {
+            "runtime_label": "IOA v3 · Grafana Ops Orchestrator",
+            "model_name": "gpt-4o-mini + Grafana workflow",
         },
     }
 
@@ -350,6 +355,46 @@ def create_diagnose_blueprint(runtime):
                 return jsonify({
                     "response": result["final_answer"],
                     "steps": steps,
+                    "token_usage": add_runtime_metadata(
+                        result.get("token_usage"),
+                        mode
+                    )
+                })
+
+            if mode == "ioa_v3_langgraph_n8n":
+                if ioa_v3_agent is None:
+                    raise RuntimeError("IOA v3 runtime is not configured.")
+
+                result = ioa_v3_agent.run(
+                    user_input,
+                    selected_source=data_source,
+                    source_resolution=source_resolution,
+                    user_id=session.get("user_id"),
+                )
+
+                latency_seconds = round(
+                    time.time() - start_time,
+                    2
+                )
+
+                log_benchmark_result(
+                    mode="IOA v3 · Grafana Ops Orchestrator",
+                    prompt=user_input,
+                    latency_seconds=latency_seconds,
+                    accuracy_score=0,
+                    tool_usage_score=0,
+                    reasoning_clarity_score=0,
+                    observability_score=0,
+                    development_complexity_score=5,
+                    integration_speed_score=5,
+                    ecosystem_score=5,
+                    maintainability_score=4,
+                    notes="Automatic benchmark capture from IOA v3 Grafana workflow."
+                )
+
+                return jsonify({
+                    "response": result["final_answer"],
+                    "steps": result["steps"],
                     "token_usage": add_runtime_metadata(
                         result.get("token_usage"),
                         mode
@@ -678,6 +723,60 @@ def create_diagnose_blueprint(runtime):
                             'observation': {
                                 'output': {
                                     'framework': 'n8n',
+                                    'status': 'error',
+                                    'error': public_runtime_error,
+                                }
+                            }
+                        })}\n\n"
+
+                        yield f"data: {json.dumps({
+                            'type': 'error',
+                            'error': public_runtime_error,
+                        })}\n\n"
+
+                    return
+
+                if mode == "ioa_v3_langgraph_n8n":
+                    if ioa_v3_agent is None:
+                        raise RuntimeError("IOA v3 runtime is not configured.")
+
+                    try:
+                        for event in ioa_v3_agent.run_stream(
+                            user_input,
+                            selected_source=data_source,
+                            source_resolution=source_resolution,
+                            user_id=session.get("user_id"),
+                        ):
+                            if event.get("type") == "final":
+                                event["token_usage"] = add_runtime_metadata(
+                                    event.get("token_usage"),
+                                    mode
+                                )
+                            yield f"data: {json.dumps(event)}\n\n"
+
+                        latency_seconds = round(time.time() - start_time, 2)
+
+                        log_benchmark_result(
+                            mode="IOA v3 · Grafana Ops Orchestrator",
+                            prompt=user_input,
+                            latency_seconds=latency_seconds,
+                            accuracy_score=0,
+                            tool_usage_score=0,
+                            reasoning_clarity_score=0,
+                            observability_score=0,
+                            development_complexity_score=5,
+                            integration_speed_score=5,
+                            ecosystem_score=5,
+                            maintainability_score=4,
+                            notes="Automatic benchmark capture from streamed IOA v3 Grafana workflow."
+                        )
+                    except Exception:
+                        yield f"data: {json.dumps({
+                            'type': 'observation',
+                            'iteration': 1,
+                            'observation': {
+                                'output': {
+                                    'framework': 'LangGraph+n8n',
                                     'status': 'error',
                                     'error': public_runtime_error,
                                 }

@@ -583,20 +583,38 @@ class LangGraphAgent:
         else:
             raise PermissionError(f"Tool is not executable: {selected_tool}")
 
+        query_commands = self.build_query_commands(tool_output)
+        read_plan_commands = self.build_query_commands({
+            "db_audit": tool_output.get("db_read_plan")
+        }) if isinstance(tool_output, dict) else []
         bounded_output = self.sanitize_evidence(tool_output)
         step_output = (
             dict(bounded_output)
             if isinstance(bounded_output, dict)
             else {"evidence": bounded_output}
         )
+        step_output["tool_call"] = {
+            "tool": selected_tool,
+            "data_source": tool_spec.data_source,
+            "workflow_node": tool_spec.workflow_node,
+            "execution_target": tool_spec.execution_target,
+            "placeholder": tool_spec.placeholder,
+        }
         step_output["_tool_execution"] = {
             "execution_target": tool_spec.execution_target,
             "workflow_node": tool_spec.workflow_node,
             "placeholder": tool_spec.placeholder,
         }
-        query_commands = self.build_query_commands(bounded_output)
         if query_commands:
             step_output["query_commands"] = query_commands
+        elif read_plan_commands:
+            step_output["db_read_plan_commands"] = read_plan_commands
+        elif (
+            tool_spec.data_source == "company"
+            and isinstance(tool_output, dict)
+            and tool_output.get("source") == "company_mongodb"
+        ):
+            step_output["audit_status"] = "missing_db_audit"
         return {
             "tool_output": bounded_output,
             "execution_count": execution_count + 1,

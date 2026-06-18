@@ -2655,6 +2655,68 @@ function renderQueryCommands(output) {
     `;
 }
 
+function renderExternalApiRequest(output) {
+    const httpCall = output?.http_call;
+
+    if (!httpCall || typeof httpCall !== "object" || Array.isArray(httpCall)) {
+        return "";
+    }
+
+    const method = httpCall.method || "GET";
+    const path = httpCall.path || "";
+    const params = httpCall.params || {};
+    const query = Object.entries(params)
+        .filter(([, value]) => value !== null && value !== undefined && value !== "")
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        .join("&");
+    const command = `${method} ${path}${query ? `?${query}` : ""}`;
+
+    return `
+        <section class="query-command-section api-request-section">
+            <div class="query-command-title">External API Request</div>
+            <p class="query-command-note">
+                IOA v3 called an approved Grafana API workflow through n8n. This is not a direct database query.
+            </p>
+            <div class="query-command-card">
+                <div class="query-command-header">
+                    <span>Request 1</span>
+                    <span>${escapeHtml(method)} · ${escapeHtml(path)}</span>
+                </div>
+                <div class="query-command-code-wrap">
+                    <pre class="query-command-code">${escapeHtml(command)}</pre>
+                </div>
+                <div class="query-command-actions">
+                    <button
+                        class="query-command-details-toggle"
+                        type="button"
+                        onclick="toggleQueryCommandDetails(this)"
+                    >
+                        Show request details
+                    </button>
+                    <button
+                        class="query-command-copy"
+                        type="button"
+                        onclick="copyQueryCommand(this, decodeURIComponent('${encodeURIComponent(command)}'))"
+                    >
+                        Copy
+                    </button>
+                    <div class="query-command-details-panel hidden">
+                        ${renderJsonBlock({
+                            method,
+                            path,
+                            params,
+                            base_url: httpCall.base_url || "redacted_configured_gateway",
+                            executed_by: "n8n-grafana-ops-gateway",
+                            mutating: false,
+                            credentials: "redacted",
+                        })}
+                    </div>
+                </div>
+            </div>
+        </section>
+    `;
+}
+
 function renderToolCall(output) {
     if (!output || typeof output !== "object" || Array.isArray(output)) {
         return "";
@@ -2815,6 +2877,16 @@ function summarizeObservationOutput(output) {
         return compact;
     }
 
+    if (compact.source === "n8n_grafana_gateway") {
+        return {
+            source: compact.source,
+            tool: compact.tool,
+            workflow_id: compact.workflow_id,
+            http_call: compact.http_call,
+            evidence: summarizeObject(compact.evidence || {}),
+        };
+    }
+
     if (!isComplexObservation(compact)) {
         return compact;
     }
@@ -2905,6 +2977,7 @@ function renderObservationOutput(output) {
 
     return `
         ${renderToolCall(output)}
+        ${renderExternalApiRequest(output)}
         ${renderQueryCommands(output)}
         <section class="observation-section">
             <div class="observation-section-title">Observation</div>
@@ -3563,8 +3636,7 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
     const workflow = buildWorkflowState(safeSteps, finalized);
     const framework = inferWorkflowFramework(safeSteps);
     const visibleNodes = workflow.nodes
-        .filter(node => !node.helper)
-        .slice(0, 4);
+        .filter(node => !node.helper);
 
     workflowNodeDetailStore = {};
 

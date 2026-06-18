@@ -27,11 +27,29 @@ class IOAV3WorkflowTests(unittest.TestCase):
         ))
 
     def test_kpi_rules_are_mapped_to_grafana_tools(self):
-        rules = get_kpi_rules_for_tool("grafana_queue_backlog")
+        original_flag = os.environ.get("IOA_V3_ENABLE_KPI_RULES")
+        os.environ["IOA_V3_ENABLE_KPI_RULES"] = "true"
 
-        self.assertTrue(rules)
-        self.assertEqual(rules[0]["kpi"], "Queue Backlog")
-        self.assertEqual(rules[0]["priority"], "Core")
+        try:
+            rules = get_kpi_rules_for_tool("grafana_queue_backlog")
+
+            self.assertTrue(rules)
+            self.assertEqual(rules[0]["kpi"], "Queue Backlog")
+            self.assertEqual(rules[0]["priority"], "Core")
+        finally:
+            if original_flag is None:
+                os.environ.pop("IOA_V3_ENABLE_KPI_RULES", None)
+            else:
+                os.environ["IOA_V3_ENABLE_KPI_RULES"] = original_flag
+
+    def test_kpi_rules_are_disabled_by_default(self):
+        original_flag = os.environ.pop("IOA_V3_ENABLE_KPI_RULES", None)
+
+        try:
+            self.assertEqual(get_kpi_rules_for_tool("grafana_queue_backlog"), [])
+        finally:
+            if original_flag is not None:
+                os.environ["IOA_V3_ENABLE_KPI_RULES"] = original_flag
 
     def test_n8n_v3_payload_filters_unapproved_params(self):
         payload = build_n8n_v3_payload(

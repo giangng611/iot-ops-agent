@@ -31,6 +31,15 @@ def get_grafana_client_base_url():
     return os.getenv(env_name) or config.get("default_base_url", "http://127.0.0.1:5050")
 
 
+def grafana_kpi_rules_enabled():
+    return os.getenv("IOA_V3_ENABLE_KPI_RULES", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def get_grafana_tool_by_name(tool_name):
     for tool in get_grafana_tools():
         if tool.get("name") == tool_name:
@@ -48,6 +57,9 @@ def get_grafana_tool_by_workflow_id(workflow_id):
 
 
 def get_kpi_rules_for_tool(tool_name):
+    if not grafana_kpi_rules_enabled():
+        return []
+
     return [
         rule
         for rule in load_grafana_kpi_rules().get("rules", [])

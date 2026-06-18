@@ -241,6 +241,9 @@ class IOAV3LangGraphN8nAgent:
 
         return {
             "tool_output": {
+                "source": "n8n_grafana_gateway",
+                "tool": state["selected_tool"],
+                "http_call": output["http_call"],
                 "result": evidence,
                 "n8n_steps": result.get("steps", []),
                 "final_answer": result.get("final_answer"),
@@ -393,6 +396,16 @@ Security instructions:
 - Do not invent metrics, services, queues, or alert rules.
 - If KPI rules are provisional or missing, say so clearly.
 - Summarize samples only.
+- IOA v3 uses Grafana/API workflow evidence, not direct database access. Do not
+  claim a database query was executed unless the evidence explicitly contains
+  database query commands.
+- If the evidence contains only service-level health, do not describe affected
+  devices, disconnected devices, or a root cause. Say that device-level evidence
+  was not provided by this workflow.
+- Likely Cause must be grounded in explicit evidence. If evidence is
+  insufficient, write "Not enough evidence to determine root cause."
+- Suggested Next Action must be an investigation step, not a claimed fix, unless
+  the evidence explicitly supports the fix.
 
 User request:
 {state["user_input"]}

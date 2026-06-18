@@ -26,6 +26,7 @@ tool, one approved path, and only allowlisted params.
 ```bash
 N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
 GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
+IOA_V3_ENABLE_KPI_RULES=false
 ```
 
 `N8N_WEBHOOK_URL` remains available for the older `IOA v2 · n8n` runtime.
@@ -58,6 +59,13 @@ monitoring KPI workbook:
 - priority
 - good/warning/critical semantics
 - implementation status
+
+KPI rules are disabled by default because the workbook may contain internal
+company operating semantics. Enable them only after review:
+
+```bash
+export IOA_V3_ENABLE_KPI_RULES=true
+```
 
 ## n8n Gateway Shape
 
@@ -211,6 +219,7 @@ The n8n response should be JSON:
    ```bash
    export N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
    export GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
+   export IOA_V3_ENABLE_KPI_RULES=false
    ```
 
    Keep the older `N8N_WEBHOOK_URL` separate. IOA v3 intentionally does not

@@ -22,12 +22,39 @@ LangGraph decides which workflow is allowed. n8n does not receive arbitrary
 HTTP authority from the model. The payload sent to n8n contains one approved
 tool, one approved path, and only allowlisted params.
 
+## Planner & Routing
+
+IOA v3 uses a hybrid planner:
+
+- A semantic planner proposes one or more workflows from the user's natural
+  language request.
+- A deterministic taxonomy remains as a fallback when the semantic planner
+  returns invalid JSON, unsupported tools, or low-confidence plans.
+- A policy verifier is always the final gate. It checks the allowlist, source
+  permissions, params, and execution budget before any workflow runs.
+
+This means LangGraph can run simple company DB read tools directly through the
+backend read proxy, such as disconnected-device or telemetry-evidence lookups.
+n8n is reserved for Grafana/API workflow execution and future multi-step
+automation such as calling tools, joining external evidence, and producing
+reports or sheets.
+
+Mixed requests can execute multiple approved workflows in one answer. Example:
+
+```text
+Investigate disconnected company devices, then check Redis and HTTP health for
+possible infrastructure pressure.
+```
+
+The expected route is company DB evidence first, then Grafana/n8n evidence.
+
 ## Environment
 
 ```bash
 N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
 GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
 IOA_V3_ENABLE_KPI_RULES=false
+IOA_V3_SEMANTIC_PLANNER_ENABLED=true
 ```
 
 `N8N_WEBHOOK_URL` remains available for the older `IOA v2 · n8n` runtime.

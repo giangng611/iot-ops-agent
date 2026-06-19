@@ -215,4 +215,4 @@ Company prompt
 ```
 
 LangChain, n8n, and Dify receive bounded company context packaged by Flask.
-Telegram uses LangGraph and follows its remembered or default source.
+Telegram uses IOA v3 Ops Graph and follows its remembered or default source.

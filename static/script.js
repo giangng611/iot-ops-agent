@@ -2717,6 +2717,49 @@ function renderExternalApiRequest(output) {
     `;
 }
 
+function renderWorkflowExecutions(output) {
+    const executions = Array.isArray(output?.executions)
+        ? output.executions
+        : [];
+
+    if (executions.length === 0) {
+        return "";
+    }
+
+    return executions.map((execution, index) => `
+        <section class="tool-call-section workflow-execution-section">
+            <div class="tool-call-title">Workflow Execution ${index + 1}</div>
+            <div class="tool-call-grid">
+                <div>
+                    <span>Tool</span>
+                    <strong>${escapeHtml(execution.tool || "unknown")}</strong>
+                </div>
+                <div>
+                    <span>Source</span>
+                    <strong>${escapeHtml(execution.source || "unknown")}</strong>
+                </div>
+                ${execution.workflow_id ? `
+                    <div>
+                        <span>Workflow</span>
+                        <strong>${escapeHtml(execution.workflow_id)}</strong>
+                    </div>
+                ` : ""}
+                ${execution.planner_confidence !== undefined ? `
+                    <div>
+                        <span>Planner confidence</span>
+                        <strong>${escapeHtml(String(execution.planner_confidence))}</strong>
+                    </div>
+                ` : ""}
+            </div>
+            ${execution.planner_reason ? `
+                <p class="query-command-note">${escapeHtml(execution.planner_reason)}</p>
+            ` : ""}
+        </section>
+        ${renderExternalApiRequest(execution)}
+        ${renderQueryCommands(execution)}
+    `).join("");
+}
+
 function renderToolCall(output) {
     if (!output || typeof output !== "object" || Array.isArray(output)) {
         return "";
@@ -2977,6 +3020,7 @@ function renderObservationOutput(output) {
 
     return `
         ${renderToolCall(output)}
+        ${renderWorkflowExecutions(output)}
         ${renderExternalApiRequest(output)}
         ${renderQueryCommands(output)}
         <section class="observation-section">

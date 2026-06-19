@@ -18,6 +18,7 @@ from routes.helpers import login_required
 from routes.profile_routes import profile_bp
 from routes.prompt_routes import prompt_bp
 from routes.storage_routes import storage_bp
+from services.diagnose_service import resolve_agent_operational_context
 from routes.telemetry_routes import (
     get_user_selected_data_source,
     telemetry_bp,
@@ -110,13 +111,14 @@ app.register_blueprint(create_diagnose_blueprint({
     "diagnose_rate_limit_log": diagnose_rate_limit_log,
 }))
 app.register_blueprint(create_telegram_blueprint({
-    "langgraph_agent": langgraph_agent,
+    "telegram_agent": ioa_v3_agent,
     "emit_user_event": lambda user_id, event, payload: socketio.emit(
         event,
         payload,
         to=f"user:{user_id}",
     ),
     "get_user_data_source": get_user_selected_data_source,
+    "resolve_source_context": resolve_agent_operational_context,
 }))
 app.register_blueprint(prompt_bp)
 app.register_blueprint(profile_bp)

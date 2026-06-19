@@ -113,12 +113,12 @@ verifying the resolved snapshot. LangGraph selects company-specific tools
 directly. LangChain, n8n, and Dify receive bounded company context packaged by
 Flask.
 
-Telegram currently uses the in-process LangGraph runtime. Each Telegram sender
-must be mapped in `telegram_identities` before the runtime can call LangGraph.
-The mapped IoT Ops Agent user owns the saved chat history and source
-selection. A request is rejected before agent execution when the identity is
-unmapped, inactive, outside `TELEGRAM_ALLOWED_USER_IDS`, or not allowed to use
-the selected data source.
+Telegram currently uses the in-process `IOA v3 · Ops Graph` runtime. Each
+Telegram sender must be mapped in `telegram_identities` before the runtime can
+execute approved workflows. The mapped IoT Ops Agent user owns the saved chat
+history and source selection. A request is rejected before agent execution when
+the identity is unmapped, inactive, outside `TELEGRAM_ALLOWED_USER_IDS`, or not
+allowed to use the selected data source.
 
 ## Reasoning Trace
 

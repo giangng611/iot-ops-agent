@@ -184,15 +184,18 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             "input_tokens": 10,
             "output_tokens": 5,
             "total_tokens": 15,
-            "runtime_label": "IOA v2 · LangGraph",
-            "model_name": "gpt-4o-mini",
+            "runtime_label": "IOA v3 · Ops Graph",
+            "model_name": "gpt-4o-mini + operational workflow",
         })
 
         self.assertEqual(
             normalized["runtime_label"],
-            "IOA v2 · LangGraph",
+            "IOA v3 · Ops Graph",
         )
-        self.assertEqual(normalized["model_name"], "gpt-4o-mini")
+        self.assertEqual(
+            normalized["model_name"],
+            "gpt-4o-mini + operational workflow",
+        )
 
     def test_postgres_timeouts_are_applied_after_pool_checkout(self):
         connection = MagicMock()
@@ -2219,7 +2222,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     saved_token_usage["runtime_label"],
-                    "IOA v2 · LangGraph",
+                    "IOA v3 · Ops Graph",
                 )
                 socket_events = socket_client.get_received()
                 event_names = [event["name"] for event in socket_events]
@@ -2237,6 +2240,124 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 os.environ.pop("TELEGRAM_BOT_TOKEN", None)
                 os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
                 os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_message_uses_ioa_v3_signature_when_available(self, mock_post):
+        user = self.create_user_once("telegram-ioa-v3-user", "ioa-v3-pass")
+        self.grant_company_data_source(user)
+        self.map_telegram_user(
+            457,
+            user,
+            allowed_data_sources=["simulator", "company"],
+        )
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
+        os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "457"
+        mock_post.return_value.raise_for_status.return_value = None
+        telemetry_routes.remember_user_data_source(user["id"], "company")
+
+        ioa_v3_agent = MagicMock()
+        ioa_v3_agent.plan_workflows = MagicMock()
+        ioa_v3_agent.run_stream.return_value = iter([{
+            "type": "final",
+            "final_answer": "IOA v3 answer.",
+            "token_usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+            },
+        }])
+
+        try:
+            payload = telegram_service.process_telegram_update(
+                {
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 457, "username": "ioa_v3_user"},
+                        "text": "check disconnected devices and redis health",
+                    },
+                },
+                ioa_v3_agent,
+                get_user_data_source=app_module.get_user_selected_data_source,
+                resolve_source_context=lambda selected_source: {
+                    "selected_source": selected_source,
+                    "active_source": "company_mongodb",
+                },
+            )
+
+            self.assertEqual(payload["status"], "answered")
+            ioa_v3_agent.run_stream.assert_called_once_with(
+                "check disconnected devices and redis health",
+                selected_source="company",
+                source_resolution={
+                    "selected_source": "company",
+                    "active_source": "company_mongodb",
+                },
+                user_id=user["id"],
+            )
+        finally:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+            os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
+            os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_chat_started_before_company_source_resolution(self, mock_post):
+        user = self.create_user_once("telegram-fast-start-user", "fast-pass")
+        self.grant_company_data_source(user)
+        self.map_telegram_user(
+            458,
+            user,
+            allowed_data_sources=["simulator", "company"],
+        )
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        os.environ["TELEGRAM_WEBHOOK_SECRET"] = "expected-secret"
+        os.environ["TELEGRAM_ALLOWED_USER_IDS"] = "458"
+        mock_post.return_value.raise_for_status.return_value = None
+        telemetry_routes.remember_user_data_source(user["id"], "company")
+
+        call_order = []
+        ioa_v3_agent = MagicMock()
+        ioa_v3_agent.plan_workflows = MagicMock()
+        ioa_v3_agent.run_stream.return_value = iter([{
+            "type": "final",
+            "final_answer": "Done.",
+            "token_usage": {},
+        }])
+
+        def emit_user_event(user_id, event, payload):
+            call_order.append(event)
+
+        def resolve_source_context(selected_source):
+            call_order.append("resolve_source_context")
+            return {
+                "selected_source": selected_source,
+                "active_source": "company_mongodb",
+            }
+
+        try:
+            payload = telegram_service.process_telegram_update(
+                {
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 458, "username": "fast_start_user"},
+                        "text": "check coverage",
+                    },
+                },
+                ioa_v3_agent,
+                emit_user_event=emit_user_event,
+                get_user_data_source=app_module.get_user_selected_data_source,
+                resolve_source_context=resolve_source_context,
+            )
+
+            self.assertEqual(payload["status"], "answered")
+            self.assertLess(
+                call_order.index("telegram_chat_started"),
+                call_order.index("resolve_source_context"),
+            )
+        finally:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+            os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
+            os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
 
     def test_telegram_commands_map_to_agent_prompts(self):
         self.assertEqual(

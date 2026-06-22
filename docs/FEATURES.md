@@ -1,6 +1,8 @@
 # Features
 
-IoT Ops Agent combines realtime IoT monitoring, AI-assisted diagnostics, persistent chat workflows, operational alert handling, prompt management, and user workspace controls into a single platform.
+IoT Ops Agent combines realtime IoT monitoring, AI-assisted diagnostics,
+persistent chat workflows, operational alert handling, prompt management,
+Telegram interaction, and source-aware workflow routing into a single platform.
 
 ---
 
@@ -11,6 +13,7 @@ with either simulator telemetry or the read-only Company DB source.
 
 Features include:
 
+- IOA v3 Ops Graph policy/runtime mode
 - IOA v1 single-step diagnosis
 - IOA v2 multi-step reasoning agent
 - LangChain runtime mode
@@ -26,6 +29,7 @@ Features include:
 - pinned and searchable conversations
 - busy-state protection during agent execution
 - explicit source selection and visible simulator fallback
+- Company DB and public fallback/mock demo operating modes
 
 <p align="center">
   <img src="../screenshots/dashboard.png" width="1000">
@@ -33,9 +37,33 @@ Features include:
 
 ---
 
+## IOA v3 Ops Graph
+
+IOA v3 is the controlled operational workflow runtime for company-style
+incident triage.
+
+Features include:
+
+- LangGraph policy gates before tool execution
+- hybrid semantic planner with deterministic taxonomy fallback
+- backend typed tools for Company DB evidence
+- n8n Grafana gateway for approved observability workflows
+- allowlisted Grafana tool paths and params
+- multi-workflow answers for mixed Company DB and Grafana requests
+- KPI rule attachment from `config/grafana_kpi_rules.json`
+- visible planner decisions, authorization decisions, tool calls, and bounded
+  evidence in the reasoning trace
+
+The Grafana path expects a normalized API adapter or local mock client. Human
+Grafana dashboard URLs are used for mapping and review, not direct tool calls.
+
+---
+
 ## ReAct-Style Reasoning Trace
 
-IOA v2 streams intermediate reasoning steps using a ReAct-style workflow.
+IOA v2 streams intermediate reasoning steps using a ReAct-style workflow. IOA
+v3 extends the same trace surface with planner, authorization, n8n/Grafana, and
+KPI rule-attachment steps.
 
 The reasoning drawer displays:
 
@@ -224,7 +252,8 @@ The simulation powers:
 
 ## Runtime Benchmarking
 
-The project includes a benchmark workflow for comparing orchestration runtimes against the same IoT telemetry environment and prompt set.
+The project includes a benchmark workflow for comparing orchestration runtimes
+against the same IoT telemetry environment and prompt set.
 
 Currently evaluated runtimes include:
 
@@ -246,6 +275,24 @@ Assistant responses display a token usage badge when the selected runtime return
 Dify is available as a self-hosted chatflow runtime. Flask packages the
 selected operational context for Dify, normalizes its response, and surfaces
 app-level reasoning steps when the Chatflow returns them.
+
+---
+
+## Public Fallback Demo
+
+The project can run without company systems for safe public demos.
+
+Features include:
+
+- simulator telemetry
+- local app-data storage
+- mock Grafana Dashboard Client responses
+- generic n8n workflow execution
+- source-aware answers that identify fallback data
+- architecture and reasoning traces that match the internal pilot shape
+
+Company credentials, private Grafana links, real database exports, and
+company-specific KPI semantics are intentionally excluded from the public demo.
 
 ---
 

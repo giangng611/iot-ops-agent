@@ -1,7 +1,8 @@
 # Architecture
 
-IoT Ops Agent is a Flask and Socket.IO application with two operational data
-sources, multiple agent runtimes, and a separate relational app-data store.
+IoT Ops Agent is a Flask and Socket.IO application with simulator/company data
+sources, multiple agent runtimes, an IOA v3 policy workflow layer, optional
+n8n/Grafana evidence collection, and a separate relational app-data store.
 
 ## High-Level Flow
 
@@ -14,6 +15,8 @@ Web UI / Telegram -> Flask routes -> source resolver -> agent runtime
                                                    |
                                                    v
                                   answer + reasoning trace + runtime metadata
+
+Grafana Dashboard Client API -> n8n gateway -> IOA v3 Ops Graph
 
 App data -> Supabase/Postgres -> fail-closed by default
 ```
@@ -61,6 +64,17 @@ If Company MongoDB cannot be read, the source resolver reports
 `simulator_fallback`; the UI and agent use simulator data instead of presenting
 fallback records as company data.
 
+### Grafana / Observability Evidence
+
+IOA v3 can collect infrastructure and service evidence through n8n. The backend
+sends one approved workflow, one approved path, and filtered params to the n8n
+gateway. n8n then calls the configured Grafana Dashboard Client API and returns
+normalized JSON evidence.
+
+The configured value `GRAFANA_DASHBOARD_CLIENT_URL` must point at an API
+adapter or local mock client. Grafana dashboard UI URLs are human references for
+KPI mapping and review, not direct tool-call targets.
+
 ## App Data
 
 Users, chats, messages, prompts, Telegram identities, and data-source policies are routed by
@@ -103,6 +117,7 @@ The web workspace supports:
 * `IOA v2 · LangGraph`
 * `IOA v2 · n8n`
 * `IOA v2 · Dify`
+* `IOA v3 · Ops Graph`
 
 When Company DB is active, every web runtime receives company operational
 evidence. If the source is unavailable, every runtime receives simulator
@@ -119,6 +134,20 @@ execute approved workflows. The mapped IoT Ops Agent user owns the saved chat
 history and source selection. A request is rejected before agent execution when
 the identity is unmapped, inactive, outside `TELEGRAM_ALLOWED_USER_IDS`, or not
 allowed to use the selected data source.
+
+`IOA v3 · Ops Graph` uses a hybrid planner. The semantic planner proposes one
+or more approved workflows from the user's request. A deterministic taxonomy
+remains as a fallback for invalid planner output, low-confidence plans, or
+disabled semantic planning. A policy verifier still checks tool allowlists,
+source permissions, params, and execution budget before any Company DB or
+Grafana workflow runs.
+
+## Public Demo Boundary
+
+The public demo path uses simulator telemetry and mock Grafana evidence. It can
+show the same UI, reasoning traces, source selection, IOA v3 routing, and n8n
+workflow shape without storing company credentials, private dashboard URLs, or
+company-specific KPI semantics.
 
 ## Reasoning Trace
 

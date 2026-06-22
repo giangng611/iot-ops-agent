@@ -19,8 +19,14 @@ Current deployment stack:
 * MongoDB telemetry storage when enabled
 * Supabase/Postgres app-data storage when enabled
 * SQLite legacy/fallback storage
+* optional IOA v3 Ops Graph workflow routing
+* optional n8n Grafana gateway when a reachable webhook and API adapter exist
 * Render Web Service
 * environment-variable based configuration
+
+The public GitHub/Render demo should use simulator or mock data only. Keep
+company DB credentials, private Grafana URLs, and company-specific KPI rules in
+the internal company deployment.
 
 ---
 
@@ -110,6 +116,19 @@ ACCESS_CODE=your_access_code
 Add `N8N_WEBHOOK_URL` only when the deployed service can reach an n8n
 webhook. A localhost webhook is not reachable from a separate Render service.
 
+Add these only when testing `IOA v3 · Ops Graph` against a reachable n8n
+gateway and Grafana Dashboard Client API:
+
+```env
+N8N_V3_WEBHOOK_URL=https://your-n8n-host/webhook/grafana-ops-gateway
+GRAFANA_DASHBOARD_CLIENT_URL=https://your-grafana-client-api
+IOA_V3_ENABLE_KPI_RULES=false
+IOA_V3_SEMANTIC_PLANNER_ENABLED=true
+```
+
+`GRAFANA_DASHBOARD_CLIENT_URL` must point to a JSON API adapter or mock client,
+not a Grafana dashboard UI URL.
+
 Add these only if the deployed app should call a reachable Dify instance:
 
 ```env
@@ -129,6 +148,7 @@ These variables are required for:
 * Supabase/Postgres app-data storage
 * app-data fallback policy
 * protected account registration
+* optional IOA v3 n8n/Grafana workflow integration
 
 Optional Dify variables are required only for `IOA v2 · Dify`.
 
@@ -164,6 +184,10 @@ COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS=60
 Do not commit secrets into GitHub.
 
 For hosted production deployments, `DIFY_API_URL` should point to a reachable Dify instance. A local URL such as `http://localhost/v1/chat-messages` only works when Dify runs on the same host as Flask.
+
+For a public fallback deployment, leave `COMPANY_MONGODB_URI` empty, keep KPI
+rules disabled unless the rules are generic, and use mock or demo-safe Grafana
+evidence only.
 
 ---
 
@@ -276,6 +300,23 @@ Only users with the configured `ACCESS_CODE` can create accounts.
 ---
 
 ## 10. Important Deployment Notes
+
+### Public Demo Boundary
+
+The public deployment should prove the product shape without exposing company
+systems:
+
+```text
+Simulator telemetry
+Mock or demo-safe Grafana client
+Generic n8n workflow
+No Company DB credentials
+No private dashboard URLs
+No company-only KPI semantics
+```
+
+The internal company pilot can use approved Company DB and Grafana access
+through environment variables in the company deployment environment.
 
 ### Storage Model
 

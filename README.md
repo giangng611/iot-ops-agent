@@ -1,7 +1,8 @@
 # IoT Ops Agent
 
-AI-powered IoT operations PoC with simulator telemetry, bounded read-only
-Company MongoDB access, AI-assisted diagnosis, and runtime benchmarking.
+AI-powered IoT operations PoC with simulator/fallback telemetry, bounded
+read-only Company MongoDB access, policy-gated AI diagnosis, Telegram support,
+and Grafana/n8n workflow integration.
 
 ---
 
@@ -23,6 +24,13 @@ simulated fleet or a bounded read-only Company MongoDB source. It combines
 telemetry monitoring, provisional operational alerts, and LLM-assisted
 diagnosis behind one web workspace.
 
+The project is split into two practical operating modes:
+
+* **Public fallback demo** — simulator telemetry, mock Grafana evidence, and
+  generic scenarios for GitHub/portfolio demonstrations.
+* **Internal company pilot** — approved Company DB reads, internal Grafana
+  adapters, official KPI/rule mapping, and company-only deployment config.
+
 The platform combines:
 
 * realtime telemetry simulation
@@ -33,8 +41,12 @@ The platform combines:
 * prompt workflow management
 * telemetry visualization
 * orchestration runtime benchmarking
+* policy-gated IOA v3 workflow routing
+* optional Telegram interaction
+* optional Grafana/n8n observability workflows
 
-The project currently supports multiple orchestration runtimes:
+The project currently supports multiple orchestration runtimes and one
+operational pilot runtime:
 
 * **IOA v1 · Custom Python** — single-step tool-calling assistant
 * **IOA v2 · Custom Python** — multi-step ReAct-style reasoning runtime
@@ -42,6 +54,8 @@ The project currently supports multiple orchestration runtimes:
 * **IOA v2 · LangGraph** — graph-based orchestration runtime
 * **IOA v2 · n8n** — local webhook-driven workflow runtime
 * **IOA v2 · Dify** — self-hosted app API-driven chatflow runtime
+* **IOA v3 · Ops Graph** — LangGraph policy and routing layer with backend
+  Company DB tools and approved n8n/Grafana workflow execution
 
 ---
 
@@ -61,6 +75,9 @@ The project currently supports multiple orchestration runtimes:
 * benchmark execution logging
 * explicit Simulator / Company DB source selection and fallback
 * read-only Company MongoDB proxy with bounded queries and rate limiting
+* IOA v3 hybrid semantic/deterministic workflow planner
+* n8n Grafana gateway with allowlisted tool paths
+* public fallback/mock demo path that avoids company data and credentials
 
 ---
 
@@ -70,6 +87,8 @@ The project currently supports multiple orchestration runtimes:
 Simulator telemetry ─┐
                      ├─> Flask + Socket.IO -> AI runtimes -> Web UI / Telegram
 Company MongoDB ─────┘
+
+Grafana Client API -> n8n gateway -> IOA v3 Ops Graph
 
 App data: Supabase/Postgres, fail-closed by default
 Simulator telemetry: MongoDB or SQLite, selected by environment
@@ -103,6 +122,8 @@ Simulator telemetry: MongoDB or SQLite, selected by environment
 * LangGraph orchestration runtime
 * n8n local workflow runtime
 * Dify self-hosted chatflow runtime
+* IOA v3 Ops Graph runtime
+* n8n Grafana gateway
 * streamed reasoning traces
 * tool-calling agents
 * context-aware diagnostics
@@ -111,9 +132,37 @@ Simulator telemetry: MongoDB or SQLite, selected by environment
 
 ---
 
+# IOA v3 Grafana Workflow
+
+IOA v3 is the current controlled operational workflow runtime. It uses
+LangGraph for policy gates and workflow planning, backend typed tools for
+Company DB evidence, and n8n for approved Grafana workflow execution.
+
+For local fallback testing:
+
+```bash
+python3 scripts/mock_grafana_dashboard_client.py --port 5050
+```
+
+```bash
+N8N_PORT=5679 n8n
+```
+
+```env
+N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
+GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
+IOA_V3_ENABLE_KPI_RULES=false
+```
+
+See [IOA v3 Ops Graph](docs/IOA_V3_LANGGRAPH_N8N_GRAFANA.md) and
+[Public Fallback Demo](docs/PUBLIC_DEMO.md).
+
+---
+
 # Runtime Benchmarking
 
-The platform includes a benchmarking system for comparing orchestration runtimes inside the same operational environment.
+The platform includes a benchmarking system for comparing orchestration
+runtimes inside the same operational environment.
 
 Current benchmark dimensions include:
 
@@ -188,6 +237,10 @@ MONGO_READ_RATE_LIMIT_REQUESTS=60
 MONGO_READ_RATE_LIMIT_WINDOW_SECONDS=60
 ACCESS_CODE=please_contact_project_owner
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
+N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
+GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
+IOA_V3_ENABLE_KPI_RULES=false
+IOA_V3_SEMANTIC_PLANNER_ENABLED=true
 DIFY_API_URL=http://localhost/v1/chat-messages
 DIFY_API_KEY=your_dify_app_api_key
 DIFY_USER=iot-ops-agent-ui
@@ -246,6 +299,11 @@ Environment variables should be configured through the deployment provider inste
 
 `N8N_WEBHOOK_URL` is optional and only required when testing the `IOA v2 · n8n` runtime mode in the UI.
 
+`N8N_V3_WEBHOOK_URL` and `GRAFANA_DASHBOARD_CLIENT_URL` are optional for the
+public fallback demo, but required when testing `IOA v3 · Ops Graph` Grafana
+workflow calls through n8n. `GRAFANA_DASHBOARD_CLIENT_URL` must point at an API
+adapter or mock client, not a Grafana dashboard UI URL.
+
 `DIFY_API_URL`, `DIFY_API_KEY`, and `DIFY_USER` are optional and only required when testing the `IOA v2 · Dify` runtime mode in the UI. For the local self-hosted Dify setup, `DIFY_API_URL` is usually `http://localhost/v1/chat-messages`.
 
 ---
@@ -255,6 +313,8 @@ Environment variables should be configured through the deployment provider inste
 * [Setup Guide](docs/SETUP.md)
 * [Architecture](docs/ARCHITECTURE.md)
 * [Features](docs/FEATURES.md)
+* [Public Fallback Demo](docs/PUBLIC_DEMO.md)
+* [IOA v3 Ops Graph](docs/IOA_V3_LANGGRAPH_N8N_GRAFANA.md)
 * [Benchmarking](docs/BENCHMARKING.md)
 * [Company Agent Scope](docs/COMPANY_AGENT_SCOPE.md)
 * [Deployment](docs/DEPLOYMENT.md)

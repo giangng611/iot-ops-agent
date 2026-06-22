@@ -2,6 +2,47 @@
 
 Future improvements and long-term direction for IoT Ops Agent.
 
+This roadmap is readiness-based. Earlier calendar milestones are kept only as
+planning context because the project depends on company database handoff,
+Grafana access, and operational rule review. Current work should prioritize
+evidence quality and pilot readiness over date-driven feature expansion.
+
+---
+
+## Current Readiness
+
+### Demo-ready Foundation
+
+* Web workspace with authenticated chat, prompt workflows, profile controls,
+  telemetry views, alert handling, and reasoning traces
+* Simulator/fallback telemetry path for public demonstrations
+* Company DB source selection, visible fallback behavior, and bounded read-only
+  MongoDB access through typed backend tools
+* Telegram PoC with account linking, allowlists, commands, and shared IOA v3
+  policy/runtime behavior
+* IOA v3 Ops Graph with LangGraph policy gates, hybrid semantic/deterministic
+  workflow planning, n8n Grafana gateway execution, and evidence traces
+* Grafana tool registry and initial KPI rule mapping files
+* Security tests and proof docs for app data, MongoDB guardrails, Supabase RLS,
+  and Telegram webhook authentication
+
+### Waiting On Company Inputs
+
+* Final production Company DB schema/collections and allowed read scope
+* Official alert/KPI rule ownership and good/warning/critical semantics
+* Grafana Dashboard Client API or approved Grafana API/service-account access
+* Senior review of prioritized operational scenarios and expected answers
+
+### Near-term Focus
+
+1. Validate the public fallback/mock demo path end to end.
+2. Validate IOA v3 -> n8n -> Grafana Dashboard Client with mock data first,
+   then with the approved company Grafana API/adapter.
+3. Freeze 5-7 pilot scenarios for company incident triage.
+4. Map Company DB fields and official KPI rules once the company source is
+   handed over.
+5. Rerun benchmark and acceptance tests against frozen company-task snapshots.
+
 ---
 
 ## Infrastructure & Deployment
@@ -21,6 +62,8 @@ Future improvements and long-term direction for IoT Ops Agent.
 * Supabase/Postgres app-data migration path
 * SQLite legacy/fallback storage
 * storage status and migration integrity checks
+* public fallback/mock demo path for portfolio-safe demonstrations
+* internal Company DB path for company-only pilot work
 
 ### Deployment Evolution
 
@@ -78,8 +121,13 @@ Completed local runtime evaluations:
 * IOA v2 · n8n
 * IOA v2 · Dify
 
+Current operational runtime:
+
+* IOA v3 · Ops Graph, using LangGraph policy/routing, backend Company DB tools,
+  and n8n for approved Grafana workflow execution
+
 The benchmark runner and blind AI-as-judge pipeline are implemented. The next
-evaluation milestone is to rerun all candidates against frozen company-task
+evaluation milestone is to rerun candidates against frozen company-task
 snapshots and report critical errors separately from averages. Historical
 manual scores are not considered current runtime-selection evidence.
 
@@ -124,6 +172,8 @@ Future platform-level improvements:
 
 Planned observability improvements include:
 
+* approved Grafana Dashboard Client API integration
+* official KPI/rule calibration from company monitoring ownership
 * historical fleet-wide analytics
 * device comparison dashboards
 * incident timelines

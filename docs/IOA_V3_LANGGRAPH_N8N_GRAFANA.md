@@ -68,6 +68,24 @@ N8N_PORT=5679 n8n
 In production, using the same managed n8n instance is fine as long as IOA v3
 has a distinct webhook path, credentials, and workflow ownership boundary.
 
+## Grafana Integration Boundary
+
+IOA v3 does not call Grafana dashboard UI URLs directly. A dashboard URL such
+as `/d/.../kubernetes-compute-resources-cluster` is useful for human review and
+KPI mapping, but it is not the normalized API surface that n8n should call.
+
+The runtime expects one of these approved integration paths:
+
+* a Grafana Dashboard Client API that exposes stable JSON endpoints such as
+  `/grafana/k8s`, `/grafana/redis`, or `/platform/service-health`
+* a company-owned backend adapter that queries Grafana/Prometheus with approved
+  credentials and returns bounded JSON evidence
+* a local mock client for public fallback demos and workflow validation
+
+Do not put Grafana tokens, dashboard links, datasource internals, or company
+hostnames in public documentation. Keep those values in environment variables
+or company-only deployment notes.
+
 ## Config Files
 
 `config/grafana_tools.json` defines the allowlisted Grafana tools:
@@ -163,6 +181,7 @@ The n8n response should be JSON:
 ## Security Notes
 
 - Do not put Grafana tokens or DB credentials in the workbook or repo.
+- Do not publish company Grafana dashboard URLs in the public fallback demo.
 - n8n should call only the path supplied by the backend payload.
 - The backend filters params before sending the request to n8n.
 - IOA v3 traces show the selected workflow, HTTP path, bounded evidence, and
@@ -184,9 +203,8 @@ The n8n response should be JSON:
    This value is not the Grafana dashboard UI URL. It must be an API adapter
    that exposes the allowlisted endpoints used by `config/grafana_tools.json`,
    for example `/grafana/redis` and `/platform/service-health`. A normal
-   Grafana dashboard link usually points to pages like `/d/...` and cannot be
-   used directly by this n8n workflow without a separate Grafana API adapter
-   and credentials.
+   Grafana dashboard link usually points to pages like `/d/...` and should be
+   treated as a human reference for mapping, not as the tool-call target.
 
    Verify the client is reachable:
 

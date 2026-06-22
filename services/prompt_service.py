@@ -133,6 +133,14 @@ def list_prompts(user_id):
     return DEFAULT_PROMPTS + get_prompts(user_id)
 
 
+def get_default_prompt_command(prompt_id):
+    for prompt in DEFAULT_PROMPTS:
+        if prompt["id"] == prompt_id:
+            return prompt["command"]
+
+    return None
+
+
 def create_user_prompt(user_id, title, command, category):
     prompt_id = create_prompt(user_id, title, command, category)
     return {

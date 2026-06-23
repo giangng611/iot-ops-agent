@@ -43,6 +43,11 @@ evidence quality and pilot readiness over date-driven feature expansion.
    handed over.
 5. Rerun benchmark and acceptance tests against frozen company-task snapshots.
 
+The current seed scenario backlog lives in
+`eval/company_pilot_scenarios.json`; use
+`docs/PILOT_SCENARIO_CHECKLIST.md` to convert company-provided scenarios into
+repeatable acceptance tests.
+
 ---
 
 ## Infrastructure & Deployment

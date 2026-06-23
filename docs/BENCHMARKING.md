@@ -18,7 +18,9 @@ Answer quality and engineering tradeoffs are evaluated separately.
 
 ## 1. Freeze Tasks and Evidence
 
-The prompt set is stored in `eval/prompts_phase1.json`. For each execution,
+The generic phase 1 prompt set is stored in `eval/prompts_phase1.json`. The
+company-pilot seed scenario set is stored in
+`eval/company_pilot_scenarios.json`. For each execution,
 the runner captures:
 
 * runtime and prompt ID
@@ -35,11 +37,20 @@ Run the local candidates:
 python -m scripts.evaluate_local_runtimes
 ```
 
+Run the company-pilot seed scenarios:
+
+```bash
+python -m scripts.evaluate_local_runtimes \
+  --prompts eval/company_pilot_scenarios.json \
+  --out eval/company_pilot_runtime_results.csv \
+  --modes ioa_v3_ops
+```
+
 Select runtimes explicitly when external services are available:
 
 ```bash
 python -m scripts.evaluate_local_runtimes \
-  --modes ioa_v2_custom,langchain,langgraph,n8n_webhook,dify_api
+  --modes ioa_v2_custom,langchain,langgraph,ioa_v3_ops,n8n_webhook,dify_api
 ```
 
 Formal comparisons should pause telemetry writes or restore the same database

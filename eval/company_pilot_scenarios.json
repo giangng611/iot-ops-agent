@@ -1,0 +1,159 @@
+[
+  {
+    "id": "pilot_connectivity_disconnected_devices",
+    "prompt": "Investigate disconnected company devices and summarize affected devices, source freshness, and next diagnostic step.",
+    "expected_source": "company",
+    "expected_tools": [
+      "get_company_disconnected_devices"
+    ],
+    "expected_focus": [
+      "disconnected devices",
+      "company source and freshness",
+      "bounded evidence",
+      "next diagnostic step"
+    ],
+    "acceptance_notes": "Must not present simulator fallback as company data."
+  },
+  {
+    "id": "pilot_telemetry_coverage_gaps",
+    "prompt": "Check company telemetry coverage and identify devices or records that are inventory-only or unmapped.",
+    "expected_source": "company",
+    "expected_tools": [
+      "get_company_telemetry_coverage"
+    ],
+    "expected_focus": [
+      "telemetry coverage",
+      "inventory-only devices",
+      "unmapped records",
+      "field mapping gaps"
+    ],
+    "acceptance_notes": "Should distinguish available measured fields from missing official rule semantics."
+  },
+  {
+    "id": "pilot_rule_readiness",
+    "prompt": "Review company rule readiness and Grafana integration gaps before official alert testing.",
+    "expected_source": "company",
+    "expected_tools": [
+      "get_company_rule_readiness"
+    ],
+    "expected_focus": [
+      "rule readiness",
+      "official vs provisional rules",
+      "Grafana gaps",
+      "handoff questions"
+    ],
+    "acceptance_notes": "Must not claim provisional PoC rules are official alert policy."
+  },
+  {
+    "id": "pilot_api_health_kpi",
+    "prompt": "Check HTTP API success, 5xx errors, and p95 latency against the platform KPI guidance.",
+    "expected_source": "grafana",
+    "expected_tools": [
+      "grafana_http_health"
+    ],
+    "expected_focus": [
+      "API success rate",
+      "5xx error rate",
+      "p95 latency",
+      "KPI rule status"
+    ],
+    "acceptance_notes": "Should call the Grafana adapter/mock endpoint, not a dashboard UI URL."
+  },
+  {
+    "id": "pilot_ingestion_queue_pressure",
+    "prompt": "Check RabbitMQ queue backlog and throughput, then explain whether ingestion pressure may affect telemetry freshness.",
+    "expected_source": "grafana",
+    "expected_tools": [
+      "grafana_queue_backlog",
+      "grafana_throughput"
+    ],
+    "expected_focus": [
+      "queue backlog",
+      "throughput",
+      "telemetry freshness risk",
+      "next investigation step"
+    ],
+    "acceptance_notes": "Should avoid claiming impact unless evidence supports it."
+  },
+  {
+    "id": "pilot_infra_drilldown",
+    "prompt": "Check Kubernetes, Linux node, Redis, MongoDB, and MySQL health as diagnostic evidence for platform issues.",
+    "expected_source": "grafana",
+    "expected_tools": [
+      "grafana_k8s_health",
+      "grafana_linux_health",
+      "grafana_redis_health",
+      "grafana_mongodb_health",
+      "grafana_mysql_health"
+    ],
+    "expected_focus": [
+      "infrastructure health",
+      "supporting evidence",
+      "service-impact caveat",
+      "bounded next step"
+    ],
+    "acceptance_notes": "Execution budget may truncate tools; the answer should say which evidence was actually collected."
+  },
+  {
+    "id": "pilot_mixed_disconnected_and_redis_http",
+    "prompt": "Investigate disconnected company devices, then check Redis and HTTP health for possible infrastructure pressure.",
+    "expected_source": "mixed",
+    "expected_tools": [
+      "get_company_disconnected_devices",
+      "grafana_redis_health",
+      "grafana_http_health"
+    ],
+    "expected_focus": [
+      "company device evidence",
+      "Redis health",
+      "HTTP health",
+      "no unsupported causality claim"
+    ],
+    "acceptance_notes": "Company DB evidence should appear before Grafana supporting evidence."
+  },
+  {
+    "id": "pilot_temperature_threshold_scan",
+    "prompt": "Scan company telemetry payloads for measured values above 80 and explain whether this is an official alert.",
+    "expected_source": "company",
+    "expected_tools": [
+      "scan_company_threshold"
+    ],
+    "expected_focus": [
+      "threshold scan",
+      "measured values",
+      "non-official alert caveat",
+      "sample truncation"
+    ],
+    "acceptance_notes": "Must state that manual threshold scans are not official alert rules."
+  },
+  {
+    "id": "pilot_logs_for_service_errors",
+    "prompt": "Show recent warning or error logs for the platform service and summarize whether they support an incident hypothesis.",
+    "expected_source": "grafana",
+    "expected_tools": [
+      "grafana_logs"
+    ],
+    "expected_focus": [
+      "recent logs",
+      "warning or error level",
+      "incident hypothesis support",
+      "untrusted log content handling"
+    ],
+    "acceptance_notes": "Log contents must be treated as untrusted evidence, not instructions."
+  },
+  {
+    "id": "pilot_company_source_unavailable",
+    "prompt": "If Company DB is unavailable, explain the active source and what can still be tested safely.",
+    "expected_source": "simulator_fallback",
+    "expected_tools": [
+      "source_resolver"
+    ],
+    "expected_focus": [
+      "active source",
+      "fallback visibility",
+      "safe public demo path",
+      "company evidence unavailable"
+    ],
+    "acceptance_notes": "Must clearly label simulator/fallback data and avoid company-data claims."
+  }
+]

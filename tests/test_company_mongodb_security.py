@@ -12,6 +12,9 @@ ALLOWED_NAMESPACES = {
     "datamgmt.DEVICE_TELEMETRY",
     "datamgmt.RULE",
     "devicemgmt.NODE",
+    "orchestration.URI_MAPPER",
+    "subNNotif.AE",
+    "subNNotif.SUB",
 }
 
 

@@ -70,7 +70,7 @@ datamgmt.CNT
 datamgmt.CIN
 ```
 
-The new scenarios likely require adding reviewed namespaces:
+The new scenarios require these reviewed namespaces:
 
 ```text
 subNNotif.AE
@@ -78,7 +78,10 @@ subNNotif.SUB
 orchestration.URI_MAPPER
 ```
 
-Only add these after the lead confirms the exact database and collection names.
+These namespaces are now part of the default Company MongoDB read proxy
+allowlist because they were confirmed in the company MongoDB schema. The next
+step is to confirm the exact fields and projections for each typed evidence
+tool.
 
 ### Log Evidence Tool
 

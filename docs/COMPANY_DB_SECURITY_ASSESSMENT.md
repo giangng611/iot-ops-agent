@@ -53,6 +53,9 @@ datamgmt.CNT
 datamgmt.DEVICE_TELEMETRY
 datamgmt.RULE
 devicemgmt.NODE
+orchestration.URI_MAPPER
+subNNotif.AE
+subNNotif.SUB
 ```
 
 Credentials and document values are intentionally excluded from this report.
@@ -203,7 +206,7 @@ devicemgmt.NODE
 It can be configured through:
 
 ```env
-COMPANY_MONGO_ALLOWED_NAMESPACES=devicemgmt.NODE,authorization.IDENTITY,datamgmt.CNT,datamgmt.CIN,datamgmt.DEVICE_TELEMETRY,datamgmt.RULE
+COMPANY_MONGO_ALLOWED_NAMESPACES=devicemgmt.NODE,authorization.IDENTITY,datamgmt.CNT,datamgmt.CIN,datamgmt.DEVICE_TELEMETRY,datamgmt.RULE,subNNotif.AE,subNNotif.SUB,orchestration.URI_MAPPER
 ```
 
 Database and collection discovery results are filtered through the same

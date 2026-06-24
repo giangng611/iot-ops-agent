@@ -16,6 +16,9 @@ DEFAULT_ALLOWED_NAMESPACES = frozenset({
     "datamgmt.DEVICE_TELEMETRY",
     "datamgmt.RULE",
     "devicemgmt.NODE",
+    "orchestration.URI_MAPPER",
+    "subNNotif.AE",
+    "subNNotif.SUB",
 })
 IDENTIFIER_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyz"

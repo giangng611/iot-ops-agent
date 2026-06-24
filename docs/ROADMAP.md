@@ -48,6 +48,10 @@ The current seed scenario backlog lives in
 `docs/PILOT_SCENARIO_CHECKLIST.md` to convert company-provided scenarios into
 repeatable acceptance tests.
 
+The company OneM2M debug scenarios are mapped in
+`docs/ONEM2M_OPERATIONAL_SCENARIOS.md`. They require typed read-only DB, log,
+and Grafana adapter tools before they should be treated as production-ready.
+
 ---
 
 ## Infrastructure & Deployment

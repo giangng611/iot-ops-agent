@@ -33,13 +33,23 @@ It covers:
 * disconnected company devices
 * telemetry coverage and unmapped records
 * company rule readiness and Grafana gaps
+* OneM2M command downlink debugging
+* OneM2M telemetry uplink debugging
+* OneM2M device/resource existence checks
 * API success, 5xx, and p95 latency
 * RabbitMQ backlog and throughput pressure
+* RabbitMQ queue trend checks
+* EMQX dropped-message checks
+* EMQX connect/disconnect trend checks
 * infrastructure drilldown across Kubernetes, Linux, Redis, MongoDB, and MySQL
 * mixed Company DB plus Grafana investigations
 * manual threshold scans over company telemetry payloads
 * recent warning/error logs
 * Company DB unavailable with simulator fallback
+
+See [OneM2M Operational Scenario Mapping](ONEM2M_OPERATIONAL_SCENARIOS.md) for
+the company-provided command, telemetry, device-resource, queue, EMQX, and
+Kubernetes scenario mapping.
 
 ## Acceptance Rules
 
@@ -97,6 +107,8 @@ Ask these before treating a scenario as production-ready:
 * Which operational team owns this scenario?
 * Which source is authoritative for the answer?
 * Which fields identify device, timestamp, status, alarm, and measured value?
+* Which collections own `AE`, `SUB`, and `URI_MAPPER` in the real Company DB?
+* Which adapter/core service names should be allowlisted for log search?
 * Which KPI/rule thresholds are official?
 * Which Grafana panels map to API/adapter endpoints?
 * What answer would count as a critical factual error?

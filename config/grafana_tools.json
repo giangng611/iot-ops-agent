@@ -1,0 +1,130 @@
+{
+  "version": "grafana-tools-v1",
+  "base_url_env": "GRAFANA_DASHBOARD_CLIENT_URL",
+  "default_base_url": "http://127.0.0.1:5050",
+  "tools": [
+    {
+      "name": "grafana_platform_service_health",
+      "workflow_id": "platform_service_health",
+      "intent": "grafana_platform_service_health",
+      "method": "GET",
+      "path": "/platform/service-health",
+      "allowed_params": [],
+      "description": "Aggregated service health across platform dashboards."
+    },
+    {
+      "name": "grafana_queue_backlog",
+      "workflow_id": "rabbitmq_queue_backlog",
+      "intent": "grafana_queue_backlog",
+      "method": "GET",
+      "path": "/grafana/queue-backlog",
+      "allowed_params": [],
+      "kpi": "Queue Backlog",
+      "description": "RabbitMQ queue backlog with total and per-queue breakdown."
+    },
+    {
+      "name": "grafana_throughput",
+      "workflow_id": "rabbitmq_throughput",
+      "intent": "grafana_throughput",
+      "method": "GET",
+      "path": "/grafana/throughput",
+      "allowed_params": ["queue"],
+      "kpi": "Telemetry Throughput",
+      "description": "RabbitMQ publish, ack, and lag rates."
+    },
+    {
+      "name": "grafana_http_health",
+      "workflow_id": "http_service_health",
+      "intent": "grafana_http_health",
+      "method": "GET",
+      "path": "/grafana/http-health",
+      "allowed_params": ["project", "window"],
+      "kpi": "API Success Rate",
+      "description": "HTTP request rate, error rate, and p95 latency."
+    },
+    {
+      "name": "grafana_java_errors",
+      "workflow_id": "java_error_rate",
+      "intent": "grafana_java_errors",
+      "method": "GET",
+      "path": "/grafana/java-errors",
+      "allowed_params": ["window"],
+      "kpi": "HTTP 5xx Rate",
+      "description": "Java service error rate from span metrics when available."
+    },
+    {
+      "name": "grafana_trace_metrics",
+      "workflow_id": "service_trace_metrics",
+      "intent": "grafana_trace_metrics",
+      "method": "GET",
+      "path": "/grafana/trace-metrics",
+      "allowed_params": ["window"],
+      "kpi": "API Latency P95",
+      "description": "Per-service call rate, error rate, and p95 latency from Tempo span metrics."
+    },
+    {
+      "name": "grafana_logs",
+      "workflow_id": "loki_recent_logs",
+      "intent": "grafana_logs",
+      "method": "GET",
+      "path": "/grafana/logs",
+      "allowed_params": ["service", "level", "hours_back", "limit"],
+      "description": "Recent Loki warning/error logs across services or a filtered service."
+    },
+    {
+      "name": "grafana_emqx_health",
+      "workflow_id": "emqx_health",
+      "intent": "grafana_emqx_health",
+      "method": "GET",
+      "path": "/grafana/emqx",
+      "allowed_params": [],
+      "kpi": "Broker Availability",
+      "description": "EMQX connections, message rates, drop rate, auth/subscribe rates, and disconnect reasons."
+    },
+    {
+      "name": "grafana_k8s_health",
+      "workflow_id": "kubernetes_health",
+      "intent": "grafana_k8s_health",
+      "method": "GET",
+      "path": "/grafana/k8s",
+      "allowed_params": [],
+      "description": "Kubernetes CPU, restarts, pod phases, memory, and overall level."
+    },
+    {
+      "name": "grafana_redis_health",
+      "workflow_id": "redis_health",
+      "intent": "grafana_redis_health",
+      "method": "GET",
+      "path": "/grafana/redis",
+      "allowed_params": [],
+      "description": "Redis connected clients, ops rate, hit rate, and memory."
+    },
+    {
+      "name": "grafana_mongodb_health",
+      "workflow_id": "mongodb_health",
+      "intent": "grafana_mongodb_health",
+      "method": "GET",
+      "path": "/grafana/mongodb",
+      "allowed_params": [],
+      "description": "MongoDB instance availability and average latency."
+    },
+    {
+      "name": "grafana_mysql_health",
+      "workflow_id": "mysql_health",
+      "intent": "grafana_mysql_health",
+      "method": "GET",
+      "path": "/grafana/mysql",
+      "allowed_params": [],
+      "description": "MySQL availability, QPS, connected threads, slow queries, and level."
+    },
+    {
+      "name": "grafana_linux_health",
+      "workflow_id": "linux_node_health",
+      "intent": "grafana_linux_health",
+      "method": "GET",
+      "path": "/grafana/linux",
+      "allowed_params": [],
+      "description": "Linux node CPU, memory, disk, and network receive rate."
+    }
+  ]
+}

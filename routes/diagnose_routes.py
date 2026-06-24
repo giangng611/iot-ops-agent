@@ -2,7 +2,7 @@ import json
 import time
 from collections import defaultdict, deque
 
-from flask import Blueprint, Response, jsonify, request, session
+from flask import Blueprint, Response, current_app, jsonify, request, session
 
 from benchmark_logger import log_benchmark_result
 from routes.helpers import login_required
@@ -21,6 +21,7 @@ def create_diagnose_blueprint(runtime):
     diagnose_bp = Blueprint("diagnose", __name__)
     ioa_v1_agent = runtime["ioa_v1_agent"]
     ioa_v2_agent = runtime["ioa_v2_agent"]
+    ioa_v3_agent = runtime.get("ioa_v3_agent")
     langchain_agent = runtime["langchain_agent"]
     langgraph_agent = runtime["langgraph_agent"]
     get_max_message_chars = runtime.get(
@@ -64,6 +65,10 @@ def create_diagnose_blueprint(runtime):
         "ioa_v2_dify": {
             "runtime_label": "IOA v2 · Dify",
             "model_name": "Dify app model",
+        },
+        "ioa_v3_langgraph_n8n": {
+            "runtime_label": "IOA v3 · Ops Graph",
+            "model_name": "gpt-4o-mini + operational workflow",
         },
     }
 
@@ -356,6 +361,46 @@ def create_diagnose_blueprint(runtime):
                     )
                 })
 
+            if mode == "ioa_v3_langgraph_n8n":
+                if ioa_v3_agent is None:
+                    raise RuntimeError("IOA v3 runtime is not configured.")
+
+                result = ioa_v3_agent.run(
+                    user_input,
+                    selected_source=data_source,
+                    source_resolution=source_resolution,
+                    user_id=session.get("user_id"),
+                )
+
+                latency_seconds = round(
+                    time.time() - start_time,
+                    2
+                )
+
+                log_benchmark_result(
+                    mode="IOA v3 · Ops Graph",
+                    prompt=user_input,
+                    latency_seconds=latency_seconds,
+                    accuracy_score=0,
+                    tool_usage_score=0,
+                    reasoning_clarity_score=0,
+                    observability_score=0,
+                    development_complexity_score=5,
+                    integration_speed_score=5,
+                    ecosystem_score=5,
+                    maintainability_score=4,
+                    notes="Automatic benchmark capture from IOA v3 operational workflow."
+                )
+
+                return jsonify({
+                    "response": result["final_answer"],
+                    "steps": result["steps"],
+                    "token_usage": add_runtime_metadata(
+                        result.get("token_usage"),
+                        mode
+                    )
+                })
+
             result = (
                 ioa_v2_agent.run_with_operational_context(
                     user_input,
@@ -394,7 +439,11 @@ def create_diagnose_blueprint(runtime):
                 )
             })
 
-        except Exception:
+        except Exception as exc:
+            current_app.logger.exception(
+                "Diagnose runtime failed: %s",
+                exc,
+            )
             return jsonify({
                 "error": public_runtime_error,
             }), 500
@@ -423,6 +472,8 @@ def create_diagnose_blueprint(runtime):
             else "simulator"
         )
         start_time = time.time()
+        app_logger = current_app.logger
+        session_user_id = session.get("user_id")
 
         def generate():
             try:
@@ -691,6 +742,64 @@ def create_diagnose_blueprint(runtime):
 
                     return
 
+                if mode == "ioa_v3_langgraph_n8n":
+                    if ioa_v3_agent is None:
+                        raise RuntimeError("IOA v3 runtime is not configured.")
+
+                    try:
+                        for event in ioa_v3_agent.run_stream(
+                            user_input,
+                            selected_source=data_source,
+                            source_resolution=source_resolution,
+                            user_id=session_user_id,
+                        ):
+                            if event.get("type") == "final":
+                                event["token_usage"] = add_runtime_metadata(
+                                    event.get("token_usage"),
+                                    mode
+                                )
+                            yield f"data: {json.dumps(event)}\n\n"
+
+                        latency_seconds = round(time.time() - start_time, 2)
+
+                        log_benchmark_result(
+                            mode="IOA v3 · Ops Graph",
+                            prompt=user_input,
+                            latency_seconds=latency_seconds,
+                            accuracy_score=0,
+                            tool_usage_score=0,
+                            reasoning_clarity_score=0,
+                            observability_score=0,
+                            development_complexity_score=5,
+                            integration_speed_score=5,
+                            ecosystem_score=5,
+                            maintainability_score=4,
+                            notes="Automatic benchmark capture from streamed IOA v3 operational workflow."
+                        )
+                    except Exception as exc:
+                        app_logger.exception(
+                            "IOA v3 stream runtime failed: %s",
+                            exc,
+                        )
+                        yield f"data: {json.dumps({
+                            'type': 'observation',
+                            'iteration': 1,
+                            'observation': {
+                                'output': {
+                                    'framework': 'LangGraph+n8n',
+                                    'status': 'error',
+                                    'error': public_runtime_error,
+                                }
+                            }
+                        })}\n\n"
+
+                        yield f"data: {json.dumps({
+                            'type': 'error',
+                            'error': public_runtime_error,
+                        })}\n\n"
+
+                    return
+
                 if mode == "ioa_v2_dify":
                     try:
                         yield f"data: {json.dumps({
@@ -837,7 +946,11 @@ def create_diagnose_blueprint(runtime):
                     notes="Automatic benchmark capture from streamed UI execution."
                 )
 
-            except Exception:
+            except Exception as exc:
+                app_logger.exception(
+                    "Diagnose stream runtime failed: %s",
+                    exc,
+                )
                 yield f"data: {json.dumps({
                     'type': 'error',
                     'error': public_runtime_error,

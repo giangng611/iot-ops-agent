@@ -1103,6 +1103,117 @@ def load_company_device_read_model(
     }
 
 
+def build_company_read_model_audit_plan(
+    actor,
+    cin_limit=DEFAULT_COMPANY_CIN_SCAN_LIMIT,
+):
+    safe_cin_limit = max(1, min(int(cin_limit), 1000))
+
+    def event(database_name, collection_name, projection, limit, sort=None):
+        return {
+            "actor": actor,
+            "operation": "find",
+            "namespace": f"{database_name}.{collection_name}",
+            "query": {},
+            "projection": projection,
+            "sort": sort,
+            "requested_limit": limit,
+            "effective_limit": max(1, min(int(limit), 1000)),
+            "max_time_ms": None,
+            "allowed_namespaces_enforced": True,
+            "credentials_redacted": True,
+            "mutating": False,
+            "audit_source": "read_plan_fallback",
+        }
+
+    return [
+        event(
+            "devicemgmt",
+            "NODE",
+            {
+                "_id": 0,
+                "rn": 1,
+                "ni": 1,
+                "nty": 1,
+                "category": 1,
+                "ct": 1,
+                "lt": 1,
+                "tenantId": 1,
+                "tenantName": 1,
+                "appDomainId": 1,
+                "appDomainName": 1,
+                "childDeviceInfoEntities": 1,
+            },
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+        event(
+            "authorization",
+            "IDENTITY",
+            {
+                "_id": 0,
+                "name": 1,
+                "userId": 1,
+                "category": 1,
+                "type": 1,
+                "active": 1,
+                "tenantId": 1,
+            },
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+        event(
+            "datamgmt",
+            "CNT",
+            {
+                "_id": 1,
+                "rn": 1,
+                "pi": 1,
+                "cr": 1,
+                "parentContainer": 1,
+            },
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+        event(
+            "datamgmt",
+            "RULE",
+            {
+                "_id": 0,
+                "deviceIds": 1,
+                "name": 1,
+                "status": 1,
+                "severity": 1,
+                "triggerType": 1,
+            },
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+        event(
+            "datamgmt",
+            "DEVICE_TELEMETRY",
+            {"_id": 0, "telemetry": 1},
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+        event(
+            "datamgmt",
+            "CIN",
+            {
+                "_id": 0,
+                "rn": 1,
+                "pi": 1,
+                "parentContainer": 1,
+                "ct": 1,
+                "lt": 1,
+                "cnf": 1,
+                "con": 1,
+                "tenantId": 1,
+                "tenantName": 1,
+                "appDomainId": 1,
+                "appDomainName": 1,
+            },
+            safe_cin_limit,
+            sort=("ct", -1),
+        ),
+    ]
+
+
 def serialize_company_device(device):
     return {
         key: value
@@ -1172,6 +1283,12 @@ def get_company_operational_payload(
             f"Company MongoDB read failed: {exc}"
         )
 
+    db_read_plan = build_company_read_model_audit_plan(
+        proxy_actor,
+        max(int(limit), DEFAULT_COMPANY_CIN_SCAN_LIMIT),
+    )
+    db_audit_status = "runtime_audit_available" if db_audit else "missing_runtime_audit"
+
     records = [
         serialize_company_device(device)
         for device in model["devices"]
@@ -1199,8 +1316,12 @@ def get_company_operational_payload(
                 DEFAULT_COMPANY_CIN_SCAN_LIMIT,
             ),
             "db_audit": db_audit,
+            "db_read_plan": db_read_plan,
+            "db_audit_status": db_audit_status,
         },
         "db_audit": db_audit,
+        "db_read_plan": db_read_plan,
+        "db_audit_status": db_audit_status,
         "selected_source": "company",
         "active_source": "company_mongodb",
         "rules_status": "provisional_poc",
@@ -1273,6 +1394,8 @@ def get_company_agent_context(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
         "source": payload["source"],
         "provenance": payload.get("provenance"),
         "db_audit": payload.get("db_audit"),
+        "db_read_plan": payload.get("db_read_plan"),
+        "db_audit_status": payload.get("db_audit_status"),
         "summary": payload.get("summary"),
         "alerts": {
             **{
@@ -1350,6 +1473,8 @@ def get_company_inventory_context(limit=MAX_AGENT_SAMPLE_RECORDS):
         "source": payload["source"],
         "tool": "get_company_inventory",
         "db_audit": payload.get("db_audit"),
+        "db_read_plan": payload.get("db_read_plan"),
+        "db_audit_status": payload.get("db_audit_status"),
         "summary": payload.get("summary"),
         "inventory_device_count": len(inventory_devices),
         "telemetry_only_device_count": len(telemetry_only_devices),
@@ -1394,6 +1519,8 @@ def get_company_telemetry_coverage_context(limit=MAX_AGENT_SAMPLE_RECORDS):
         "source": payload["source"],
         "tool": "get_company_telemetry_coverage",
         "db_audit": payload.get("db_audit"),
+        "db_read_plan": payload.get("db_read_plan"),
+        "db_audit_status": payload.get("db_audit_status"),
         "device_count": len(devices),
         "devices_with_telemetry": len(with_telemetry),
         "inventory_only_devices": len(without_telemetry),
@@ -1428,6 +1555,8 @@ def get_company_provisional_alert_context(limit=MAX_AGENT_SAMPLE_RECORDS):
         "source": payload["source"],
         "tool": "get_company_provisional_alerts",
         "db_audit": payload.get("db_audit"),
+        "db_read_plan": payload.get("db_read_plan"),
+        "db_audit_status": payload.get("db_audit_status"),
         "rules_status": payload.get("rules_status"),
         "official_rules_status": payload.get("official_rules_status"),
         "critical_count": alerts.get("critical_count", 0),
@@ -1454,6 +1583,8 @@ def get_company_rule_readiness_context():
         "source": payload["source"],
         "tool": "get_company_rule_readiness",
         "db_audit": payload.get("db_audit"),
+        "db_read_plan": payload.get("db_read_plan"),
+        "db_audit_status": payload.get("db_audit_status"),
         "company_rules_discovered": payload.get("summary", {}).get(
             "rule_count",
             0,
@@ -1488,6 +1619,8 @@ def get_company_disconnected_context(limit=MAX_AGENT_SAMPLE_RECORDS):
         "source": payload["source"],
         "tool": "get_company_disconnected_devices",
         "db_audit": payload.get("db_audit"),
+        "db_read_plan": payload.get("db_read_plan"),
+        "db_audit_status": payload.get("db_audit_status"),
         "count": len(disconnected),
         "devices": disconnected[:max(1, min(int(limit), 10))],
         "classification": "raw_device_status",
@@ -1523,6 +1656,8 @@ def get_company_device_context(identifier):
         "source": payload["source"],
         "tool": "get_company_device",
         "db_audit": payload.get("db_audit"),
+        "db_read_plan": payload.get("db_read_plan"),
+        "db_audit_status": payload.get("db_audit_status"),
         "query": identifier,
         "match_count": len(matches),
         "devices": matches[:MAX_AGENT_SAMPLE_RECORDS],

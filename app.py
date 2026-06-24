@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 
 from agents.ioa_v1_agent import IOAV1Agent
 from agents.ioa_v2_agent import IOAV2Agent
+from agents.ioa_v3_agent import IOAV3LangGraphN8nAgent
 from agents.langchain_agent import LangChainAgent
 from agents.langgraph_agent import LangGraphAgent
 from routes.auth_routes import auth_bp
@@ -93,6 +94,7 @@ ioa_v1_agent = IOAV1Agent(client)
 ioa_v2_agent = IOAV2Agent(client)
 langchain_agent = LangChainAgent()
 langgraph_agent = LangGraphAgent()
+ioa_v3_agent = IOAV3LangGraphN8nAgent()
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(create_chat_blueprint(client))
@@ -101,6 +103,7 @@ app.register_blueprint(create_diagnose_blueprint({
     "ioa_v2_agent": ioa_v2_agent,
     "langchain_agent": langchain_agent,
     "langgraph_agent": langgraph_agent,
+    "ioa_v3_agent": ioa_v3_agent,
     "get_max_message_chars": lambda: MAX_DIAGNOSE_MESSAGE_CHARS,
     "get_rate_limit_requests": lambda: DIAGNOSE_RATE_LIMIT_REQUESTS,
     "get_rate_limit_window_seconds": lambda: DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS,

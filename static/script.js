@@ -28,7 +28,8 @@ socket.on("device_update", (data) => {
     currentDataSourceState = {
         selected_source: "simulator",
         active_source: data.source || "simulator",
-        rules_status: "simulator"
+        rules_status: "simulator",
+        selected_alert_policy: currentAlertPolicy
     };
 
     updateDataSourceDisplay();
@@ -232,7 +233,7 @@ socket.on("telegram_chat_failed", (data) => {
     setTelegramRunState(false);
 });
 
-let currentMode = "ioa_v2_langgraph";
+let currentMode = "ioa_v3_langgraph_n8n";
 let allDevices = [];
 let chats = [];
 let currentChatId = null;
@@ -247,6 +248,7 @@ let currentAlerts = {
     critical_count: 0,
     warning_count: 0
 };
+let currentAlertPolicy = "fallback";
 let healthChart = null;
 let metricsChart = null;
 let deviceHistoryChart = null;
@@ -447,6 +449,13 @@ function inferRuntimeMetadataFromReasoningSteps(reasoningSteps) {
         return {
             runtime_label: "IOA v2 · n8n",
             model_name: "n8n workflow model"
+        };
+    }
+
+    if (normalized === "langgraph+n8n") {
+        return {
+            runtime_label: "IOA v3 · Ops Graph",
+            model_name: "gpt-4o-mini + operational workflow"
         };
     }
 
@@ -984,7 +993,8 @@ async function sendMessage() {
             currentMode === "ioa_v2_langchain" ||
             currentMode === "ioa_v2_langgraph" ||
             currentMode === "ioa_v2_n8n" ||
-            currentMode === "ioa_v2_dify"
+            currentMode === "ioa_v2_dify" ||
+            currentMode === "ioa_v3_langgraph_n8n"
         ) {
         loading.innerHTML = `
             <span>Agent is thinking...</span>
@@ -1018,7 +1028,8 @@ async function sendMessage() {
             currentMode === "ioa_v2_langchain" ||
             currentMode === "ioa_v2_langgraph" ||
             currentMode === "ioa_v2_n8n" ||
-            currentMode === "ioa_v2_dify"
+            currentMode === "ioa_v2_dify" ||
+            currentMode === "ioa_v3_langgraph_n8n"
         ) {
             finalAnswer = await sendStreamMessage(message);
         } else {
@@ -1453,10 +1464,12 @@ async function refreshDevices() {
 
         selectedDataSource = data.selected_source || selectedDataSource;
         allowedDataSources = data.allowed_data_sources || allowedDataSources;
+        currentAlertPolicy = data.selected_alert_policy || currentAlertPolicy;
         currentDataSourceState = {
             selected_source: data.selected_source || selectedDataSource,
             active_source: data.active_source || data.source || "simulator",
             rules_status: data.rules_status || "unknown",
+            selected_alert_policy: currentAlertPolicy,
             reason: data.reason || "",
             rules_message: data.rules_message || "",
             summary: data.summary || {},
@@ -1468,6 +1481,7 @@ async function refreshDevices() {
             warning_count: 0
         };
         updateDataSourceControl();
+        updateAlertPolicyControl();
         updateDataSourceDisplay();
         renderDeviceTable();
         renderAlertCenter();
@@ -1513,6 +1527,7 @@ async function changeDataSource(value) {
 
         selectedDataSource = data.selected_source || selectedDataSource;
         allowedDataSources = data.allowed_data_sources || allowedDataSources;
+        currentAlertPolicy = data.selected_alert_policy || currentAlertPolicy;
         await refreshDevices();
     } catch (error) {
         console.error("Failed to switch data source:", error);
@@ -1533,6 +1548,58 @@ function updateDataSourceControl() {
         button.setAttribute("aria-pressed", String(isSelected));
         button.disabled = !isAllowed;
         button.classList.toggle("disabled-option", !isAllowed);
+    });
+}
+
+async function changeAlertPolicy(value) {
+    if (!["official", "fallback"].includes(value)) {
+        updateAlertPolicyControl();
+        return;
+    }
+
+    currentAlertPolicy = value;
+    updateAlertPolicyControl();
+    updateDataSourceDisplay();
+    renderAlertCenter();
+
+    try {
+        const response = await fetch("/api/alert-policy", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                selected_alert_policy: value
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || "Unable to update alert policy.");
+        }
+
+        currentAlertPolicy = data.selected_alert_policy || currentAlertPolicy;
+        currentDataSourceState.selected_alert_policy = currentAlertPolicy;
+        updateAlertPolicyControl();
+        updateDataSourceDisplay();
+        renderAlertCenter();
+    } catch (error) {
+        console.error("Failed to switch alert policy:", error);
+    }
+}
+
+function updateAlertPolicyControl() {
+    const control = document.getElementById("alertPolicySegmented");
+
+    if (!control) {
+        return;
+    }
+
+    control.dataset.selected = currentAlertPolicy;
+    control.querySelectorAll("button").forEach(button => {
+        const isSelected = button.dataset.alertPolicy === currentAlertPolicy;
+        button.setAttribute("aria-pressed", String(isSelected));
     });
 }
 
@@ -1592,8 +1659,10 @@ function updateDataSourceDisplay() {
 
     if (rulesStatus === "provisional_poc") {
         note.textContent = (
-            currentDataSourceState.rules_message ||
-            "PoC fallback rules are active. These are not official company or Grafana alerts."
+            currentAlertPolicy === "official"
+                ? "Official company/Grafana alerts are selected, but the official alert workflow is not integrated yet. Device fallback rules remain available as a separate view."
+                : currentDataSourceState.rules_message ||
+                    "PoC fallback rules are active. These are not official company or Grafana alerts."
         );
         note.classList.remove("hidden");
         return;
@@ -2385,83 +2454,513 @@ function renderJsonBlock(value, className = "") {
     return `<pre class="reasoning-json-block ${className}">${escapeHtml(prettyJson(value))}</pre>`;
 }
 
+function formatMongoCommandFromAudit(event = {}) {
+    const namespace = String(event.namespace || "");
+    const [databaseName, collectionName] = namespace.split(".");
+    const operation = event.operation || "read";
+
+    if (operation === "find" && databaseName && collectionName) {
+        let command = `db.getSiblingDB("${databaseName}")` +
+            `.getCollection("${collectionName}")` +
+            `.find(${JSON.stringify(event.query || {})}, ${JSON.stringify(event.projection || {})})`;
+
+        if (Array.isArray(event.sort) && event.sort.length === 2) {
+            command += `.sort(${JSON.stringify({ [event.sort[0]]: event.sort[1] })})`;
+        }
+
+        if (event.effective_limit !== undefined && event.effective_limit !== null) {
+            command += `.limit(${event.effective_limit})`;
+        }
+
+        if (event.max_time_ms !== undefined && event.max_time_ms !== null) {
+            command += `.maxTimeMS(${event.max_time_ms})`;
+        }
+
+        return command;
+    }
+
+    if (operation === "list_collections" && databaseName) {
+        return `db.getSiblingDB("${databaseName}").getCollectionNames()`;
+    }
+
+    if (operation === "list_database_names") {
+        return "db.adminCommand({ listDatabases: 1 })";
+    }
+
+    if (operation === "collStats" && databaseName && collectionName) {
+        return `db.getSiblingDB("${databaseName}").runCommand({ collStats: "${collectionName}", scale: 1 })`;
+    }
+
+    return `${operation} ${namespace}`.trim();
+}
+
+function normalizeQueryCommands(output) {
+    if (Array.isArray(output?.query_commands) && output.query_commands.length > 0) {
+        return output.query_commands;
+    }
+
+    const auditEvents = Array.isArray(output?.db_audit) ? output.db_audit : [];
+
+    return auditEvents
+        .filter(event => event && typeof event === "object")
+        .map(event => ({
+            ...event,
+            command: formatMongoCommandFromAudit(event),
+        }));
+}
+
+function normalizeReadPlanCommands(output) {
+    if (Array.isArray(output?.db_read_plan_commands) && output.db_read_plan_commands.length > 0) {
+        return output.db_read_plan_commands;
+    }
+
+    const planEvents = Array.isArray(output?.db_read_plan) ? output.db_read_plan : [];
+
+    return planEvents
+        .filter(event => event && typeof event === "object")
+        .map(event => ({
+            ...event,
+            command: formatMongoCommandFromAudit(event),
+        }));
+}
+
+function copyQueryCommand(button, command) {
+    copyTextToClipboard(command);
+
+    if (!button) {
+        return;
+    }
+
+    const previousText = button.textContent;
+    button.textContent = "Copied";
+
+    setTimeout(() => {
+        button.textContent = previousText || "Copy";
+    }, 1200);
+}
+
+function toggleQueryCommandDetails(button) {
+    const actions = button?.closest(".query-command-actions");
+    const panel = actions?.querySelector(".query-command-details-panel");
+
+    if (!panel) {
+        return;
+    }
+
+    const isHidden = panel.classList.toggle("hidden");
+    button.textContent = isHidden ? "Show query details" : "Hide query details";
+}
+
+function toggleFullEvidenceJson(button) {
+    const section = button?.closest(".observation-section");
+    const panel = section?.querySelector(".observation-details-panel");
+
+    if (!panel) {
+        return;
+    }
+
+    const isHidden = panel.classList.toggle("hidden");
+    button.textContent = isHidden
+        ? "Show full evidence JSON"
+        : "Hide full evidence JSON";
+}
+
+function renderCommandCards(commands) {
+    return commands.map((command, index) => `
+        <div class="query-command-card">
+            <div class="query-command-header">
+                <span>Command ${index + 1}</span>
+                <span>${escapeHtml(command.operation || "read")} · ${escapeHtml(command.namespace || "")}</span>
+            </div>
+            <div class="query-command-code-wrap">
+                <pre class="query-command-code">${escapeHtml(command.command || "")}</pre>
+            </div>
+            <div class="query-command-actions">
+                <button
+                    class="query-command-details-toggle"
+                    type="button"
+                    onclick="toggleQueryCommandDetails(this)"
+                >
+                    Show query details
+                </button>
+                <button
+                    class="query-command-copy"
+                    type="button"
+                    onclick="copyQueryCommand(this, decodeURIComponent('${encodeURIComponent(command.command || "")}'))"
+                >
+                    Copy
+                </button>
+                <div class="query-command-details-panel hidden">
+                    ${renderJsonBlock({
+                        actor: command.actor || "unknown",
+                        operation: command.operation || "read",
+                        namespace: command.namespace || "",
+                        query: command.query || {},
+                        projection: command.projection || {},
+                        sort: command.sort || null,
+                        requested_limit: command.requested_limit,
+                        effective_limit: command.effective_limit,
+                        max_time_ms: command.max_time_ms,
+                        allowed_namespaces_enforced: command.allowed_namespaces_enforced,
+                        credentials_redacted: command.credentials_redacted,
+                        mutating: command.mutating,
+                        audit_source: command.audit_source,
+                    })}
+                </div>
+            </div>
+        </div>
+    `).join("");
+}
+
 function renderQueryCommands(output) {
-    const commands = Array.isArray(output?.query_commands)
-        ? output.query_commands
-        : [];
+    const commands = normalizeQueryCommands(output);
 
     if (commands.length === 0) {
+        const readPlanCommands = normalizeReadPlanCommands(output);
+
+        if (readPlanCommands.length > 0) {
+            return `
+                <section class="query-command-section query-command-missing">
+                    <div class="query-command-title">Database Read Plan</div>
+                    <p class="query-command-note">
+                        Runtime DB audit is missing, so these are the intended read commands from the company read model, not verified audit events.
+                    </p>
+                    ${renderCommandCards(readPlanCommands)}
+                </section>
+            `;
+        }
+
+        if (output?.source === "company_mongodb" || String(output?.tool || "").startsWith("get_company_")) {
+            return `
+                <section class="query-command-section query-command-missing">
+                    <div class="query-command-title">Database Query Commands</div>
+                    <p class="query-command-note">
+                        No database query command was attached to this tool step. This should be treated as an audit gap.
+                    </p>
+                </section>
+            `;
+        }
+
         return "";
     }
 
     return `
-        <section class="reasoning-section query-command-section">
-            <div class="reasoning-section-title">Query Commands</div>
-            ${commands.map((command, index) => `
-                <div class="query-command-card">
-                    <div class="query-command-header">
-                        <span>Command ${index + 1}</span>
-                        <span>${escapeHtml(command.operation || "read")} · ${escapeHtml(command.namespace || "")}</span>
-                    </div>
-                    ${renderJsonBlock(command.command || "", "query-command-code")}
-                    <div class="query-command-meta">
-                        <span>Actor: ${escapeHtml(command.actor || "unknown")}</span>
-                        <span>Limit: ${escapeHtml(String(command.effective_limit ?? "n/a"))}</span>
-                        <span>MaxTimeMS: ${escapeHtml(String(command.max_time_ms ?? "n/a"))}</span>
-                        <span>Mutating: ${command.mutating ? "yes" : "no"}</span>
-                        <span>Credentials: ${command.credentials_redacted ? "redacted" : "not reported"}</span>
-                    </div>
-                    <details class="query-command-details">
-                        <summary>Filter / projection / raw audit</summary>
-                        ${renderJsonBlock({
-                            query: command.query || {},
-                            projection: command.projection || {},
-                            sort: command.sort || null,
-                            requested_limit: command.requested_limit,
-                            effective_limit: command.effective_limit,
-                            allowed_namespaces_enforced: command.allowed_namespaces_enforced,
-                            credentials_redacted: command.credentials_redacted,
-                            mutating: command.mutating,
-                        })}
-                    </details>
-                </div>
-            `).join("")}
+        <section class="query-command-section">
+            <div class="query-command-title">Database Query Commands</div>
+            <p class="query-command-note">
+                Read-only commands emitted by the authorized tool. Credentials are never shown here.
+            </p>
+            ${renderCommandCards(commands)}
         </section>
     `;
 }
 
-function renderObjectSummary(output) {
-    if (!output || typeof output !== "object" || Array.isArray(output)) {
-        return renderJsonBlock(output ?? "Waiting for observation...");
+function renderExternalApiRequest(output) {
+    const httpCall = output?.http_call;
+
+    if (!httpCall || typeof httpCall !== "object" || Array.isArray(httpCall)) {
+        return "";
     }
 
-    const hiddenKeys = new Set(["query_commands", "db_audit"]);
-    const entries = Object.entries(output).filter(([key]) => !hiddenKeys.has(key));
-    const scalarEntries = entries.filter(([, value]) =>
-        value === null || ["string", "number", "boolean"].includes(typeof value)
-    );
-    const complexEntries = entries.filter(([, value]) =>
-        !(value === null || ["string", "number", "boolean"].includes(typeof value))
-    );
+    const method = httpCall.method || "GET";
+    const path = httpCall.path || "";
+    const params = httpCall.params || {};
+    const query = Object.entries(params)
+        .filter(([, value]) => value !== null && value !== undefined && value !== "")
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        .join("&");
+    const command = `${method} ${path}${query ? `?${query}` : ""}`;
 
     return `
-        ${scalarEntries.length ? `
-            <div class="reasoning-kv-grid">
-                ${scalarEntries.map(([key, value]) => `
-                    <div class="reasoning-kv-item">
-                        <span>${escapeHtml(key)}</span>
-                        <strong>${escapeHtml(String(value))}</strong>
+        <section class="query-command-section api-request-section">
+            <div class="query-command-title">External API Request</div>
+            <p class="query-command-note">
+                IOA v3 called an approved Grafana API workflow through n8n. This is not a direct database query.
+            </p>
+            <div class="query-command-card">
+                <div class="query-command-header">
+                    <span>Request 1</span>
+                    <span>${escapeHtml(method)} · ${escapeHtml(path)}</span>
+                </div>
+                <div class="query-command-code-wrap">
+                    <pre class="query-command-code">${escapeHtml(command)}</pre>
+                </div>
+                <div class="query-command-actions">
+                    <button
+                        class="query-command-details-toggle"
+                        type="button"
+                        onclick="toggleQueryCommandDetails(this)"
+                    >
+                        Show request details
+                    </button>
+                    <button
+                        class="query-command-copy"
+                        type="button"
+                        onclick="copyQueryCommand(this, decodeURIComponent('${encodeURIComponent(command)}'))"
+                    >
+                        Copy
+                    </button>
+                    <div class="query-command-details-panel hidden">
+                        ${renderJsonBlock({
+                            method,
+                            path,
+                            params,
+                            base_url: httpCall.base_url || "redacted_configured_gateway",
+                            executed_by: "n8n-grafana-ops-gateway",
+                            mutating: false,
+                            credentials: "redacted",
+                        })}
                     </div>
-                `).join("")}
+                </div>
             </div>
-        ` : ""}
-        ${complexEntries.map(([key, value]) => `
-            <section class="reasoning-section">
-                <div class="reasoning-section-title">${escapeHtml(key)}</div>
-                ${renderJsonBlock(value)}
-            </section>
-        `).join("")}
+        </section>
     `;
+}
+
+function renderToolCall(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) {
+        return "";
+    }
+
+    const toolCall = output.tool_call || {};
+    const execution = output._tool_execution || {};
+    const toolName = toolCall.tool || output.tool || output.selected_tool || output.action;
+    const workflowNode = toolCall.workflow_node || execution.workflow_node || output.workflow_node;
+    const dataSource = toolCall.data_source || output.data_source || output.selected_source || output.source;
+    const executionTarget = toolCall.execution_target || execution.execution_target;
+
+    if (!toolName && !workflowNode && !executionTarget) {
+        return "";
+    }
+
+    return `
+        <section class="tool-call-section">
+            <div class="tool-call-title">Tool Call</div>
+            <div class="tool-call-grid">
+                ${toolName ? `
+                    <div>
+                        <span>Tool</span>
+                        <strong>${escapeHtml(toolName)}</strong>
+                    </div>
+                ` : ""}
+                ${dataSource ? `
+                    <div>
+                        <span>Data source</span>
+                        <strong>${escapeHtml(dataSource)}</strong>
+                    </div>
+                ` : ""}
+                ${workflowNode ? `
+                    <div>
+                        <span>Workflow node</span>
+                        <strong>${escapeHtml(workflowNode)}</strong>
+                    </div>
+                ` : ""}
+                ${executionTarget ? `
+                    <div>
+                        <span>Execution target</span>
+                        <strong>${escapeHtml(executionTarget)}</strong>
+                    </div>
+                ` : ""}
+            </div>
+        </section>
+    `;
+}
+
+function summarizeArray(value) {
+    if (!Array.isArray(value)) {
+        return value;
+    }
+
+    return {
+        count: value.length,
+        details: "Collapsed in default trace view. Open full evidence JSON when needed.",
+        truncated: value.length > 0,
+    };
+}
+
+function summarizeObject(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return value;
+    }
+
+    return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => {
+            if (key === "rules" || key === "alerts" || key === "devices" || Array.isArray(item)) {
+                return [key, summarizeArray(item)];
+            }
+
+            if (item && typeof item === "object") {
+                return [key, summarizeObject(item)];
+            }
+
+            return [key, item];
+        })
+    );
+}
+
+function compactObservationOutput(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) {
+        return output ?? "Waiting for observation...";
+    }
+
+    const compact = { ...output };
+    delete compact.query_commands;
+    delete compact.db_audit;
+    delete compact.db_read_plan_commands;
+    delete compact.db_read_plan;
+
+    return compact;
+}
+
+function appendIfPresent(target, source, key) {
+    if (
+        source &&
+        Object.prototype.hasOwnProperty.call(source, key) &&
+        source[key] !== undefined
+    ) {
+        target[key] = source[key];
+    }
+}
+
+function summarizeNestedCounts(source, keys) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+        return null;
+    }
+
+    const summary = {};
+
+    keys.forEach(key => appendIfPresent(summary, source, key));
+
+    return Object.keys(summary).length > 0 ? summary : null;
+}
+
+function hasNestedArray(value) {
+    if (Array.isArray(value)) {
+        return value.length > 0;
+    }
+
+    if (!value || typeof value !== "object") {
+        return false;
+    }
+
+    return Object.values(value).some(item => hasNestedArray(item));
+}
+
+function isComplexObservation(compact) {
+    if (!compact || typeof compact !== "object" || Array.isArray(compact)) {
+        return false;
+    }
+
+    const compactText = JSON.stringify(compact);
+    const complexKeys = [
+        "devices",
+        "alerts",
+        "samples",
+        "sample_records",
+        "interpretation_notes",
+        "poc_rules",
+        "matches",
+        "provenance",
+    ];
+
+    return (
+        compactText.length > 900 ||
+        complexKeys.some(key => Object.prototype.hasOwnProperty.call(compact, key)) ||
+        hasNestedArray(compact)
+    );
+}
+
+function summarizeObservationOutput(output) {
+    const compact = compactObservationOutput(output);
+
+    if (!compact || typeof compact !== "object" || Array.isArray(compact)) {
+        return compact;
+    }
+
+    if (compact.source === "n8n_grafana_gateway") {
+        return {
+            source: compact.source,
+            tool: compact.tool,
+            workflow_id: compact.workflow_id,
+            http_call: compact.http_call,
+            evidence: summarizeObject(compact.evidence || {}),
+        };
+    }
+
+    if (!isComplexObservation(compact)) {
+        return compact;
+    }
+
+    const summary = {};
+    [
+        "source",
+        "tool",
+        "selected_tool",
+        "data_source",
+        "db_audit_status",
+        "count",
+        "record_count",
+        "distinct_device_count",
+        "record_type",
+        "classification",
+        "classification_status",
+        "rules_status",
+        "official_rules_status",
+    ].forEach(key => appendIfPresent(summary, compact, key));
+
+    const counterSummary = summarizeNestedCounts(compact.summary, [
+        "device_count",
+        "inventory_node_count",
+        "identity_count",
+        "container_count",
+        "rule_count",
+        "telemetry_catalog_count",
+        "content_instance_count",
+        "unmapped_telemetry_count",
+        "command_record_count",
+    ]);
+
+    if (counterSummary) {
+        summary.summary = counterSummary;
+    }
+
+    const alertSummary = summarizeNestedCounts(compact.alerts, [
+        "critical_count",
+        "warning_count",
+        "total_count",
+        "rules_status",
+        "policy",
+        "official",
+        "ruleset_version",
+    ]);
+
+    if (alertSummary) {
+        summary.alerts = alertSummary;
+    }
+
+    [
+        "devices",
+        "alerts",
+        "samples",
+        "sample_records",
+        "interpretation_notes",
+        "poc_rules",
+        "matches",
+    ].forEach(key => {
+        if (Array.isArray(compact[key])) {
+            summary[key] = summarizeArray(compact[key]);
+        }
+    });
+
+    return summary;
+}
+
+function shouldShowFullEvidenceToggle(compact, summary) {
+    if (!compact || typeof compact !== "object" || Array.isArray(compact)) {
+        return false;
+    }
+
+    return isComplexObservation(compact);
 }
 
 function renderObservationOutput(output) {
@@ -2469,11 +2968,34 @@ function renderObservationOutput(output) {
         return renderJsonBlock("Waiting for observation...");
     }
 
+    const compactOutput = compactObservationOutput(output);
+    const summaryOutput = summarizeObservationOutput(output);
+    const showFullEvidence = shouldShowFullEvidenceToggle(
+        compactOutput,
+        summaryOutput
+    );
+
     return `
+        ${renderToolCall(output)}
+        ${renderExternalApiRequest(output)}
         ${renderQueryCommands(output)}
-        <section class="reasoning-section">
-            <div class="reasoning-section-title">Observation</div>
-            ${renderObjectSummary(output)}
+        <section class="observation-section">
+            <div class="observation-section-title">Observation</div>
+            ${renderJsonBlock(summaryOutput, "observation-json")}
+            ${showFullEvidence ? `
+                <div class="observation-details">
+                    <button
+                        class="observation-details-toggle"
+                        type="button"
+                        onclick="toggleFullEvidenceJson(this)"
+                    >
+                        Show full evidence JSON
+                    </button>
+                    <div class="observation-details-panel hidden">
+                        ${renderJsonBlock(compactOutput, "observation-json")}
+                    </div>
+                </div>
+            ` : ""}
         </section>
     `;
 }
@@ -2637,7 +3159,6 @@ function createReasoningStepElement(step) {
 
         <p><strong>Observation:</strong></p>
         <div class="reasoning-observation-container">
-            <pre class="reasoning-observation"></pre>
         </div>
     `;
 
@@ -2769,6 +3290,28 @@ function getRuntimeWorkflowTemplate(runtimeMode, frameworkName = "") {
         };
     }
 
+    if (framework === "langgraph+n8n" || (!framework && mode === "ioa_v3_langgraph_n8n")) {
+        return {
+            title: "IOA v3 workflow",
+            viewBox: "0 0 100 100",
+            nodes: [
+                { id: "validate_request", label: "Validate request", shortLabel: "Validate", detail: "Check prompt size, source context, and IOA v3 policy entry.", icon: "IN", x: 11, y: 30, type: "trigger" },
+                { id: "select_workflow", label: "Select workflow", shortLabel: "Select", detail: "LangGraph chooses an allowlisted operational workflow/tool.", icon: "AI", x: 34, y: 30, type: "agent" },
+                { id: "authorize_workflow", label: "Authorize workflow", shortLabel: "Authorize", detail: "Check tool allowlist, params, and execution budget.", icon: "OK", x: 56, y: 30, type: "agent" },
+                { id: "call_n8n_workflow", label: "Run approved tool", shortLabel: "Run tool", detail: "Execute the approved Grafana/n8n or company DB read workflow and collect bounded evidence.", icon: "HTTP", x: 73, y: 62, type: "tool" },
+                { id: "apply_kpi_rules", label: "Apply KPI rules", shortLabel: "KPI rules", detail: "Attach Grafana KPI semantics before language generation.", icon: "KPI", x: 83, y: 30, type: "agent" },
+                { id: "generate_answer", label: "Generate final answer", shortLabel: "Answer", detail: "Generate the final answer from n8n evidence and KPI rules.", icon: "OUT", x: 94, y: 30, type: "answer" }
+            ],
+            edges: [
+                { from: "validate_request", to: "select_workflow", path: "M17 20 C23 20 27 20 29 20" },
+                { from: "select_workflow", to: "authorize_workflow", path: "M40 20 C46 20 50 20 51 20" },
+                { from: "authorize_workflow", to: "call_n8n_workflow", path: "M62 24 C70 30 71 43 73 50" },
+                { from: "call_n8n_workflow", to: "apply_kpi_rules", path: "M78 51 C82 43 82 31 82 24" },
+                { from: "apply_kpi_rules", to: "generate_answer", path: "M88 20 C90 20 91 20 92 20" }
+            ]
+        };
+    }
+
     if (framework === "n8n" || (!framework && mode === "ioa_v2_n8n")) {
         return {
             title: "n8n workflow",
@@ -2831,6 +3374,7 @@ function inferWorkflowFramework(steps) {
     const knownFrameworks = {
         langchain: "LangChain",
         langgraph: "LangGraph",
+        "langgraph+n8n": "LangGraph+n8n",
         n8n: "n8n",
         dify: "Dify",
         custom: "Custom",
@@ -3092,8 +3636,7 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
     const workflow = buildWorkflowState(safeSteps, finalized);
     const framework = inferWorkflowFramework(safeSteps);
     const visibleNodes = workflow.nodes
-        .filter(node => !node.helper)
-        .slice(0, 4);
+        .filter(node => !node.helper);
 
     workflowNodeDetailStore = {};
 
@@ -3253,35 +3796,27 @@ function enqueueReasoningObservation(step) {
         }
 
         const stepElement = createReasoningStepElement(step);
-        const observationElement = stepElement.querySelector(".reasoning-observation");
         const observationContainer = stepElement.querySelector(
             ".reasoning-observation-container"
         );
 
-        return typeTextIntoElementPromise(
-            observationElement,
-            observationText(step.output),
-            1
-        )
-            .then(() => {
-                if (observationContainer) {
-                    observationContainer.innerHTML = renderObservationOutput(step.output);
-                }
+        if (observationContainer) {
+            observationContainer.innerHTML = renderObservationOutput(step.output);
+        }
 
-                const existingStep = displayedWorkflowSteps.find(item =>
-                    item.iteration === step.iteration
-                );
+        const existingStep = displayedWorkflowSteps.find(item =>
+            item.iteration === step.iteration
+        );
 
-                if (existingStep) {
-                    existingStep.output = step.output;
-                } else {
-                    displayedWorkflowSteps.push({
-                        ...step
-                    });
-                }
-
-                updateReasoningWorkflowMap(displayedWorkflowSteps, false);
+        if (existingStep) {
+            existingStep.output = step.output;
+        } else {
+            displayedWorkflowSteps.push({
+                ...step
             });
+        }
+
+        updateReasoningWorkflowMap(displayedWorkflowSteps, false);
     });
 }
 
@@ -3289,6 +3824,14 @@ function renderAlertCenter() {
     const badge = document.getElementById("alertBadge");
     const summary = document.getElementById("alertSummary");
     const alertList = document.getElementById("alertList");
+
+    if (
+        currentDataSourceState.selected_source === "company" &&
+        currentAlertPolicy === "official"
+    ) {
+        renderOfficialCompanyAlertsPending(badge, summary, alertList);
+        return;
+    }
 
     if (
         currentDataSourceState.selected_source === "company" &&
@@ -3430,6 +3973,41 @@ function renderAlertCenter() {
             </div>
         `;
     });
+}
+
+function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
+    if (badge) {
+        badge.classList.add("hidden");
+    }
+
+    if (!summary || !alertList) {
+        return;
+    }
+
+    summary.innerHTML = `
+        <div class="alert-summary-card rules-pending-alert">
+            <h2>Pending</h2>
+            <p>Official alerts</p>
+        </div>
+        <div class="alert-summary-card warning-alert">
+            <h2>0</h2>
+            <p>Fallback hidden</p>
+        </div>
+    `;
+
+    alertList.innerHTML = `
+        <div class="alert-item info">
+            <div>
+                <h3>Official company/Grafana alerts are not connected yet</h3>
+                <p>
+                    The KPI workbook and Grafana client endpoints are ready for
+                    the IOA v3 workflow, but the authoritative alert feed has
+                    not been mapped into this tab yet. Switch back to fallback
+                    alerts to view the current PoC device findings.
+                </p>
+            </div>
+        </div>
+    `;
 }
 
 function renderCompanyPocAlerts(badge, summary, alertList) {
@@ -4480,7 +5058,7 @@ async function openProfileDrawer(type) {
 
         const selectedMode =
         document.getElementById("modeSelect")?.dataset.value ||
-        "ioa_v2_langgraph";
+        "ioa_v3_langgraph_n8n";
 
         let modeLabel = "IOA v2 · Custom Python ReAct Agent";
 
@@ -4502,6 +5080,10 @@ async function openProfileDrawer(type) {
 
         if (selectedMode === "ioa_v2_dify") {
             modeLabel = "IOA v2 · Dify App Agent";
+        }
+
+        if (selectedMode === "ioa_v3_langgraph_n8n") {
+            modeLabel = "IOA v3 · Ops Graph";
         }
 
         const deviceCount =
@@ -4547,6 +5129,38 @@ async function openProfileDrawer(type) {
                         </button>
                     </div>
                     <p id="dataSourceNote" class="drawer-source-note"></p>
+
+                    <div class="drawer-subsection">
+                        <strong>Alert Policy</strong>
+                        <p>Choose whether the Alerts tab uses official Grafana/company alerts or the current safe fallback rules.</p>
+                    </div>
+                    <div
+                        id="alertPolicySegmented"
+                        class="data-source-segmented alert-policy-segmented"
+                        data-selected="${escapeHtml(currentAlertPolicy)}"
+                        role="group"
+                        aria-label="Alert policy"
+                    >
+                        <button
+                            type="button"
+                            data-alert-policy="official"
+                            aria-pressed="${currentAlertPolicy === "official"}"
+                            onclick="changeAlertPolicy('official')"
+                        >
+                            Official alerts
+                        </button>
+                        <button
+                            type="button"
+                            data-alert-policy="fallback"
+                            aria-pressed="${currentAlertPolicy === "fallback"}"
+                            onclick="changeAlertPolicy('fallback')"
+                        >
+                            Fallback alerts
+                        </button>
+                    </div>
+                    <p class="drawer-source-note">
+                        Official alerts are reserved for the Grafana/n8n alert feed. Fallback alerts keep the current PoC device rules available.
+                    </p>
                 </div>
 
                 <div>
@@ -4574,6 +5188,7 @@ async function openProfileDrawer(type) {
         `;
 
         updateDataSourceControl();
+        updateAlertPolicyControl();
         updateDataSourceDisplay();
 
         fetchStorageStatus().then(storageStatus => {

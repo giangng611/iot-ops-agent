@@ -259,6 +259,88 @@ class LangGraphPolicyTests(unittest.TestCase):
             "company.provisional_alerts",
         )
 
+    def test_disconnected_company_tool_step_includes_query_commands(self):
+        with patch(
+            "agents.langgraph_agent.get_company_disconnected_context",
+            return_value={
+                "source": "company_mongodb",
+                "tool": "get_company_disconnected_devices",
+                "db_audit": [{
+                    "actor": "company-llm-tools",
+                    "operation": "find",
+                    "namespace": "datamgmt.CIN",
+                    "query": {"con": {"$exists": True}},
+                    "projection": {"_id": 0, "con": 1},
+                    "effective_limit": 1000,
+                    "max_time_ms": 5000,
+                    "credentials_redacted": True,
+                    "mutating": False,
+                }],
+                "count": 1,
+                "devices": [{
+                    "device_id": "device-1",
+                    "status": "disconnected",
+                }],
+            },
+        ):
+            result = self.agent.run_tool_node(
+                make_state(
+                    intent="company_disconnected_devices",
+                    selected_tool="get_company_disconnected_devices",
+                    data_source="company",
+                )
+            )
+
+        output = result["steps"][-1]["output"]
+        self.assertEqual(
+            output["tool_call"]["tool"],
+            "get_company_disconnected_devices",
+        )
+        self.assertIn("query_commands", output)
+        self.assertIn(
+            'db.getSiblingDB("datamgmt").getCollection("CIN").find',
+            output["query_commands"][0]["command"],
+        )
+
+    def test_company_tool_step_exposes_read_plan_when_runtime_audit_is_missing(self):
+        with patch(
+            "agents.langgraph_agent.get_company_disconnected_context",
+            return_value={
+                "source": "company_mongodb",
+                "tool": "get_company_disconnected_devices",
+                "db_audit": [],
+                "db_audit_status": "missing_runtime_audit",
+                "db_read_plan": [{
+                    "actor": "company-llm-tools",
+                    "operation": "find",
+                    "namespace": "datamgmt.CIN",
+                    "query": {},
+                    "projection": {"_id": 0, "con": 1},
+                    "effective_limit": 1000,
+                    "credentials_redacted": True,
+                    "mutating": False,
+                    "audit_source": "read_plan_fallback",
+                }],
+                "count": 1,
+                "devices": [],
+            },
+        ):
+            result = self.agent.run_tool_node(
+                make_state(
+                    intent="company_disconnected_devices",
+                    selected_tool="get_company_disconnected_devices",
+                    data_source="company",
+                )
+            )
+
+        output = result["steps"][-1]["output"]
+        self.assertNotIn("query_commands", output)
+        self.assertIn("db_read_plan_commands", output)
+        self.assertIn(
+            'db.getSiblingDB("datamgmt").getCollection("CIN").find',
+            output["db_read_plan_commands"][0]["command"],
+        )
+
     def test_denied_graph_does_not_invoke_model_or_tools(self):
         model = MagicMock()
         agent = LangGraphAgent(model=model)

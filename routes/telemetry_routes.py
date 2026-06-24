@@ -23,6 +23,7 @@ _user_data_sources = {}
 _user_data_source_explicit = {}
 _mongo_read_rate_limit_lock = threading.Lock()
 _mongo_read_rate_limit_log = defaultdict(deque)
+ALLOWED_ALERT_POLICIES = {"official", "fallback"}
 
 
 def _positive_int_env(name, default):
@@ -104,6 +105,16 @@ def get_selected_data_source():
     return selected_source
 
 
+def get_selected_alert_policy():
+    selected_policy = session.get("selected_alert_policy", "fallback")
+
+    if selected_policy not in ALLOWED_ALERT_POLICIES:
+        selected_policy = "fallback"
+        session["selected_alert_policy"] = selected_policy
+
+    return selected_policy
+
+
 def remember_user_data_source(user_id, selected_source, explicit=False):
     if user_id is None:
         return
@@ -156,6 +167,7 @@ def get_devices():
     payload["allowed_data_sources"] = sorted(
         get_allowed_data_sources(current_user_id())
     )
+    payload["selected_alert_policy"] = get_selected_alert_policy()
     return jsonify(payload)
 
 
@@ -196,6 +208,31 @@ def data_source():
         "selected_source": selected_source,
         "default_source": get_default_data_source(current_user_id()),
         "allowed_data_sources": sorted(get_allowed_data_sources(current_user_id())),
+        "selected_alert_policy": get_selected_alert_policy(),
+    })
+
+
+@telemetry_bp.route("/api/alert-policy", methods=["GET", "POST"])
+def alert_policy():
+    unauthorized = require_login_json()
+
+    if unauthorized:
+        return unauthorized
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        selected_policy = data.get("selected_alert_policy", "fallback")
+
+        if selected_policy not in ALLOWED_ALERT_POLICIES:
+            return jsonify({"error": "Invalid alert policy"}), 400
+
+        session["selected_alert_policy"] = selected_policy
+
+    return jsonify({
+        "selected_alert_policy": get_selected_alert_policy(),
+        "available_alert_policies": sorted(ALLOWED_ALERT_POLICIES),
+        "official_alert_status": "pending_grafana_integration",
+        "fallback_alert_status": "available",
     })
 
 

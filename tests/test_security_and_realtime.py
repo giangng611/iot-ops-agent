@@ -124,6 +124,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             ("post", "/api/diagnose-stream", {"json": {"message": "hello"}}),
             ("get", "/api/data-source", {}),
             ("post", "/api/data-source", {"json": {"selected_source": "company"}}),
+            ("get", "/api/alert-policy", {}),
+            ("post", "/api/alert-policy", {"json": {"selected_alert_policy": "official"}}),
             ("get", "/api/devices", {}),
             ("get", "/api/telemetry/sensor-001", {}),
             ("get", "/api/mongo/telemetry/health", {}),
@@ -2528,6 +2530,33 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             app_module.get_user_selected_data_source(user["id"]),
             "simulator",
         )
+
+    def test_alert_policy_defaults_to_fallback_and_rejects_unknown_values(self):
+        user = self.create_user_once("alert-policy-user", "alert-pass")
+        self.login_as(user)
+
+        response = self.client.get("/api/alert-policy")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json()["selected_alert_policy"],
+            "fallback",
+        )
+
+        response = self.client.post(
+            "/api/alert-policy",
+            json={"selected_alert_policy": "official"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json()["selected_alert_policy"],
+            "official",
+        )
+
+        response = self.client.post(
+            "/api/alert-policy",
+            json={"selected_alert_policy": "arbitrary"},
+        )
+        self.assertEqual(response.status_code, 400)
 
     def test_new_user_data_source_defaults_to_simulator(self):
         user = self.create_user_once("source-default-user", "source-pass")

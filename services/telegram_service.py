@@ -459,8 +459,8 @@ def merge_stream_event(steps, event):
 
 def add_telegram_runtime_metadata(token_usage):
     usage = dict(token_usage or {})
-    usage["runtime_label"] = "IOA v2 · LangGraph"
-    usage["model_name"] = "gpt-4o-mini"
+    usage["runtime_label"] = "IOA v3 · Ops Graph"
+    usage["model_name"] = "gpt-4o-mini + operational workflow"
     return usage
 
 
@@ -489,6 +489,7 @@ def process_telegram_update(
     langgraph_agent,
     emit_user_event=None,
     get_user_data_source=None,
+    resolve_source_context=None,
 ):
     message = extract_message(update)
 
@@ -573,9 +574,32 @@ def process_telegram_update(
                                 },
                             )
 
+                        source_resolution = (
+                            resolve_source_context(data_source)
+                            if resolve_source_context
+                            else {
+                                "selected_source": data_source,
+                                "active_source": (
+                                    "company_mongodb"
+                                    if data_source == "company"
+                                    else "simulator"
+                                ),
+                            }
+                        )
+
+                        stream_kwargs = (
+                            {
+                                "selected_source": data_source,
+                                "source_resolution": source_resolution,
+                                "user_id": history_user_id,
+                            }
+                            if hasattr(langgraph_agent, "plan_workflows")
+                            else {"data_source": data_source}
+                        )
+
                         for stream_event in langgraph_agent.run_stream(
                             prompt,
-                            data_source=data_source,
+                            **stream_kwargs,
                         ):
                             merge_stream_event(steps, stream_event)
 
@@ -647,6 +671,7 @@ def process_telegram_update_in_background(
     langgraph_agent,
     emit_user_event=None,
     get_user_data_source=None,
+    resolve_source_context=None,
 ):
     def run():
         try:
@@ -655,6 +680,7 @@ def process_telegram_update_in_background(
                 langgraph_agent,
                 emit_user_event=emit_user_event,
                 get_user_data_source=get_user_data_source,
+                resolve_source_context=resolve_source_context,
             )
         except Exception as exc:
             print(f"Telegram background processing failed: {exc}")

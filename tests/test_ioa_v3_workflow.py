@@ -228,10 +228,10 @@ class IOAV3WorkflowTests(unittest.TestCase):
             if event.get("type") == "observation"
         ]
         db_step = next(
-            event["observation"]["output"]
+            execution
             for event in observations
-            if event["observation"]["output"].get("tool")
-            == "get_company_disconnected_devices"
+            for execution in event["observation"]["output"].get("executions", [])
+            if execution.get("tool") == "get_company_disconnected_devices"
         )
         self.assertIn("query_commands", db_step)
         self.assertIn(
@@ -290,15 +290,235 @@ class IOAV3WorkflowTests(unittest.TestCase):
             if event.get("type") == "observation"
         ]
         self.assertTrue(any(
-            event["observation"]["output"].get("source") == "n8n_grafana_gateway"
+            execution.get("source") == "n8n_grafana_gateway"
             for event in observations
+            for execution in event["observation"]["output"].get("executions", [])
         ))
         self.assertTrue(any(
-            event["observation"]["output"].get("rule_source")
-            == "config/grafana_kpi_rules.json"
+            result.get("rule_source") == "config/grafana_kpi_rules.json"
             for event in observations
+            for result in event["observation"]["output"].get("results", [])
         ))
         self.assertEqual(events[-1]["type"], "final")
+
+    def test_ioa_v3_semantic_planner_runs_company_db_and_grafana_workflows(self):
+        planner_response = MagicMock()
+        planner_response.content = """
+        {
+          "confidence": 0.91,
+          "reason": "Needs device evidence and Redis infrastructure health.",
+          "workflows": [
+            {
+              "tool": "get_company_disconnected_devices",
+              "params": {},
+              "reason": "Find disconnected company devices first.",
+              "confidence": 0.93
+            },
+            {
+              "tool": "grafana_redis_health",
+              "params": {},
+              "reason": "Check Redis pressure that may affect device workflows.",
+              "confidence": 0.88
+            }
+          ]
+        }
+        """
+        planner_response.response_metadata = {}
+        final_response = MagicMock()
+        final_response.content = "Summary\nDisconnected devices and Redis health reviewed."
+        final_response.response_metadata = {}
+        model = MagicMock()
+        model.invoke.side_effect = [planner_response, final_response]
+        agent = IOAV3LangGraphN8nAgent(model=model)
+
+        with patch(
+            "agents.ioa_v3_agent.get_company_disconnected_context",
+            return_value={
+                "source": "company_mongodb",
+                "tool": "get_company_disconnected_devices",
+                "db_audit_status": "runtime_audit_available",
+                "db_audit": [{
+                    "actor": "company-llm-tools",
+                    "operation": "find",
+                    "namespace": "devicemgmt.NODE",
+                    "query": {"status": {"$in": ["disconnected", "offline"]}},
+                    "projection": {"_id": 0, "rn": 1, "status": 1},
+                    "effective_limit": 1000,
+                    "max_time_ms": 5000,
+                    "credentials_redacted": True,
+                    "mutating": False,
+                }],
+                "count": 1,
+                "devices": [{"device_id": "dev-1", "status": "disconnected"}],
+            },
+        ), patch(
+            "agents.ioa_v3_agent.call_n8n_grafana_workflow",
+            return_value={
+                "final_answer": "redis warning",
+                "evidence": {"level": "warning", "hit_rate_percent": 47.2},
+                "steps": [{
+                    "thought": "Called Redis health endpoint.",
+                    "action": "GET /grafana/redis",
+                    "output": {"level": "warning"},
+                }],
+                "token_usage": None,
+                "request_payload": {
+                    "workflow": {
+                        "workflow_id": "redis_health",
+                        "params": {},
+                    }
+                },
+            },
+        ):
+            events = list(agent.run_stream(
+                "Check disconnected devices and whether Redis is unhealthy.",
+                selected_source="company",
+                source_resolution={
+                    "selected_source": "company",
+                    "active_source": "company_mongodb",
+                },
+                user_id=1,
+            ))
+
+        observations = [
+            event for event in events
+            if event.get("type") == "observation"
+        ]
+        selection = next(
+            event["observation"]["output"]
+            for event in observations
+            if "planner" in event["observation"]["output"]
+        )
+        self.assertEqual(selection["planner"]["type"], "semantic_llm")
+        run_step = next(
+            event["observation"]["output"]
+            for event in observations
+            if event["observation"]["output"].get("workflow_count") == 2
+        )
+        tools = [item["tool"] for item in run_step["executions"]]
+        self.assertEqual(
+            tools,
+            ["get_company_disconnected_devices", "grafana_redis_health"],
+        )
+        self.assertEqual(events[-1]["type"], "final")
+
+    def test_ioa_v3_answer_evidence_keeps_concrete_samples(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        state = {
+            "tool_outputs": [
+                {
+                    "source": "company_mongodb",
+                    "tool": "get_company_disconnected_devices",
+                    "result": {
+                        "count": 1,
+                        "db_audit_status": "runtime_audit_available",
+                        "devices": [{
+                            "device_id": "dev-1",
+                            "device_name": "Gateway A",
+                            "status": "disconnected",
+                            "metrics": [{"name": "temperature", "value": 72}],
+                        }],
+                    },
+                    "query_commands": [{
+                        "namespace": "devicemgmt.NODE",
+                        "command": "db.getSiblingDB(\"devicemgmt\")",
+                    }],
+                },
+                {
+                    "source": "n8n_grafana_gateway",
+                    "tool": "grafana_redis_health",
+                    "http_call": {"method": "GET", "path": "/grafana/redis"},
+                    "result": {
+                        "source": "grafana_dashboard_client",
+                        "level": "warning",
+                        "body": {
+                            "connected_clients": 84,
+                            "hit_rate_percent": 47.2,
+                        },
+                    },
+                },
+            ],
+        }
+
+        evidence = agent.build_answer_evidence(state)
+
+        self.assertEqual(evidence["workflow_count"], 2)
+        self.assertEqual(
+            evidence["results"][0]["devices"][0]["device_name"],
+            "Gateway A",
+        )
+        self.assertEqual(
+            evidence["results"][0]["devices"][0]["metrics"][0]["value"],
+            72,
+        )
+        self.assertEqual(
+            evidence["results"][1]["body"]["hit_rate_percent"],
+            47.2,
+        )
+
+    def test_ioa_v3_answer_evidence_keeps_telemetry_coverage_counts(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        state = {
+            "user_input": "/coverage",
+            "selected_tool": "get_company_telemetry_coverage",
+            "tool_outputs": [{
+                "source": "company_mongodb",
+                "tool": "get_company_telemetry_coverage",
+                "result": {
+                    "device_count": 31,
+                    "devices_with_telemetry": 5,
+                    "inventory_only_devices": 26,
+                    "unmapped_telemetry_count": 374,
+                    "top_metric_fields": [
+                        {"name": "batteryVoltage", "device_count": 1},
+                        {"name": "pressure", "device_count": 1},
+                    ],
+                    "sample_devices_with_telemetry": [{
+                        "device_id": "dev-1",
+                        "device_name": "SmartAsset_9b47fedc",
+                        "status": "disconnected",
+                        "telemetry_record_count": 43,
+                        "metrics": [{"name": "pressure", "value": 3.1}],
+                    }],
+                },
+                "query_commands": [{
+                    "namespace": "datamgmt.CIN",
+                    "command": "db.getSiblingDB(\"datamgmt\")",
+                }],
+            }],
+        }
+
+        evidence = agent.build_answer_evidence(state)
+        result = evidence["results"][0]
+
+        self.assertEqual(result["device_count"], 31)
+        self.assertEqual(result["devices_with_telemetry"], 5)
+        self.assertEqual(result["inventory_only_devices"], 26)
+        self.assertEqual(result["unmapped_telemetry_count"], 374)
+        self.assertEqual(result["top_metric_fields"][0]["name"], "batteryVoltage")
+        self.assertEqual(
+            result["sample_devices_with_telemetry"][0]["device_name"],
+            "SmartAsset_9b47fedc",
+        )
+
+        prompt = agent.build_answer_prompt(state)
+        self.assertIn("SmartAsset_9b47fedc", prompt)
+        self.assertIn("disconnected", prompt)
+        self.assertIn("pressure", prompt)
+
+    def test_ioa_v3_answer_prompt_includes_kpi_and_preview_data_guardrails(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        state = {
+            "user_input": "check platform health",
+            "selected_tool": "grafana_platform_service_health",
+            "tool_outputs": [],
+        }
+
+        prompt = agent.build_answer_prompt(state)
+
+        self.assertIn("Core service-quality signals first", prompt)
+        self.assertIn("Infrastructure as diagnostic supporting evidence", prompt)
+        self.assertIn("company DB evidence as preview/test data", prompt)
 
 
 if __name__ == "__main__":

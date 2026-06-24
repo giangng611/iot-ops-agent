@@ -83,6 +83,10 @@ POSTGRES_CIRCUIT_BREAKER_SECONDS=30
 APP_TIMEZONE=Asia/Ho_Chi_Minh
 ACCESS_CODE=your_access_code_here
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
+N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
+GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
+IOA_V3_ENABLE_KPI_RULES=false
+IOA_V3_SEMANTIC_PLANNER_ENABLED=true
 DIFY_API_URL=http://localhost/v1/chat-messages
 DIFY_API_KEY=your_dify_app_api_key_here
 DIFY_USER=iot-ops-agent-ui
@@ -121,6 +125,7 @@ Environment variables are required for:
 * optional Supabase/Postgres app-data migration and fallback policy
 * protected account registration
 * optional n8n runtime testing through the UI
+* optional IOA v3 n8n/Grafana workflow testing
 * optional Dify runtime testing through the UI
 
 ---
@@ -451,6 +456,50 @@ Once the simulator and Flask app are running:
 * alerts appear in realtime
 * SocketIO pushes live device updates
 * AI diagnostics can analyze operational conditions
+
+---
+
+## Optional Public Fallback Demo
+
+The public demo can run without Company DB or real Grafana access. Use simulator
+telemetry, the mock Grafana Dashboard Client, and the IOA v3 n8n gateway.
+
+Start the mock Grafana Dashboard Client:
+
+```bash
+python3 scripts/mock_grafana_dashboard_client.py --port 5050
+```
+
+Start n8n on the IOA v3 port:
+
+```bash
+N8N_PORT=5679 n8n
+```
+
+Import and activate:
+
+```text
+workflows/n8n/ioa_v3_grafana_ops_gateway.json
+```
+
+Set:
+
+```env
+N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
+GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
+IOA_V3_ENABLE_KPI_RULES=false
+```
+
+Probe the workflow:
+
+```bash
+python3 scripts/check_ioa_v3_n8n_workflow.py --tool grafana_redis_health
+```
+
+`GRAFANA_DASHBOARD_CLIENT_URL` must be an API adapter or mock client. Do not use
+a Grafana dashboard UI URL such as `/d/...` as the tool-call target.
+
+See [Public Fallback Demo](PUBLIC_DEMO.md) for publication boundaries.
 
 ---
 

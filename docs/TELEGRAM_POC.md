@@ -5,7 +5,7 @@ The Telegram PoC adds Telegram as a second chat client for the existing IoT Ops 
 ```text
 Telegram message
 → Flask /api/telegram/webhook
-→ IOA v2 · LangGraph
+→ IOA v3 · Ops Graph
 → reasoning persistence/events when configured
 → formatted final answer
 → Telegram reply + optional web synchronization
@@ -184,9 +184,11 @@ python -m scripts.configure_telegram_webhook \
 
 ## Notes
 
-The current Render deployment can run this PoC without n8n or Dify because
-Telegram calls Flask directly and Flask calls the in-process LangGraph agent.
-Company answers still require the Flask runtime to reach Company MongoDB.
+The current Render deployment can run this PoC without Dify because Telegram
+calls Flask directly and Flask calls the in-process IOA v3 Ops Graph runtime.
+Company answers still require the Flask runtime to reach Company MongoDB. IOA v3
+may also call the configured n8n/Grafana workflow when the selected plan needs
+infrastructure evidence.
 
 The local tunnel is intended for a controlled PoC only. The temporary URL
 changes whenever the quick tunnel restarts.

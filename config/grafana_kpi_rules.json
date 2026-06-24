@@ -51,9 +51,9 @@
       "aspect": "API & Application",
       "priority": "Core",
       "tool": "grafana_trace_metrics",
-      "good": "<= target p95 latency",
-      "warning": "above target but below critical threshold",
-      "critical": "sustained p95 latency breach",
+      "good": "<= 1000ms",
+      "warning": "> 1000ms to 3000ms",
+      "critical": "> 3000ms",
       "status": "available_not_dashboarded"
     },
     {
@@ -61,9 +61,9 @@
       "aspect": "API & Application",
       "priority": "Core",
       "tool": "grafana_http_health",
-      "good": "near zero",
-      "warning": "elevated but limited 5xx rate",
-      "critical": "sustained high 5xx rate",
+      "good": "< 0.5%",
+      "warning": "0.5% - 2%",
+      "critical": "> 2%",
       "status": "available_not_dashboarded"
     },
     {
@@ -84,6 +84,46 @@
       "good": "<= 1",
       "warning": "> 1 to 3",
       "critical": "> 3",
+      "status": "available_not_dashboarded"
+    },
+    {
+      "kpi": "CPU Utilization",
+      "aspect": "Infrastructure",
+      "priority": "Diagnostic",
+      "tool": "grafana_k8s_health",
+      "good": "< 70%",
+      "warning": "70% - 85%",
+      "critical": "> 85% sustained",
+      "status": "dashboarded"
+    },
+    {
+      "kpi": "Memory Utilization",
+      "aspect": "Infrastructure",
+      "priority": "Diagnostic",
+      "tool": "grafana_k8s_health",
+      "good": "< 75%",
+      "warning": "75% - 90%",
+      "critical": "> 90% sustained",
+      "status": "dashboarded"
+    },
+    {
+      "kpi": "Disk Usage",
+      "aspect": "Infrastructure",
+      "priority": "Diagnostic",
+      "tool": "grafana_linux_health",
+      "good": "< 75%",
+      "warning": "75% - 90%",
+      "critical": "> 90% sustained",
+      "status": "dashboarded"
+    },
+    {
+      "kpi": "Pod/Container Restart Count",
+      "aspect": "Infrastructure",
+      "priority": "Diagnostic",
+      "tool": "grafana_k8s_health",
+      "good": "0 or stable baseline",
+      "warning": "above baseline or recurring restarts",
+      "critical": "continuous restart loop or service impact",
       "status": "available_not_dashboarded"
     }
   ]

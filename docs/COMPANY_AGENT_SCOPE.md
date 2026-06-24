@@ -26,9 +26,26 @@ The current project demonstrates:
 * provisional alert-rule discovery
 * web and Telegram interaction channels
 * persisted chats and visible execution traces
+* IOA v3 policy-gated workflow routing with backend Company DB tools and n8n
+  Grafana workflow execution
+* fallback/mock operation suitable for public demos when company systems are
+  unavailable or not publishable
 
 This is a proof of concept. It does not yet prove production synchronization,
 authorization, official rule ownership, or safe operational actions.
+
+## Public Demo vs Company Pilot
+
+The project has two intended operating modes:
+
+* Public fallback demo: uses simulator telemetry, mock Grafana evidence, and
+  generic scenarios so the architecture can be shown without company data.
+* Internal company pilot: uses approved Company DB access, internal Grafana
+  adapters, official rule mapping, and company-only deployment configuration.
+
+The public demo must not retain company database credentials, private Grafana
+links, production hostnames, internal screenshots, or company-specific KPI
+semantics unless publication is explicitly approved.
 
 ## Target Capability
 
@@ -76,6 +93,9 @@ A production pilot is ready when:
 * one named operational team and its top tasks are defined
 * every answer identifies source and freshness
 * company-source disconnection and fallback are visible and tested
+* Company DB field mapping is confirmed against the handed-over source
+* Grafana evidence is read through an approved API/adapter, not a dashboard UI
+  URL
 * read access follows least privilege and is auditable
 * benchmark tasks use frozen reference snapshots and repeatable evaluation
 * critical factual errors and unsupported claims stay below an agreed threshold

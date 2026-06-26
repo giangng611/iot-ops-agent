@@ -1473,7 +1473,10 @@ async function refreshDevices() {
             reason: data.reason || "",
             rules_message: data.rules_message || "",
             summary: data.summary || {},
-            alerts: data.alerts || {}
+            alerts: data.alerts || {},
+            official_alerts: data.official_alerts || {},
+            kpi_evaluations: data.kpi_evaluations || [],
+            company_rule_mappings: data.company_rule_mappings || []
         };
         allDevices = data.devices || [];
         currentAlerts = data.alerts || {
@@ -1816,14 +1819,41 @@ function renderCompanyMetrics(metrics) {
     return `
         <div class="metric-chip-list">
             ${metrics.map(metric => `
-                <span class="metric-chip">
-                    <strong>${escapeHtml(metric.name)}</strong>
+                <span class="metric-chip" title="${escapeHtml(companyMetricTooltip(metric))}">
+                    <strong>${escapeHtml(companyMetricLabel(metric))}</strong>
                     ${escapeHtml(metric.value)}
                     ${metric.unit ? `<small>${escapeHtml(metric.unit)}</small>` : ""}
+                    ${metric.inferred_from ? '<small class="metric-source">mapped</small>' : ""}
                 </span>
             `).join("")}
         </div>
     `;
+}
+
+function companyMetricLabel(metric) {
+    if (metric.inferred_from) {
+        return metric.name;
+    }
+
+    return metric.name === "value" ? "raw value" : metric.name;
+}
+
+function companyMetricTooltip(metric) {
+    const parts = [
+        `${companyMetricLabel(metric)}: ${metric.value}`
+    ];
+
+    if (metric.inferred_from) {
+        parts.push(`mapped from ${metric.inferred_from}`);
+    } else if (metric.name === "value") {
+        parts.push("The company payload did not include a metric name for this value.");
+    }
+
+    if (metric.rule_operator || metric.rule_threshold) {
+        parts.push(`rule ${metric.rule_operator || ""} ${metric.rule_threshold || ""}`.trim());
+    }
+
+    return parts.join(" · ");
 }
 
 function renderCompanyDataSummary() {
@@ -1880,10 +1910,11 @@ function renderCompanyDataSummary() {
             </div>
         </div>
         <p class="company-rules-notice">
-            ${sourceSummary.unmapped_telemetry_count || 0} telemetry records could not
-            be mapped safely. ${tenantCount} tenant${tenantCount === 1 ? "" : "s"} are
-            represented. Alerts use provisional PoC rules; official company and
-            Grafana rule evaluation is still pending.
+            ${sourceSummary.telemetry_payload_count || 0} telemetry payloads scanned.
+            ${sourceSummary.unmapped_telemetry_count || 0} records could not be mapped
+            safely. Raw value chips mean the payload has no metric name in
+            datamgmt.CIN.con. ${tenantCount} tenant${tenantCount === 1 ? "" : "s"}
+            are represented.
         </p>
     `;
 }
@@ -4020,8 +4051,20 @@ function renderAlertCenter() {
 }
 
 function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
+    const officialAlerts = currentDataSourceState.official_alerts || {};
+    const kpiEvaluations = currentDataSourceState.kpi_evaluations || [];
+    const alerts = officialAlerts.active_alerts || [];
+    const critical = officialAlerts.critical_count || 0;
+    const warning = officialAlerts.warning_count || 0;
+    const total = alerts.length;
+
     if (badge) {
-        badge.classList.add("hidden");
+        if (total > 0) {
+            badge.classList.remove("hidden");
+            badge.textContent = total;
+        } else {
+            badge.classList.add("hidden");
+        }
     }
 
     if (!summary || !alertList) {
@@ -4029,29 +4072,75 @@ function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
     }
 
     summary.innerHTML = `
-        <div class="alert-summary-card rules-pending-alert">
-            <h2>Pending</h2>
-            <p>Official alerts</p>
+        <div class="alert-summary-card critical-alert">
+            <h2>${critical}</h2>
+            <p>KPI critical</p>
         </div>
         <div class="alert-summary-card warning-alert">
-            <h2>0</h2>
-            <p>Fallback hidden</p>
+            <h2>${warning}</h2>
+            <p>KPI warning</p>
+        </div>
+        <div class="alert-summary-card rules-pending-alert">
+            <h2>${kpiEvaluations.length}</h2>
+            <p>KPI checks</p>
         </div>
     `;
 
     alertList.innerHTML = `
+        <div class="poc-alert-disclaimer">
+            Official view is using KPI workbook checks that are evaluable from
+            company DB evidence. Device-level datamgmt.RULE execution is still
+            read-only until enum/operator semantics are confirmed.
+        </div>
+    `;
+
+    if (kpiEvaluations.length === 0) {
+        alertList.innerHTML += `
         <div class="alert-item info">
             <div>
-                <h3>Official company/Grafana alerts are not connected yet</h3>
+                <h3>No KPI checks are evaluable from the company DB yet</h3>
                 <p>
-                    The KPI workbook and Grafana client endpoints are ready for
-                    the IOA v3 workflow, but the authoritative alert feed has
-                    not been mapped into this tab yet. Switch back to fallback
-                    alerts to view the current PoC device findings.
+                    KPI definitions are loaded, but this source did not return
+                    DB-backed KPI evidence for the current view.
                 </p>
             </div>
         </div>
     `;
+        return;
+    }
+
+    kpiEvaluations.forEach(kpi => {
+        const severity = ["critical", "warning", "good"].includes(kpi.status)
+            ? kpi.status
+            : "info";
+        const evidence = kpi.evidence || {};
+        const value = kpi.value === null || kpi.value === undefined
+            ? "not evaluable"
+            : `${kpi.value}${kpi.unit || ""}`;
+        const thresholdText = Object.entries(kpi.thresholds || {})
+            .map(([key, threshold]) => `${key}: ${threshold}`)
+            .join(" · ");
+
+        alertList.innerHTML += `
+            <div class="alert-item ${escapeHtml(severity)}">
+                <div>
+                    <div class="poc-alert-heading">
+                        <h3>${escapeHtml(kpi.kpi)}</h3>
+                        <span class="poc-alert-badge">KPI workbook</span>
+                    </div>
+                    <p>
+                        ${escapeHtml(kpi.metric)}:
+                        ${escapeHtml(value)} ·
+                        status ${escapeHtml(kpi.status)}
+                    </p>
+                    <small class="device-subtext">
+                        ${escapeHtml(thresholdText || "No fixed threshold")} ·
+                        ${escapeHtml(evidence.source || kpi.source || "company DB")}
+                    </small>
+                </div>
+            </div>
+        `;
+    });
 }
 
 function renderCompanyPocAlerts(badge, summary, alertList) {
@@ -4679,7 +4768,9 @@ function renderCompanyDeviceHistory(history, canvas, emptyState) {
             ? safeHistory.slice(-12).reverse().map(item => `
                 <div>
                     <strong>${escapeHtml(formatCompanyTimestamp(item.timestamp))}</strong>
-                    <span>${escapeHtml(item.status || "No numeric telemetry in this record")}</span>
+                    <span>
+                        ${renderCompanyHistoryMetricSummary(item)}
+                    </span>
                 </div>
             `).join("")
             : "<p>No mapped telemetry history is available for this device.</p>";
@@ -4741,6 +4832,20 @@ function renderCompanyDeviceHistory(history, canvas, emptyState) {
             }
         }
     });
+}
+
+function renderCompanyHistoryMetricSummary(item) {
+    const metrics = Array.isArray(item.metrics) ? item.metrics : [];
+
+    if (metrics.length === 0) {
+        return escapeHtml(item.status || "No mapped telemetry in this record");
+    }
+
+    return metrics.slice(0, 4).map(metric => (
+        `${escapeHtml(companyMetricLabel(metric))}: ${escapeHtml(metric.value)}${
+            metric.unit ? ` ${escapeHtml(metric.unit)}` : ""
+        }`
+    )).join(" · ");
 }
 
 async function loadChatsFromDatabase() {

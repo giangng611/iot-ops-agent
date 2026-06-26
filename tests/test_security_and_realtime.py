@@ -35,6 +35,7 @@ from services.company_data_service import (  # noqa: E402
     get_company_agent_context,
     get_company_provisional_alert_context,
     get_metric_value,
+    infer_unnamed_value_metrics,
     normalize_company_key,
 )
 from services.company_poc_rule_service import (  # noqa: E402
@@ -1360,6 +1361,29 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             get_metric_value(metrics, {"status"}),
             "connected",
         )
+
+    def test_company_raw_value_metric_can_be_named_from_rule_filter(self):
+        raw_metrics = extract_display_metrics('{"value":55}')
+        device = {
+            "device_id": "S95977e4f-8a9d-4cbf-a550-ad7895c03b2b",
+            "_aliases": {"95977e4f-8a9d-4cbf-a550-ad7895c03b2b"},
+        }
+        filters_by_device = {
+            "95977e4f-8a9d-4cbf-a550-ad7895c03b2b": [
+                {"field": "Toc_do_xe", "operator": "gt", "value": "50"}
+            ]
+        }
+
+        metrics = infer_unnamed_value_metrics(
+            raw_metrics,
+            device,
+            {},
+            filters_by_device,
+        )
+
+        self.assertEqual(metrics[0]["name"], "Toc_do_xe")
+        self.assertEqual(metrics[0]["value"], 55)
+        self.assertEqual(metrics[0]["inferred_from"], "datamgmt.RULE.filters")
 
     def test_company_device_keys_and_numeric_metrics_are_normalized(self):
         self.assertEqual(

@@ -29,6 +29,7 @@ MAX_SCHEMA_FIELD_PATHS = 120
 MAX_PAYLOAD_CHARS_TO_PARSE = 20000
 DEFAULT_OPERATIONAL_RECORD_LIMIT = 100
 DEFAULT_COMPANY_CIN_SCAN_LIMIT = 500
+DEFAULT_COMPANY_CIN_PER_DEVICE_LIMIT = 20
 DEFAULT_COMPANY_CIN_SORT = ("_id", -1)
 MAX_COMPANY_INVENTORY_RECORDS = 1000
 MAX_THRESHOLD_SCAN_RECORDS = 80
@@ -757,6 +758,116 @@ def metric_catalog_units(rows):
     }
 
 
+def metric_catalog_by_device(rows):
+    catalog = {}
+
+    for row in rows:
+        aliases = company_aliases(row.get("_id"))
+        telemetry = [
+            {
+                "name": str(metric.get("telemetryName") or "").strip(),
+                "unit": str(metric.get("uom") or "").strip(),
+                "type": metric.get("type"),
+            }
+            for metric in row.get("telemetry") or []
+            if str(metric.get("telemetryName") or "").strip()
+        ]
+
+        if not telemetry:
+            continue
+
+        for alias in aliases:
+            catalog[alias] = telemetry
+
+    return catalog
+
+
+def rule_filters_by_device(rules):
+    filters_by_device = {}
+
+    for rule in rules:
+        action = rule.get("action") or {}
+        filters = [
+            filter_rule
+            for filter_rule in rule.get("filters") or []
+            if isinstance(filter_rule, dict) and filter_rule.get("field")
+        ]
+
+        if not filters:
+            continue
+
+        for raw_device_id in (
+            rule.get("deviceIds") or action.get("deviceIds") or []
+        ):
+            for alias in company_aliases(raw_device_id):
+                filters_by_device.setdefault(alias, []).extend(filters)
+
+    return filters_by_device
+
+
+def device_catalog_metrics(device, catalog):
+    aliases = company_aliases(
+        device.get("device_id"),
+        device.get("device_name"),
+        device.get("node_id"),
+        *device.get("_aliases", set()),
+    )
+
+    for alias in aliases:
+        if alias in catalog:
+            return catalog[alias]
+
+    return []
+
+
+def device_rule_filters(device, filters_by_device):
+    aliases = company_aliases(
+        device.get("device_id"),
+        device.get("device_name"),
+        device.get("node_id"),
+        *device.get("_aliases", set()),
+    )
+    filters = []
+
+    for alias in aliases:
+        filters.extend(filters_by_device.get(alias, []))
+
+    return filters
+
+
+def infer_unnamed_value_metrics(raw_metrics, device, catalog, filters_by_device):
+    if len(raw_metrics) != 1:
+        return raw_metrics
+
+    metric = raw_metrics[0]
+
+    if metric.get("name") != "value":
+        return raw_metrics
+
+    rule_filters = device_rule_filters(device, filters_by_device)
+
+    if len(rule_filters) == 1:
+        return [{
+            **metric,
+            "name": str(rule_filters[0].get("field")),
+            "inferred_from": "datamgmt.RULE.filters",
+            "rule_operator": rule_filters[0].get("operator"),
+            "rule_threshold": rule_filters[0].get("value"),
+        }]
+
+    catalog_metrics = device_catalog_metrics(device, catalog)
+
+    if len(catalog_metrics) == 1:
+        return [{
+            **metric,
+            "name": catalog_metrics[0]["name"],
+            "unit": catalog_metrics[0].get("unit", ""),
+            "inferred_from": "datamgmt.DEVICE_TELEMETRY",
+        }]
+
+    return raw_metrics
+
+
 def summarize_company_rule(rule):
     filters = [
         {
@@ -929,6 +1040,56 @@ def build_company_kpi_evaluations(model):
     return evaluations
 
 
+def build_company_kpi_alerts(kpi_evaluations):
+    alerts = []
+
+    for evaluation in kpi_evaluations:
+        status = evaluation.get("status")
+
+        if status not in {"critical", "warning"}:
+            continue
+
+        alerts.append({
+            "alert_id": f"kpi:{evaluation.get('metric')}",
+            "title": evaluation.get("kpi"),
+            "severity": status,
+            "status": "active",
+            "policy": "kpi_workbook_read_only",
+            "official": True,
+            "metric": evaluation.get("metric"),
+            "value": evaluation.get("value"),
+            "unit": evaluation.get("unit"),
+            "thresholds": evaluation.get("thresholds"),
+            "evidence": evaluation.get("evidence"),
+            "source": evaluation.get("source"),
+            "tool": evaluation.get("tool"),
+        })
+
+    critical_count = len([
+        alert for alert in alerts
+        if alert["severity"] == "critical"
+    ])
+    warning_count = len([
+        alert for alert in alerts
+        if alert["severity"] == "warning"
+    ])
+
+    return {
+        "critical_count": critical_count,
+        "warning_count": warning_count,
+        "total_count": len(alerts),
+        "rules_status": "kpi_workbook",
+        "policy": "kpi_workbook_read_only",
+        "official": True,
+        "active_alerts": alerts,
+        "message": (
+            "Official alert view is populated from KPI workbook rules that are "
+            "currently evaluable from the company DB. Device-level company "
+            "RULE execution still requires confirmed operator semantics."
+        ),
+    }
+
+
 def enrich_company_metrics(metrics, units):
     enriched = []
 
@@ -943,7 +1104,7 @@ def enrich_company_metrics(metrics, units):
             **metric,
             "value": value,
             "type": describe_value_type(value),
-            "unit": units.get(name.lower(), ""),
+            "unit": metric.get("unit") or units.get(name.lower(), ""),
         })
 
     return enriched
@@ -1085,7 +1246,7 @@ def load_company_device_read_model(
         "datamgmt",
         "DEVICE_TELEMETRY",
         {},
-        {"_id": 0, "telemetry": 1},
+        {"_id": 1, "telemetry": 1},
         limit=MAX_COMPANY_INVENTORY_RECORDS,
     )
     content_instances = proxy.find(
@@ -1143,7 +1304,89 @@ def load_company_device_read_model(
         for container in containers
         if container.get("rn")
     }
+    telemetry_container_ids_by_device = {}
+
+    for container in containers:
+        container_name = str(container.get("rn") or "").lower()
+
+        if "telemetry" not in container_name:
+            continue
+
+        device = resolve_company_device(
+            alias_index,
+            company_aliases(
+                container.get("pi"),
+                container.get("cr"),
+                container.get("parentContainer"),
+            ),
+        )
+
+        if not device:
+            continue
+
+        telemetry_container_ids_by_device.setdefault(id(device), []).append(
+            company_reference_id(container.get("_id"))
+        )
+        device.setdefault("_telemetry_container_ids", set()).add(
+            company_reference_id(container.get("_id"))
+        )
+
+    seen_content_records = {
+        row.get("rn") or f"{row.get('pi')}:{row.get('ct')}:{row.get('lt')}"
+        for row in content_instances
+    }
+    cin_per_device_limit = max(
+        1,
+        min(
+            int(os.getenv(
+                "COMPANY_CIN_PER_DEVICE_LIMIT",
+                str(DEFAULT_COMPANY_CIN_PER_DEVICE_LIMIT),
+            )),
+            100,
+        ),
+    )
+    cin_projection = {
+        "_id": 0,
+        "rn": 1,
+        "pi": 1,
+        "parentContainer": 1,
+        "ct": 1,
+        "lt": 1,
+        "cnf": 1,
+        "con": 1,
+        "tenantId": 1,
+        "tenantName": 1,
+        "appDomainId": 1,
+        "appDomainName": 1,
+    }
+
+    for container_ids in telemetry_container_ids_by_device.values():
+        for container_id in sorted(container_ids):
+            if not container_id:
+                continue
+
+            for row in proxy.find(
+                "datamgmt",
+                "CIN",
+                {"pi": container_id},
+                cin_projection,
+                sort=DEFAULT_COMPANY_CIN_SORT,
+                limit=cin_per_device_limit,
+            ):
+                content_key = (
+                    row.get("rn")
+                    or f"{row.get('pi')}:{row.get('ct')}:{row.get('lt')}"
+                )
+
+                if content_key in seen_content_records:
+                    continue
+
+                seen_content_records.add(content_key)
+                content_instances.append(row)
+
     units = metric_catalog_units(telemetry_catalog)
+    catalog = metric_catalog_by_device(telemetry_catalog)
+    filters_by_device = rule_filters_by_device(rules)
     unmapped_telemetry_count = 0
     command_record_count = 0
     invalid_payload_count = 0
@@ -1196,6 +1439,13 @@ def load_company_device_read_model(
             )
 
         raw_metrics = extract_display_metrics(row.get("con"))
+        if device:
+            raw_metrics = infer_unnamed_value_metrics(
+                raw_metrics,
+                device,
+                catalog,
+                filters_by_device,
+            )
         metrics = enrich_company_metrics(raw_metrics, units)
         payload_status = get_metric_value(
             raw_metrics,
@@ -1341,6 +1591,7 @@ def load_company_device_read_model(
             key=lambda item: int(item.get("timestamp") or 0),
         )
         device.pop("_metric_timestamps", None)
+        device.pop("_telemetry_container_ids", None)
 
     return {
         "devices": devices,
@@ -1559,6 +1810,7 @@ def get_company_operational_payload(
     alerts = evaluate_company_poc_rules(records)
     company_rule_mappings = model.get("rules") or []
     kpi_evaluations = build_company_kpi_evaluations(model)
+    official_alerts = build_company_kpi_alerts(kpi_evaluations)
     official_rules_status = (
         "discovered_mapped_read_only"
         if company_rule_mappings
@@ -1619,6 +1871,7 @@ def get_company_operational_payload(
         },
         "devices": records,
         "alerts": alerts,
+        "official_alerts": official_alerts,
         "company_rule_mappings": company_rule_mappings,
         "kpi_evaluations": kpi_evaluations,
     }

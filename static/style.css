@@ -1803,6 +1803,15 @@ th {
     text-overflow: ellipsis;
 }
 
+.metric-chip small {
+    color: #a1a1aa;
+}
+
+.metric-chip .metric-source {
+    color: #86efac;
+    text-transform: uppercase;
+}
+
 .metric-empty {
     color: #a1a1aa;
     font-size: 12px;

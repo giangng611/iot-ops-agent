@@ -14,6 +14,7 @@ from services.company_poc_rule_service import (
     evaluate_company_poc_rules,
     get_company_poc_rule_catalog,
 )
+from services.grafana_tool_registry import load_grafana_kpi_rules
 
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -28,12 +29,27 @@ MAX_SCHEMA_FIELD_PATHS = 120
 MAX_PAYLOAD_CHARS_TO_PARSE = 20000
 DEFAULT_OPERATIONAL_RECORD_LIMIT = 100
 DEFAULT_COMPANY_CIN_SCAN_LIMIT = 500
+DEFAULT_COMPANY_CIN_SORT = ("_id", -1)
 MAX_COMPANY_INVENTORY_RECORDS = 1000
 MAX_THRESHOLD_SCAN_RECORDS = 80
 MAX_THRESHOLD_MATCHES = 20
 MAX_DISPLAY_METRICS = 8
 MAX_AGENT_SAMPLE_RECORDS = 5
 DEVICE_ID_PREFIXES = ("dvi-", "dvi_", "nod_", "cnt-", "cnt_")
+CONNECTED_STATUS_VALUES = {
+    "active",
+    "connected",
+    "online",
+    "true",
+    "1",
+}
+DISCONNECTED_STATUS_VALUES = {
+    "disconnected",
+    "inactive",
+    "offline",
+    "false",
+    "0",
+}
 SEMANTIC_METRIC_NAMES = {
     "deviceid",
     "device_id",
@@ -45,6 +61,22 @@ SEMANTIC_METRIC_NAMES = {
     "connectionstatus",
     "timestamp",
 }
+THRESHOLD_METADATA_FIELDS = {
+    "ct",
+    "lt",
+    "pi",
+    "rn",
+    "timestamp",
+    "time",
+    "createdat",
+    "updatedat",
+    "locationid",
+    "operatorid",
+    "inventorysessionid",
+    "tenantid",
+    "appdomainid",
+}
+ONEM2M_RESOURCE_SAMPLE_LIMIT = 5
 
 
 def get_company_db_url():
@@ -241,6 +273,39 @@ def collect_numeric_values(value, path, values):
     if isinstance(value, list):
         for index, item in enumerate(value[:10]):
             collect_numeric_values(item, f"{path}[{index}]", values)
+
+
+def normalized_metric_leaf_name(path):
+    normalized = str(path or "").strip().lower()
+
+    if not normalized:
+        return ""
+
+    normalized = normalized.rsplit(".", 1)[-1]
+    normalized = normalized.split("[", 1)[0]
+    return re.sub(r"[^a-z0-9_]", "", normalized)
+
+
+def configured_threshold_metric_names():
+    names = set()
+
+    for rule in get_company_poc_rule_catalog().get("rules") or []:
+        for name in rule.get("metric_names") or []:
+            normalized = normalized_metric_leaf_name(name)
+
+            if normalized:
+                names.add(normalized)
+
+    return names
+
+
+def is_configured_threshold_metric(path):
+    leaf_name = normalized_metric_leaf_name(path)
+
+    if not leaf_name or leaf_name in THRESHOLD_METADATA_FIELDS:
+        return False
+
+    return leaf_name in configured_threshold_metric_names()
 
 
 def collect_display_metrics(value, path, metrics):
@@ -692,6 +757,178 @@ def metric_catalog_units(rows):
     }
 
 
+def summarize_company_rule(rule):
+    filters = [
+        {
+            "field": filter_rule.get("field"),
+            "operator": filter_rule.get("operator"),
+            "value": trim_value(filter_rule.get("value")),
+            "data_type": filter_rule.get("dataType"),
+        }
+        for filter_rule in rule.get("filters") or []
+        if isinstance(filter_rule, dict)
+    ]
+    action = rule.get("action") or {}
+
+    return {
+        "name": rule.get("name"),
+        "status": rule.get("status"),
+        "type": rule.get("type"),
+        "target": rule.get("target"),
+        "trigger_type": rule.get("triggerType"),
+        "connection_status": rule.get("connectionStatus"),
+        "device_ids": rule.get("deviceIds") or action.get("deviceIds") or [],
+        "filters": filters,
+        "action": {
+            "type": action.get("type"),
+            "notification_type": action.get("notificationType"),
+            "interval_time": action.get("intervalTime"),
+            "title": trim_value(action.get("title")),
+            "has_content": bool(action.get("content")),
+        },
+        "mapping_status": (
+            "filter_mapped_read_only"
+            if filters or rule.get("connectionStatus") is not None
+            else "catalog_only"
+        ),
+        "source": "datamgmt.RULE",
+    }
+
+
+def status_bucket(status):
+    normalized = str(status or "").strip().lower()
+
+    if normalized in CONNECTED_STATUS_VALUES:
+        return "connected"
+
+    if normalized in DISCONNECTED_STATUS_VALUES:
+        return "disconnected"
+
+    return "unknown"
+
+
+def evaluate_threshold(value, evaluation):
+    if value is None:
+        return "not_evaluable"
+
+    if "good_min" in evaluation and value >= evaluation["good_min"]:
+        return "good"
+
+    if "good_below" in evaluation and value < evaluation["good_below"]:
+        return "good"
+
+    if "good_max" in evaluation and value <= evaluation["good_max"]:
+        return "good"
+
+    if "critical_below" in evaluation and value < evaluation["critical_below"]:
+        return "critical"
+
+    if "critical_above" in evaluation and value > evaluation["critical_above"]:
+        return "critical"
+
+    if "warning_min" in evaluation and value >= evaluation["warning_min"]:
+        return "warning"
+
+    if "warning_max" in evaluation and value <= evaluation["warning_max"]:
+        return "warning"
+
+    return "unknown"
+
+
+def company_db_kpi_rules():
+    return [
+        rule
+        for rule in load_grafana_kpi_rules().get("rules", [])
+        if rule.get("implementation_status") == "available_company_db"
+    ]
+
+
+def build_company_kpi_evaluations(model):
+    devices = model.get("devices") or []
+    total_devices = len(devices)
+    connected_count = len([
+        device for device in devices
+        if status_bucket(device.get("status")) == "connected"
+    ])
+    disconnected_count = len([
+        device for device in devices
+        if status_bucket(device.get("status")) == "disconnected"
+    ])
+    unknown_count = max(0, total_devices - connected_count - disconnected_count)
+    status_evidence_count = connected_count + disconnected_count
+    content_count = model.get("content_instance_count", 0)
+    invalid_payload_count = model.get("invalid_payload_count", 0)
+    connected_rate = (
+        round((connected_count / status_evidence_count) * 100, 2)
+        if status_evidence_count
+        else None
+    )
+    invalid_payload_rate = (
+        round((invalid_payload_count / content_count) * 100, 2)
+        if content_count
+        else None
+    )
+    metrics = {
+        "connected_devices_rate_percent": {
+            "value": connected_rate,
+            "evidence": {
+                "connected_devices": connected_count,
+                "disconnected_devices": disconnected_count,
+                "unknown_status_devices": unknown_count,
+                "status_evidence_devices": status_evidence_count,
+                "total_devices": total_devices,
+                "source": "devicemgmt.NODE + datamgmt.CIN.con.status",
+            },
+        },
+        "invalid_payload_rate_percent": {
+            "value": invalid_payload_rate,
+            "evidence": {
+                "invalid_payloads": invalid_payload_count,
+                "content_instances_scanned": content_count,
+                "parseable_payloads": model.get("parseable_payload_count", 0),
+                "source": "datamgmt.CIN.con",
+            },
+        },
+    }
+    evaluations = []
+
+    for rule in company_db_kpi_rules():
+        evaluation = rule.get("evaluation") or {}
+        metric_name = evaluation.get("metric")
+        metric = metrics.get(metric_name)
+
+        if not metric:
+            continue
+
+        value = metric.get("value")
+        evaluations.append({
+            "kpi": rule.get("kpi"),
+            "tool": rule.get("tool"),
+            "metric": metric_name,
+            "unit": rule.get("unit"),
+            "value": value,
+            "status": evaluate_threshold(value, evaluation),
+            "thresholds": {
+                key: evaluation.get(key)
+                for key in (
+                    "good_min",
+                    "good_below",
+                    "good_max",
+                    "warning_min",
+                    "warning_max",
+                    "critical_below",
+                    "critical_above",
+                )
+                if key in evaluation
+            },
+            "implementation_status": rule.get("implementation_status"),
+            "evidence": metric.get("evidence"),
+            "source": "grafana_kpi_rules.json + company_mongodb",
+        })
+
+    return evaluations
+
+
 def enrich_company_metrics(metrics, units):
     enriched = []
 
@@ -833,10 +1070,14 @@ def load_company_device_read_model(
         {
             "_id": 0,
             "deviceIds": 1,
+            "action": 1,
+            "connectionStatus": 1,
+            "filters": 1,
             "name": 1,
             "status": 1,
-            "severity": 1,
+            "target": 1,
             "triggerType": 1,
+            "type": 1,
         },
         limit=MAX_COMPANY_INVENTORY_RECORDS,
     )
@@ -865,7 +1106,7 @@ def load_company_device_read_model(
             "appDomainId": 1,
             "appDomainName": 1,
         },
-        sort=("ct", -1),
+        sort=DEFAULT_COMPANY_CIN_SORT,
         limit=safe_cin_limit,
     )
 
@@ -905,13 +1146,18 @@ def load_company_device_read_model(
     units = metric_catalog_units(telemetry_catalog)
     unmapped_telemetry_count = 0
     command_record_count = 0
+    invalid_payload_count = 0
+    parseable_payload_count = 0
+    telemetry_payload_count = 0
 
     for row in content_instances:
         parsed_payload = parse_payload_value(row.get("con"))
 
         if not isinstance(parsed_payload, dict):
+            invalid_payload_count += 1
             continue
 
+        parseable_payload_count += 1
         is_command_record = bool(
             parsed_payload.get("commandId")
             or parsed_payload.get("commandType")
@@ -920,6 +1166,8 @@ def load_company_device_read_model(
         if is_command_record:
             command_record_count += 1
             continue
+
+        telemetry_payload_count += 1
 
         payload_aliases = company_aliases(
             parsed_payload.get("deviceId"),
@@ -1074,7 +1322,11 @@ def load_company_device_read_model(
     for rule in rules:
         matched_devices = set()
 
-        for raw_device_id in rule.get("deviceIds") or []:
+        action = rule.get("action") or {}
+
+        for raw_device_id in (
+            rule.get("deviceIds") or action.get("deviceIds") or []
+        ):
             device = resolve_company_device(
                 alias_index,
                 company_aliases(raw_device_id),
@@ -1096,8 +1348,15 @@ def load_company_device_read_model(
         "identity_count": len(identities),
         "container_count": len(containers),
         "rule_count": len(rules),
+        "rules": [
+            summarize_company_rule(rule)
+            for rule in rules
+        ],
         "telemetry_catalog_count": len(telemetry_catalog),
         "content_instance_count": len(content_instances),
+        "invalid_payload_count": invalid_payload_count,
+        "parseable_payload_count": parseable_payload_count,
+        "telemetry_payload_count": telemetry_payload_count,
         "unmapped_telemetry_count": unmapped_telemetry_count,
         "command_record_count": command_record_count,
     }
@@ -1178,10 +1437,14 @@ def build_company_read_model_audit_plan(
             {
                 "_id": 0,
                 "deviceIds": 1,
+                "action": 1,
+                "connectionStatus": 1,
+                "filters": 1,
                 "name": 1,
                 "status": 1,
-                "severity": 1,
+                "target": 1,
                 "triggerType": 1,
+                "type": 1,
             },
             MAX_COMPANY_INVENTORY_RECORDS,
         ),
@@ -1209,7 +1472,7 @@ def build_company_read_model_audit_plan(
                 "appDomainName": 1,
             },
             safe_cin_limit,
-            sort=("ct", -1),
+            sort=DEFAULT_COMPANY_CIN_SORT,
         ),
     ]
 
@@ -1294,6 +1557,13 @@ def get_company_operational_payload(
         for device in model["devices"]
     ][:max(1, min(int(limit), 100))]
     alerts = evaluate_company_poc_rules(records)
+    company_rule_mappings = model.get("rules") or []
+    kpi_evaluations = build_company_kpi_evaluations(model)
+    official_rules_status = (
+        "discovered_mapped_read_only"
+        if company_rule_mappings
+        else "not_discovered"
+    )
 
     return {
         "source": "company_mongodb",
@@ -1311,6 +1581,8 @@ def get_company_operational_payload(
             "device_inventory_field": "NODE.childDeviceInfoEntities",
             "identity_join": "device name",
             "telemetry_join": "payload identity or CIN/CNT parent ownership",
+            "rule_mapping": "datamgmt.RULE filters/action/deviceIds/status",
+            "kpi_mapping": "grafana_kpi_rules.json available_company_db metrics",
             "cin_scan_limit": max(
                 int(limit),
                 DEFAULT_COMPANY_CIN_SCAN_LIMIT,
@@ -1325,11 +1597,11 @@ def get_company_operational_payload(
         "selected_source": "company",
         "active_source": "company_mongodb",
         "rules_status": "provisional_poc",
-        "official_rules_status": "discovered_unmapped",
+        "official_rules_status": official_rules_status,
         "rules_message": (
-            "PoC fallback rules are active for the demo. Company rules were "
-            "discovered, but their business semantics and Grafana evaluation "
-            "are not integrated yet."
+            "PoC fallback alerts are active for the demo. Company DB rules "
+            "are mapped as read-only catalog/filter evidence; official alert "
+            "execution still requires confirmed enum/operator semantics."
         ),
         "summary": {
             "device_count": len(records),
@@ -1339,11 +1611,16 @@ def get_company_operational_payload(
             "rule_count": model["rule_count"],
             "telemetry_catalog_count": model["telemetry_catalog_count"],
             "content_instance_count": model["content_instance_count"],
+            "invalid_payload_count": model["invalid_payload_count"],
+            "parseable_payload_count": model["parseable_payload_count"],
+            "telemetry_payload_count": model["telemetry_payload_count"],
             "unmapped_telemetry_count": model["unmapped_telemetry_count"],
             "command_record_count": model["command_record_count"],
         },
         "devices": records,
         "alerts": alerts,
+        "company_rule_mappings": company_rule_mappings,
+        "kpi_evaluations": kpi_evaluations,
     }
 
 
@@ -1420,13 +1697,19 @@ def get_company_agent_context(limit=DEFAULT_OPERATIONAL_RECORD_LIMIT):
         "record_type": "unified company devices",
         "rules_status": payload.get("rules_status"),
         "rules_message": payload.get("rules_message"),
+        "official_rules_status": payload.get("official_rules_status"),
+        "company_rule_mappings": (
+            payload.get("company_rule_mappings") or []
+        )[:MAX_AGENT_SAMPLE_RECORDS],
+        "kpi_evaluations": payload.get("kpi_evaluations") or [],
         "classification_status": "provisional_poc_rules_active",
         "interpretation_notes": [
             "Device inventory is read from devicemgmt.NODE child device entities and augmented with authorization identity metadata.",
             "Latest status and telemetry are joined from datamgmt.CIN using payload identity or CIN/CNT ownership.",
             "Payload status is a raw device-reported value, not an alert severity.",
             "Displayed alerts come from provisional PoC rules, not from official company or Grafana evaluation.",
-            "Company rules were discovered in datamgmt.RULE, but their business evaluation semantics are not integrated.",
+            "Company rules from datamgmt.RULE are mapped as read-only filter/action evidence; official execution semantics still need confirmation.",
+            "Company DB KPI evaluations are computed only for KPI workbook rules marked available_company_db.",
             "Unmapped telemetry is reported separately and is never assigned to a device by guesswork.",
         ],
         "sample_records": samples,
@@ -1590,10 +1873,13 @@ def get_company_rule_readiness_context():
             0,
         ),
         "official_rules_status": payload.get("official_rules_status"),
+        "company_rule_mappings": payload.get("company_rule_mappings") or [],
+        "kpi_evaluations": payload.get("kpi_evaluations") or [],
+        "mapped_kpi_count": len(payload.get("kpi_evaluations") or []),
         "poc_rules": get_company_poc_rule_catalog(),
         "next_integration": (
-            "Confirm datamgmt.RULE enum semantics and connect the authoritative "
-            "Grafana alert source before promoting PoC alerts."
+            "Confirm datamgmt.RULE enum/operator semantics and connect the "
+            "authoritative Grafana alert source before promoting PoC alerts."
         ),
     }
 
@@ -1669,6 +1955,575 @@ def get_company_device_context(identifier):
     }
 
 
+def compact_resource_document(document):
+    if not isinstance(document, dict):
+        return document
+
+    compact = {}
+
+    for key in (
+        "_id",
+        "rn",
+        "ri",
+        "pi",
+        "aei",
+        "api",
+        "rr",
+        "cr",
+        "ct",
+        "lt",
+        "parentContainer",
+        "cnf",
+        "con",
+        "nu",
+        "enc",
+        "poa",
+        "deviceId",
+        "deviceName",
+        "name",
+        "userId",
+        "category",
+        "type",
+        "active",
+        "tenantId",
+        "tenantName",
+        "appDomainId",
+        "appDomainName",
+        "resourceId",
+        "resourceUri",
+        "targetUri",
+    ):
+        if key in document:
+            compact[key] = trim_document(document.get(key))
+
+    return compact or trim_document(document)
+
+
+def resource_matches_identifier(document, identifier):
+    if not identifier:
+        return True
+
+    target = normalize_company_key(identifier)
+
+    for value in document.values():
+        if isinstance(value, (dict, list)):
+            continue
+
+        if target and target in normalize_company_key(value):
+            return True
+
+    return False
+
+
+def document_reference_values(document):
+    values = set()
+
+    if not isinstance(document, dict):
+        return values
+
+    for key in (
+        "_id",
+        "rn",
+        "ri",
+        "pi",
+        "aei",
+        "cr",
+        "parentContainer",
+        "resourceId",
+        "resourceUri",
+        "targetUri",
+        "name",
+        "userId",
+    ):
+        value = document.get(key)
+
+        if value is None:
+            continue
+
+        values.add(company_reference_id(value))
+        normalized = normalize_company_key(value)
+
+        if normalized:
+            values.add(normalized)
+
+    return {value for value in values if value}
+
+
+def cin_matches_identifier(row, identifier):
+    if resource_matches_identifier(row, identifier):
+        return True
+
+    parsed_payload = parse_payload_value(row.get("con"))
+
+    if not isinstance(parsed_payload, dict):
+        return False
+
+    target = normalize_company_key(identifier)
+    aliases = company_aliases(
+        parsed_payload.get("deviceId"),
+        parsed_payload.get("deviceName"),
+        parsed_payload.get("id"),
+        parsed_payload.get("name"),
+    )
+    return target in aliases
+
+
+def references_any(document, references):
+    if not references:
+        return False
+
+    document_refs = document_reference_values(document)
+    normalized_references = {
+        normalize_company_key(reference) or str(reference)
+        for reference in references
+        if reference
+    }
+
+    for value in document_refs:
+        normalized_value = normalize_company_key(value) or str(value)
+
+        if value in references or normalized_value in normalized_references:
+            return True
+
+    return False
+
+
+def related_onem2m_rows(raw_rows, identifier):
+    if not identifier:
+        return {
+            label: list(rows)
+            for label, rows in raw_rows.items()
+        }
+
+    matched = {
+        label: [
+            row for row in rows
+            if resource_matches_identifier(row, identifier)
+        ]
+        for label, rows in raw_rows.items()
+    }
+    matched["CIN"] = [
+        row for row in raw_rows.get("CIN", [])
+        if cin_matches_identifier(row, identifier)
+    ]
+
+    related_refs = set()
+
+    for row in matched.get("IDENTITY", []):
+        related_refs.update(document_reference_values(row))
+
+    for row in matched.get("CIN", []):
+        related_refs.update(document_reference_values(row))
+
+    for row in raw_rows.get("CNT", []):
+        if row in matched.get("CNT", []) or references_any(row, related_refs):
+            matched.setdefault("CNT", []).append(row)
+            related_refs.update(document_reference_values(row))
+
+    for row in raw_rows.get("AE", []):
+        if row in matched.get("AE", []) or references_any(row, related_refs):
+            matched.setdefault("AE", []).append(row)
+            related_refs.update(document_reference_values(row))
+
+    for row in raw_rows.get("SUBSCRIPTION", []):
+        if (
+            row in matched.get("SUBSCRIPTION", [])
+            or references_any(row, related_refs)
+        ):
+            matched.setdefault("SUBSCRIPTION", []).append(row)
+            related_refs.update(document_reference_values(row))
+
+    for row in raw_rows.get("URI_MAPPER", []):
+        if row in matched.get("URI_MAPPER", []) or references_any(row, related_refs):
+            matched.setdefault("URI_MAPPER", []).append(row)
+
+    deduped = {}
+
+    for label, rows in matched.items():
+        seen = set()
+        deduped[label] = []
+
+        for row in rows:
+            key = tuple(sorted(document_reference_values(row))) or (id(row),)
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            deduped[label].append(row)
+
+    return deduped
+
+
+def read_onem2m_resource_sets(proxy, identifier=None):
+    resource_specs = [
+        (
+            "IDENTITY",
+            "authorization",
+            "IDENTITY",
+            {
+                "_id": 0,
+                "name": 1,
+                "userId": 1,
+                "category": 1,
+                "type": 1,
+                "active": 1,
+                "tenantId": 1,
+            },
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+        (
+            "AE",
+            "subNNotif",
+            "AE",
+            {
+                "_id": 1,
+                "rn": 1,
+                "ri": 1,
+                "aei": 1,
+                "api": 1,
+                "rr": 1,
+                "poa": 1,
+                "ct": 1,
+                "lt": 1,
+                "tenantId": 1,
+                "appDomainId": 1,
+            },
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+        (
+            "CNT",
+            "datamgmt",
+            "CNT",
+            {
+                "_id": 1,
+                "rn": 1,
+                "pi": 1,
+                "cr": 1,
+                "parentContainer": 1,
+            },
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+        (
+            "CIN",
+            "datamgmt",
+            "CIN",
+            {
+                "_id": 0,
+                "rn": 1,
+                "pi": 1,
+                "parentContainer": 1,
+                "ct": 1,
+                "lt": 1,
+                "cnf": 1,
+                "con": 1,
+                "tenantId": 1,
+                "tenantName": 1,
+                "appDomainId": 1,
+                "appDomainName": 1,
+            },
+            DEFAULT_COMPANY_CIN_SCAN_LIMIT,
+        ),
+        (
+            "SUBSCRIPTION",
+            "subNNotif",
+            "SUB",
+            {
+                "_id": 1,
+                "rn": 1,
+                "ri": 1,
+                "pi": 1,
+                "nu": 1,
+                "enc": 1,
+                "ct": 1,
+                "lt": 1,
+                "tenantId": 1,
+                "appDomainId": 1,
+            },
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+        (
+            "URI_MAPPER",
+            "orchestration",
+            "URI_MAPPER",
+            {
+                "_id": 1,
+                "rn": 1,
+                "ri": 1,
+                "resourceId": 1,
+                "resourceUri": 1,
+                "targetUri": 1,
+                "ct": 1,
+                "lt": 1,
+                "tenantId": 1,
+                "appDomainId": 1,
+            },
+            MAX_COMPANY_INVENTORY_RECORDS,
+        ),
+    ]
+    raw_rows = {}
+    resource_sets = {}
+
+    for label, database_name, collection_name, projection, limit in resource_specs:
+        sort = DEFAULT_COMPANY_CIN_SORT if label == "CIN" else None
+        rows = proxy.find(
+            database_name,
+            collection_name,
+            {},
+            projection,
+            sort=sort,
+            limit=limit,
+        )
+        raw_rows[label] = rows
+
+    direct_by_label = {
+        label: [
+            row for row in rows
+            if resource_matches_identifier(row, identifier)
+        ]
+        for label, rows in raw_rows.items()
+    }
+    direct_by_label["CIN"] = [
+        row for row in raw_rows.get("CIN", [])
+        if cin_matches_identifier(row, identifier)
+    ]
+    matched_by_label = related_onem2m_rows(raw_rows, identifier)
+
+    for label, database_name, collection_name, _, _ in resource_specs:
+        rows = raw_rows.get(label, [])
+        matched_rows = matched_by_label.get(label, [])
+        direct_rows = direct_by_label.get(label, [])
+        command_rows = []
+        telemetry_rows = []
+
+        if label == "CIN":
+            for row in matched_rows:
+                payload = parse_payload_value(row.get("con"))
+                parent = str(
+                    row.get("pi") or row.get("parentContainer") or ""
+                ).lower()
+
+                if is_command_payload(payload) or "command" in parent:
+                    command_rows.append(row)
+                elif isinstance(payload, dict) and (
+                    "telemetry" in parent or extract_display_metrics(row.get("con"))
+                ):
+                    telemetry_rows.append(row)
+        elif label == "CNT":
+            for row in matched_rows:
+                resource_name = str(
+                    row.get("rn") or row.get("pi") or row.get("parentContainer") or ""
+                ).lower()
+
+                if "command" in resource_name:
+                    command_rows.append(row)
+                if "telemetry" in resource_name:
+                    telemetry_rows.append(row)
+
+        resource_sets[label] = {
+            "namespace": f"{database_name}.{collection_name}",
+            "count": len(rows),
+            "matched_count": len(matched_rows),
+            "direct_match_count": len(direct_rows),
+            "related_match_count": max(0, len(matched_rows) - len(direct_rows)),
+            "samples": [
+                compact_resource_document(row)
+                for row in matched_rows[:ONEM2M_RESOURCE_SAMPLE_LIMIT]
+            ],
+        }
+
+        if label in {"CNT", "CIN"}:
+            resource_sets[label]["command_samples"] = [
+                compact_resource_document(row)
+                for row in command_rows[:ONEM2M_RESOURCE_SAMPLE_LIMIT]
+            ]
+            resource_sets[label]["telemetry_samples"] = [
+                compact_resource_document(row)
+                for row in telemetry_rows[:ONEM2M_RESOURCE_SAMPLE_LIMIT]
+            ]
+            resource_sets[label]["command_count"] = len(command_rows)
+            resource_sets[label]["telemetry_count"] = len(telemetry_rows)
+
+    return resource_sets
+
+
+def is_command_payload(payload):
+    if not isinstance(payload, dict):
+        return False
+
+    keys = {str(key).lower() for key in payload.keys()}
+    return bool({"commandid", "commandtype", "command", "cmd"} & keys)
+
+
+def command_like_records(resource_sets):
+    return resource_sets.get("CIN", {}).get("command_samples") or []
+
+
+def telemetry_like_records(resource_sets):
+    return resource_sets.get("CIN", {}).get("telemetry_samples") or []
+
+
+def get_company_onem2m_device_resource_context(
+    device_id=None,
+    limit=MAX_AGENT_SAMPLE_RECORDS,
+):
+    if company_db_type() != "mongodb":
+        return simulator_fallback_snapshot(
+            "Company MongoDB URL is not configured."
+        )
+
+    try:
+        with get_company_mongo_read_proxy("company-llm-tools") as proxy:
+            model = load_company_device_read_model(proxy)
+            resource_sets = read_onem2m_resource_sets(proxy, device_id)
+            db_audit = proxy.get_audit_events()
+    except Exception as exc:
+        return simulator_fallback_snapshot(
+            f"Company MongoDB read failed: {exc}"
+        )
+
+    devices = [serialize_company_device(device) for device in model["devices"]]
+    target = normalize_company_key(device_id)
+
+    if target:
+        matched_devices = [
+            compact_company_device(device)
+            for device in devices
+            if target in company_aliases(
+                device.get("device_id"),
+                device.get("device_name"),
+                device.get("node_id"),
+            )
+        ]
+    else:
+        matched_devices = [
+            compact_company_device(device)
+            for device in devices[:max(1, min(int(limit), 10))]
+        ]
+
+    resource_summary = {
+        label: {
+            "namespace": resource.get("namespace"),
+            "count": resource.get("count"),
+            "matched_count": resource.get("matched_count"),
+            "direct_match_count": resource.get("direct_match_count"),
+            "related_match_count": resource.get("related_match_count"),
+            "present": resource.get("matched_count", 0) > 0,
+            "command_count": resource.get("command_count"),
+            "telemetry_count": resource.get("telemetry_count"),
+            "samples": resource.get("samples", [])[
+                :max(1, min(int(limit), ONEM2M_RESOURCE_SAMPLE_LIMIT))
+            ],
+        }
+        for label, resource in resource_sets.items()
+    }
+
+    return {
+        "source": "company_mongodb",
+        "tool": "get_company_onem2m_device_resources",
+        "db_audit": db_audit,
+        "db_audit_status": (
+            "runtime_audit_available" if db_audit else "missing_runtime_audit"
+        ),
+        "query_device_id": device_id,
+        "device_match_count": len(matched_devices),
+        "devices": matched_devices[:max(1, min(int(limit), 10))],
+        "resource_summary": resource_summary,
+        "required_resources": [
+            "IDENTITY",
+            "AE",
+            "CNT",
+            "CIN",
+            "SUBSCRIPTION",
+            "URI_MAPPER",
+        ],
+        "summary": {
+            "device_count": len(devices),
+            "inventory_node_count": model["inventory_node_count"],
+            "identity_count": model["identity_count"],
+            "container_count": model["container_count"],
+            "content_instance_count": model["content_instance_count"],
+            "command_record_count": model["command_record_count"],
+            "unmapped_telemetry_count": model["unmapped_telemetry_count"],
+        },
+        "kpi_evaluations": build_company_kpi_evaluations(model),
+        "note": (
+            "OneM2M resources are read from bounded company MongoDB testbed "
+            "collections through the read proxy."
+        ),
+    }
+
+
+def get_company_onem2m_command_flow_context(device_id=None):
+    context = get_company_onem2m_device_resource_context(device_id)
+
+    if context.get("source") != "company_mongodb":
+        return context
+
+    resources = context.get("resource_summary") or {}
+    command_records = command_like_records(resources)
+
+    context.update({
+        "tool": "get_company_onem2m_command_flow",
+        "command_record_count": (
+            context.get("summary", {}).get("command_record_count", 0)
+        ),
+        "latest_command_cin_samples": command_records[:MAX_AGENT_SAMPLE_RECORDS],
+        "flow_checks": {
+            "identity_present": resources.get("IDENTITY", {}).get("present"),
+            "ae_present": resources.get("AE", {}).get("present"),
+            "command_container_present": (
+                resources.get("CNT", {}).get("command_count", 0) > 0
+            ),
+            "subscription_present": resources.get("SUBSCRIPTION", {}).get("present"),
+            "uri_mapper_present": resources.get("URI_MAPPER", {}).get("present"),
+            "latest_command_cin_present": bool(command_records),
+        },
+        "next_diagnostic_step": (
+            "Correlate latest command CIN with adapter/core logs and URI mapper "
+            "target before blaming broker delivery."
+        ),
+    })
+    return context
+
+
+def get_company_onem2m_telemetry_flow_context(device_id=None):
+    context = get_company_onem2m_device_resource_context(device_id)
+
+    if context.get("source") != "company_mongodb":
+        return context
+
+    resources = context.get("resource_summary") or {}
+    telemetry_records = telemetry_like_records(resources)
+
+    context.update({
+        "tool": "get_company_onem2m_telemetry_flow",
+        "latest_telemetry_cin_samples": telemetry_records[:MAX_AGENT_SAMPLE_RECORDS],
+        "kpi_evaluations": [
+            evaluation
+            for evaluation in context.get("kpi_evaluations", [])
+            if evaluation.get("tool") == "get_company_onem2m_telemetry_flow"
+        ],
+        "flow_checks": {
+            "identity_present": resources.get("IDENTITY", {}).get("present"),
+            "ae_present": resources.get("AE", {}).get("present"),
+            "telemetry_container_present": (
+                resources.get("CNT", {}).get("telemetry_count", 0) > 0
+            ),
+            "backend_subscription_present": resources.get(
+                "SUBSCRIPTION",
+                {},
+            ).get("present"),
+            "latest_telemetry_cin_present": bool(telemetry_records),
+        },
+        "next_diagnostic_step": (
+            "Compare adapter receive logs with CNT/CIN creation and subscription "
+            "notification evidence."
+        ),
+    })
+    return context
+
+
 def scan_company_payload_threshold(threshold, limit=MAX_THRESHOLD_SCAN_RECORDS):
     safe_limit = max(1, min(int(limit), MAX_THRESHOLD_SCAN_RECORDS))
     database_name = os.getenv("COMPANY_OPERATIONAL_DB", "datamgmt")
@@ -1692,13 +2547,14 @@ def scan_company_payload_threshold(threshold, limit=MAX_THRESHOLD_SCAN_RECORDS):
                 "tenantName": 1,
                 "appDomainName": 1,
             },
-            sort=("ct", -1),
+            sort=DEFAULT_COMPANY_CIN_SORT,
             limit=safe_limit,
         )
         db_audit = proxy.get_audit_events()
 
     matches = []
     parseable_payloads = 0
+    configured_metrics = sorted(configured_threshold_metric_names())
 
     for row in rows:
         parsed_payload = parse_payload_value(row.get("con"))
@@ -1710,14 +2566,17 @@ def scan_company_payload_threshold(threshold, limit=MAX_THRESHOLD_SCAN_RECORDS):
         numeric_values = []
         collect_numeric_values(parsed_payload, "", numeric_values)
 
-        for numeric_value in numeric_values:
-            if numeric_value["value"] > threshold:
+        for numeric_value_item in numeric_values:
+            if not is_configured_threshold_metric(numeric_value_item["path"]):
+                continue
+
+            if numeric_value_item["value"] > threshold:
                 matches.append({
                     "record_id": row.get("rn"),
                     "parent_container": row.get("pi"),
                     "timestamp": row.get("lt") or row.get("ct"),
-                    "field": numeric_value["path"],
-                    "value": numeric_value["value"],
+                    "field": numeric_value_item["path"],
+                    "value": numeric_value_item["value"],
                     "tenant_name": row.get("tenantName"),
                     "app_domain_name": row.get("appDomainName"),
                 })
@@ -1732,15 +2591,19 @@ def scan_company_payload_threshold(threshold, limit=MAX_THRESHOLD_SCAN_RECORDS):
         "source": "company_mongodb",
         "tool": "scan_company_threshold",
         "db_audit": db_audit,
-        "rules_status": "available_unmapped",
+        "rules_status": "configured_metric_scan",
+        "rule_source": get_company_poc_rule_catalog(),
         "threshold": threshold,
+        "configured_metric_fields": configured_metrics,
         "scanned_records": len(rows),
         "parseable_payloads": parseable_payloads,
         "match_count": len(matches),
         "matches": matches,
         "note": (
-            "This is a manual threshold scan over raw company payloads, not "
-            "an approved company alert rule."
+            "Threshold matching is limited to metric names present in the "
+            "configured company rule catalog; metadata fields such as "
+            "timestamp, locationId, operatorId, and inventorySessionId are "
+            "excluded."
         ),
     }
 

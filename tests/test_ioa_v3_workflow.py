@@ -3,12 +3,14 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from agents.ioa_v3_agent import IOAV3LangGraphN8nAgent
+from services.company_data_service import is_configured_threshold_metric
 from services.grafana_tool_registry import (
     build_grafana_workflow_policy,
     get_grafana_tool_by_name,
     get_kpi_rules_for_tool,
 )
 from services.n8n_gateway_service import (
+    DEFAULT_N8N_V3_WEBHOOK_URL,
     build_n8n_v3_payload,
     get_n8n_v3_webhook_url,
 )
@@ -20,9 +22,15 @@ class IOAV3WorkflowTests(unittest.TestCase):
         policy = build_grafana_workflow_policy()
 
         self.assertEqual(tool["path"], "/grafana/queue-backlog")
+        self.assertIn("namespace", tool["allowed_params"])
         self.assertIn("unapproved_grafana_endpoint", policy["forbidden_capabilities"])
         self.assertTrue(any(
             item["tool"] == "grafana_queue_backlog"
+            for item in policy["allowed_workflows"]
+        ))
+        self.assertTrue(any(
+            item["tool"] == "grafana_emqx_connection_trend"
+            and item["path"] == "/grafana/emqx/connection-trend"
             for item in policy["allowed_workflows"]
         ))
 
@@ -36,19 +44,38 @@ class IOAV3WorkflowTests(unittest.TestCase):
             self.assertTrue(rules)
             self.assertEqual(rules[0]["kpi"], "Queue Backlog")
             self.assertEqual(rules[0]["priority"], "Core")
+            self.assertEqual(rules[0]["implementation_status"], "dashboarded")
+
+            http_rules = get_kpi_rules_for_tool("grafana_http_health")
+            self.assertEqual(
+                {rule["kpi"] for rule in http_rules},
+                {"API Success Rate", "API Latency P95", "HTTP 5xx Rate"},
+            )
         finally:
             if original_flag is None:
                 os.environ.pop("IOA_V3_ENABLE_KPI_RULES", None)
             else:
                 os.environ["IOA_V3_ENABLE_KPI_RULES"] = original_flag
 
-    def test_kpi_rules_are_disabled_by_default(self):
+    def test_kpi_rules_are_enabled_by_default(self):
         original_flag = os.environ.pop("IOA_V3_ENABLE_KPI_RULES", None)
+
+        try:
+            self.assertTrue(get_kpi_rules_for_tool("grafana_queue_backlog"))
+        finally:
+            if original_flag is not None:
+                os.environ["IOA_V3_ENABLE_KPI_RULES"] = original_flag
+
+    def test_kpi_rules_can_be_disabled_by_env(self):
+        original_flag = os.environ.get("IOA_V3_ENABLE_KPI_RULES")
+        os.environ["IOA_V3_ENABLE_KPI_RULES"] = "false"
 
         try:
             self.assertEqual(get_kpi_rules_for_tool("grafana_queue_backlog"), [])
         finally:
-            if original_flag is not None:
+            if original_flag is None:
+                os.environ.pop("IOA_V3_ENABLE_KPI_RULES", None)
+            else:
                 os.environ["IOA_V3_ENABLE_KPI_RULES"] = original_flag
 
     def test_n8n_v3_payload_filters_unapproved_params(self):
@@ -79,14 +106,17 @@ class IOAV3WorkflowTests(unittest.TestCase):
             "http://127.0.0.1:5050",
         )
 
-    def test_v3_webhook_does_not_fallback_to_legacy_n8n_url(self):
+    def test_v3_webhook_defaults_to_local_grafana_gateway(self):
         original_v3 = os.environ.pop("N8N_V3_WEBHOOK_URL", None)
         original_grafana = os.environ.pop("N8N_GRAFANA_WEBHOOK_URL", None)
         original_legacy = os.environ.get("N8N_WEBHOOK_URL")
         os.environ["N8N_WEBHOOK_URL"] = "http://localhost:5678/webhook/iot-ops-eval"
 
         try:
-            self.assertIsNone(get_n8n_v3_webhook_url())
+            self.assertEqual(
+                get_n8n_v3_webhook_url(),
+                DEFAULT_N8N_V3_WEBHOOK_URL,
+            )
         finally:
             if original_v3 is not None:
                 os.environ["N8N_V3_WEBHOOK_URL"] = original_v3
@@ -96,6 +126,26 @@ class IOAV3WorkflowTests(unittest.TestCase):
                 os.environ.pop("N8N_WEBHOOK_URL", None)
             else:
                 os.environ["N8N_WEBHOOK_URL"] = original_legacy
+
+    def test_v3_webhook_rewrites_stale_local_task_broker_port(self):
+        original_v3 = os.environ.get("N8N_V3_WEBHOOK_URL")
+        original_grafana = os.environ.pop("N8N_GRAFANA_WEBHOOK_URL", None)
+        os.environ["N8N_V3_WEBHOOK_URL"] = (
+            "http://localhost:5679/webhook/grafana-ops-gateway"
+        )
+
+        try:
+            self.assertEqual(
+                get_n8n_v3_webhook_url(),
+                DEFAULT_N8N_V3_WEBHOOK_URL,
+            )
+        finally:
+            if original_v3 is None:
+                os.environ.pop("N8N_V3_WEBHOOK_URL", None)
+            else:
+                os.environ["N8N_V3_WEBHOOK_URL"] = original_v3
+            if original_grafana is not None:
+                os.environ["N8N_GRAFANA_WEBHOOK_URL"] = original_grafana
 
     def test_ioa_v3_selects_grafana_tool_from_prompt(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
@@ -107,6 +157,33 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertEqual(tool, "grafana_redis_health")
         self.assertEqual(params, {})
         self.assertEqual(reason, "redis_keywords")
+
+    def test_ioa_v3_routes_trend_prompts_to_typed_grafana_adapters(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        cases = [
+            (
+                "Check whether RabbitMQ queue messages are increasing linearly",
+                "grafana_queue_trend",
+            ),
+            (
+                "Check whether EMQX messages dropped increased",
+                "grafana_emqx_dropped_trend",
+            ),
+            (
+                "Check EMQX client connected and disconnected rates",
+                "grafana_emqx_connection_trend",
+            ),
+            (
+                "Check Kubernetes resource health in namespace one-iot: pod CPU and memory",
+                "grafana_k8s_resources",
+            ),
+        ]
+
+        for prompt, expected_tool in cases:
+            with self.subTest(prompt=prompt):
+                tool, _, _ = agent.classify_tool(prompt)
+                self.assertEqual(tool, expected_tool)
 
     def test_ioa_v3_routes_disconnected_devices_to_company_db_tool(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
@@ -171,6 +248,56 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertEqual(tool, "scan_company_threshold")
         self.assertEqual(params, {"threshold": 70.0})
         self.assertEqual(reason, "company_threshold_keywords")
+
+    def test_ioa_v3_routes_onem2m_prompts_to_company_db_tools(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        cases = [
+            (
+                "Debug why device S123 did not receive a command. Check IDENTITY, AE, cnt_command, subscription, URI mapper, latest command CIN.",
+                "get_company_onem2m_command_flow",
+                {"device_id": "S123"},
+            ),
+            (
+                "Debug why telemetry from device S123 did not reach the backend. Check cnt_telemetry, latest telemetry CIN, backend subscription.",
+                "get_company_onem2m_telemetry_flow",
+                {"device_id": "S123"},
+            ),
+            (
+                "Check whether device <device_id> is on the platform and whether required OneM2M resources exist: IDENTITY, AE, CNT, CIN, SUBSCRIPTION, and URI_MAPPER.",
+                "get_company_onem2m_device_resources",
+                {},
+            ),
+        ]
+
+        for prompt, expected_tool, expected_params in cases:
+            with self.subTest(prompt=prompt):
+                tool, params, _ = agent.classify_tool(prompt)
+                self.assertEqual(tool, expected_tool)
+                self.assertEqual(params, expected_params)
+
+    def test_ioa_v3_filters_placeholder_planner_params(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        params = agent.filter_tool_params(
+            {
+                "namespace": "default",
+                "queue": "your_queue_name",
+                "start": "start_time",
+                "end": "2023-10-31T23:59:59Z",
+                "step": "step_interval",
+            },
+            ["namespace", "queue", "start", "end", "step"],
+            user_input="Check whether RabbitMQ queue messages are increasing linearly",
+        )
+
+        self.assertEqual(params, {"namespace": "default"})
+
+    def test_company_threshold_metric_filter_excludes_metadata(self):
+        self.assertTrue(is_configured_threshold_metric("measurements[0].temperature"))
+        self.assertTrue(is_configured_threshold_metric("tags[0].rssi"))
+        self.assertFalse(is_configured_threshold_metric("timestamp"))
+        self.assertFalse(is_configured_threshold_metric("locationId"))
 
     def test_ioa_v3_keeps_infra_prompts_on_grafana_route(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)

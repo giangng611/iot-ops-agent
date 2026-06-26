@@ -18,9 +18,19 @@
       "intent": "grafana_queue_backlog",
       "method": "GET",
       "path": "/grafana/queue-backlog",
-      "allowed_params": [],
+      "allowed_params": ["namespace", "topk", "threshold"],
       "kpi": "Queue Backlog",
       "description": "RabbitMQ queue backlog with total and per-queue breakdown."
+    },
+    {
+      "name": "grafana_queue_trend",
+      "workflow_id": "rabbitmq_queue_trend",
+      "intent": "grafana_queue_trend",
+      "method": "GET",
+      "path": "/grafana/queue-trend",
+      "allowed_params": ["namespace", "queue", "start", "end", "step"],
+      "kpi": "Queue Backlog",
+      "description": "RabbitMQ queue backlog trend over a bounded time range."
     },
     {
       "name": "grafana_throughput",
@@ -82,6 +92,26 @@
       "description": "EMQX connections, message rates, drop rate, auth/subscribe rates, and disconnect reasons."
     },
     {
+      "name": "grafana_emqx_dropped_trend",
+      "workflow_id": "emqx_dropped_trend",
+      "intent": "grafana_emqx_dropped_trend",
+      "method": "GET",
+      "path": "/grafana/emqx/dropped-trend",
+      "allowed_params": ["start", "end", "step"],
+      "kpi": "Message Loss Rate",
+      "description": "EMQX dropped-message trend for broker/core diagnostics."
+    },
+    {
+      "name": "grafana_emqx_connection_trend",
+      "workflow_id": "emqx_connection_trend",
+      "intent": "grafana_emqx_connection_trend",
+      "method": "GET",
+      "path": "/grafana/emqx/connection-trend",
+      "allowed_params": ["start", "end", "step"],
+      "kpi": "Reconnect Rate",
+      "description": "EMQX connected/disconnected rate trend for onboarding and reconnect-loop diagnostics."
+    },
+    {
       "name": "grafana_k8s_health",
       "workflow_id": "kubernetes_health",
       "intent": "grafana_k8s_health",
@@ -89,6 +119,15 @@
       "path": "/grafana/k8s",
       "allowed_params": [],
       "description": "Kubernetes CPU, restarts, pod phases, memory, and overall level."
+    },
+    {
+      "name": "grafana_k8s_resources",
+      "workflow_id": "kubernetes_resource_debug",
+      "intent": "grafana_k8s_resources",
+      "method": "GET",
+      "path": "/grafana/k8s/resources",
+      "allowed_params": ["namespace", "service", "pod"],
+      "description": "Kubernetes namespace, pod CPU/memory, restart count, pod status, and recent error summary."
     },
     {
       "name": "grafana_redis_health",

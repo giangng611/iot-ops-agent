@@ -161,7 +161,7 @@
     "prompt": "Debug why device <device_id> did not receive a command. Check adapter logs, core logs, IDENTITY, AE, cnt_command, subscription, URI mapper, latest command CIN, then summarize the likely failure point.",
     "expected_source": "mixed",
     "expected_tools": [
-      "planned_onem2m_command_flow_evidence",
+      "get_company_onem2m_command_flow",
       "grafana_logs",
       "grafana_emqx_health"
     ],
@@ -172,7 +172,7 @@
       "subscription and point of access",
       "failure-point classification"
     ],
-    "readiness": "requires_new_company_db_and_log_tools",
+    "readiness": "supported",
     "acceptance_notes": "Must not run arbitrary kubectl or MongoDB queries; use typed evidence tools only."
   },
   {
@@ -180,7 +180,7 @@
     "prompt": "Debug why telemetry from device <device_id> did not reach the backend. Check adapter logs, cnt_telemetry, latest telemetry CIN, backend subscription, notify logs, and relevant EMQX/RabbitMQ evidence.",
     "expected_source": "mixed",
     "expected_tools": [
-      "planned_onem2m_telemetry_flow_evidence",
+      "get_company_onem2m_telemetry_flow",
       "grafana_logs",
       "grafana_emqx_health",
       "grafana_queue_backlog"
@@ -192,7 +192,7 @@
       "backend subscription and notify status",
       "broker or queue supporting evidence"
     ],
-    "readiness": "requires_new_company_db_and_log_tools",
+    "readiness": "supported",
     "acceptance_notes": "Should classify whether the issue is device send, adapter receive, resource creation, subscription, notify, or backend receive."
   },
   {
@@ -200,7 +200,7 @@
     "prompt": "Check whether device <device_id> is on the platform and whether required OneM2M resources exist: IDENTITY, AE, CNT, CIN, SUBSCRIPTION, and URI_MAPPER.",
     "expected_source": "company",
     "expected_tools": [
-      "planned_onem2m_device_resource_evidence"
+      "get_company_onem2m_device_resources"
     ],
     "expected_focus": [
       "device identity",
@@ -210,7 +210,7 @@
       "URI mapper evidence",
       "missing resources"
     ],
-    "readiness": "requires_new_company_db_tool",
+    "readiness": "supported",
     "acceptance_notes": "Needs confirmed namespaces for AE, SUB, and URI_MAPPER before implementation."
   },
   {
@@ -234,7 +234,7 @@
     "prompt": "Check whether RabbitMQ queue messages are increasing linearly over the requested time range and suggest which consumer or service to inspect next.",
     "expected_source": "grafana",
     "expected_tools": [
-      "planned_grafana_queue_trend",
+      "grafana_queue_trend",
       "grafana_logs",
       "grafana_k8s_health"
     ],
@@ -244,7 +244,7 @@
       "consumer lag hypothesis",
       "pod and log follow-up"
     ],
-    "readiness": "requires_new_grafana_adapter_endpoint",
+    "readiness": "adapter_mock_available",
     "acceptance_notes": "Do not let the LLM generate arbitrary PromQL; adapter should own the query."
   },
   {
@@ -252,7 +252,7 @@
     "prompt": "Check whether EMQX messages dropped increased over the requested time range, then inspect broker health, MQTT adapter logs, queue backlog, and core service evidence.",
     "expected_source": "grafana",
     "expected_tools": [
-      "planned_grafana_emqx_dropped",
+      "grafana_emqx_dropped_trend",
       "grafana_emqx_health",
       "grafana_logs",
       "grafana_queue_backlog"
@@ -264,7 +264,7 @@
       "queue backlog",
       "next investigation step"
     ],
-    "readiness": "requires_new_grafana_adapter_endpoint",
+    "readiness": "adapter_mock_available",
     "acceptance_notes": "Current EMQX health is only partial support unless dropped-message trend is exposed."
   },
   {
@@ -272,10 +272,10 @@
     "prompt": "Check EMQX client connected and disconnected rates to identify onboarding spikes or reconnect loops, then suggest device/log follow-up.",
     "expected_source": "mixed",
     "expected_tools": [
-      "planned_grafana_emqx_connection_trend",
+      "grafana_emqx_connection_trend",
       "grafana_emqx_health",
       "grafana_logs",
-      "planned_onem2m_device_resource_evidence"
+      "get_company_onem2m_device_resources"
     ],
     "expected_focus": [
       "connected rate",
@@ -284,7 +284,7 @@
       "affected device follow-up",
       "broker evidence"
     ],
-    "readiness": "requires_new_grafana_adapter_endpoint",
+    "readiness": "adapter_mock_available",
     "acceptance_notes": "Should not identify affected devices unless log or DB evidence includes device IDs."
   },
   {
@@ -292,7 +292,7 @@
     "prompt": "Check Kubernetes resource health in namespace one-iot: pod CPU, memory, restart count, pod status, node resources, and latest service error logs.",
     "expected_source": "grafana",
     "expected_tools": [
-      "grafana_k8s_health",
+      "grafana_k8s_resources",
       "grafana_linux_health",
       "grafana_logs"
     ],

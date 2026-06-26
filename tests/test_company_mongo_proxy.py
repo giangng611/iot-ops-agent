@@ -6,6 +6,7 @@ from services.company_mongo_proxy import (
     CompanyMongoReadProxy,
     SlidingWindowRateLimiter,
     company_mongo_rate_limiter,
+    should_use_direct_connection,
 )
 
 
@@ -163,6 +164,35 @@ class CompanyMongoProxyTests(unittest.TestCase):
         self.assertFalse(hasattr(proxy, "insert_one"))
         self.assertFalse(hasattr(proxy, "update_one"))
         self.assertFalse(hasattr(proxy, "delete_one"))
+
+    def test_single_seed_uri_uses_direct_connection_by_default(self):
+        captured_kwargs = {}
+        collection = FakeCollection([])
+        client = FakeClient(collection)
+
+        def client_factory(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return client
+
+        CompanyMongoReadProxy(
+            "mongodb://readonly:secret@example.invalid:27017/?authSource=admin",
+            actor="test",
+            client_factory=client_factory,
+        )
+
+        self.assertTrue(captured_kwargs["directConnection"])
+
+    def test_explicit_mongo_topology_options_are_respected(self):
+        self.assertFalse(
+            should_use_direct_connection(
+                "mongodb://example.invalid:27017/?directConnection=false"
+            )
+        )
+        self.assertFalse(
+            should_use_direct_connection(
+                "mongodb://a.example:27017,b.example:27017/?replicaSet=rs0"
+            )
+        )
 
     def test_find_rejects_server_side_javascript_operator(self):
         collection = FakeCollection([])

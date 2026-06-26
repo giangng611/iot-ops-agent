@@ -21,7 +21,7 @@ def main():
         "--webhook-url",
         default=os.getenv(
             "N8N_V3_WEBHOOK_URL",
-            "http://localhost:5679/webhook/grafana-ops-gateway",
+            "http://localhost:5678/webhook/grafana-ops-gateway",
         ),
         help="n8n IOA v3 webhook URL.",
     )
@@ -60,6 +60,7 @@ def main():
     )
 
     print(f"grafana_base_url={payload['grafana_client']['base_url']}")
+    print(f"webhook_url={args.webhook_url}")
     print(f"workflow_path={payload['workflow']['path']}")
 
     response = requests.post(args.webhook_url, json=payload, timeout=20)

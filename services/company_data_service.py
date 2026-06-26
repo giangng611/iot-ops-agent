@@ -954,17 +954,35 @@ def company_db_kpi_rules():
     ]
 
 
+def kpi_device_sample(device):
+    return {
+        "device_id": device.get("device_id"),
+        "device_name": device.get("device_name"),
+        "status": device.get("status"),
+        "status_source": device.get("status_source"),
+        "telemetry_record_count": device.get("telemetry_record_count"),
+        "rule_count": device.get("rule_count"),
+        "latest_metrics": device.get("metrics", [])[:3],
+    }
+
+
 def build_company_kpi_evaluations(model):
     devices = model.get("devices") or []
     total_devices = len(devices)
-    connected_count = len([
+    connected_devices = [
         device for device in devices
         if status_bucket(device.get("status")) == "connected"
-    ])
-    disconnected_count = len([
+    ]
+    disconnected_devices = [
         device for device in devices
         if status_bucket(device.get("status")) == "disconnected"
-    ])
+    ]
+    unknown_devices = [
+        device for device in devices
+        if status_bucket(device.get("status")) == "unknown"
+    ]
+    connected_count = len(connected_devices)
+    disconnected_count = len(disconnected_devices)
     unknown_count = max(0, total_devices - connected_count - disconnected_count)
     status_evidence_count = connected_count + disconnected_count
     content_count = model.get("content_instance_count", 0)
@@ -988,6 +1006,18 @@ def build_company_kpi_evaluations(model):
                 "unknown_status_devices": unknown_count,
                 "status_evidence_devices": status_evidence_count,
                 "total_devices": total_devices,
+                "affected_devices": [
+                    kpi_device_sample(device)
+                    for device in disconnected_devices[:5]
+                ],
+                "unknown_status_samples": [
+                    kpi_device_sample(device)
+                    for device in unknown_devices[:5]
+                ],
+                "connected_samples": [
+                    kpi_device_sample(device)
+                    for device in connected_devices[:3]
+                ],
                 "source": "devicemgmt.NODE + datamgmt.CIN.con.status",
             },
         },

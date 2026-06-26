@@ -340,6 +340,14 @@ function escapeHtml(value) {
         .replace(/'/g, "&#39;");
 }
 
+function escapeJsString(value) {
+    return String(value ?? "")
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\\'")
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "");
+}
+
 function formatConversationalText(value) {
     return String(value ?? "")
         .replace(/\r\n/g, "\n")
@@ -4052,7 +4060,6 @@ function renderAlertCenter() {
 
 function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
     const officialAlerts = currentDataSourceState.official_alerts || {};
-    const kpiEvaluations = currentDataSourceState.kpi_evaluations || [];
     const alerts = officialAlerts.active_alerts || [];
     const critical = officialAlerts.critical_count || 0;
     const warning = officialAlerts.warning_count || 0;
@@ -4071,6 +4078,12 @@ function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
         return;
     }
 
+    if (total === 0) {
+        summary.textContent = "No active alerts.";
+        alertList.innerHTML = "";
+        return;
+    }
+
     summary.innerHTML = `
         <div class="alert-summary-card critical-alert">
             <h2>${critical}</h2>
@@ -4079,10 +4092,6 @@ function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
         <div class="alert-summary-card warning-alert">
             <h2>${warning}</h2>
             <p>KPI warning</p>
-        </div>
-        <div class="alert-summary-card rules-pending-alert">
-            <h2>${kpiEvaluations.length}</h2>
-            <p>KPI checks</p>
         </div>
     `;
 
@@ -4094,53 +4103,117 @@ function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
         </div>
     `;
 
-    if (kpiEvaluations.length === 0) {
-        alertList.innerHTML += `
-        <div class="alert-item info">
-            <div>
-                <h3>No KPI checks are evaluable from the company DB yet</h3>
-                <p>
-                    KPI definitions are loaded, but this source did not return
-                    DB-backed KPI evidence for the current view.
-                </p>
-            </div>
-        </div>
-    `;
-        return;
-    }
-
-    kpiEvaluations.forEach(kpi => {
-        const severity = ["critical", "warning", "good"].includes(kpi.status)
-            ? kpi.status
+    alerts.forEach(kpi => {
+        const severityValue = kpi.severity || kpi.status;
+        const severity = ["critical", "warning", "good"].includes(severityValue)
+            ? severityValue
             : "info";
         const evidence = kpi.evidence || {};
         const value = kpi.value === null || kpi.value === undefined
             ? "not evaluable"
             : `${kpi.value}${kpi.unit || ""}`;
-        const thresholdText = Object.entries(kpi.thresholds || {})
-            .map(([key, threshold]) => `${key}: ${threshold}`)
-            .join(" · ");
+        const thresholdText = formatKpiThresholds(kpi.thresholds || {});
+        const affectedDevices = evidence.affected_devices || [];
+        const unknownDevices = evidence.unknown_status_samples || [];
 
         alertList.innerHTML += `
-            <div class="alert-item ${escapeHtml(severity)}">
-                <div>
-                    <div class="poc-alert-heading">
-                        <h3>${escapeHtml(kpi.kpi)}</h3>
-                        <span class="poc-alert-badge">KPI workbook</span>
+            <div class="alert-item kpi-alert-item ${escapeHtml(severity)}">
+                <div class="kpi-alert-main">
+                    <div class="kpi-alert-topline">
+                        <div class="poc-alert-heading">
+                            <h3>${escapeHtml(kpi.title || kpi.kpi)}</h3>
+                            <span class="poc-alert-badge">KPI workbook</span>
+                        </div>
+                        <span class="kpi-status-pill ${escapeHtml(severity)}">
+                            ${escapeHtml(severity)}
+                        </span>
                     </div>
-                    <p>
-                        ${escapeHtml(kpi.metric)}:
-                        ${escapeHtml(value)} ·
-                        status ${escapeHtml(kpi.status)}
-                    </p>
-                    <small class="device-subtext">
+                    <div class="kpi-alert-evidence">
+                        <div>
+                            <span>Metric</span>
+                            <strong>${escapeHtml(kpi.metric)}</strong>
+                        </div>
+                        <div>
+                            <span>Value</span>
+                            <strong>${escapeHtml(value)}</strong>
+                        </div>
+                        <div>
+                            <span>Evidence</span>
+                            <strong>${escapeHtml(kpiEvidenceSummary(kpi))}</strong>
+                        </div>
+                    </div>
+                    <p class="kpi-threshold-line">
                         ${escapeHtml(thresholdText || "No fixed threshold")} ·
                         ${escapeHtml(evidence.source || kpi.source || "company DB")}
-                    </small>
+                    </p>
+                    ${renderKpiDeviceSamples("Affected devices", affectedDevices)}
+                    ${renderKpiDeviceSamples("Unknown status samples", unknownDevices)}
                 </div>
             </div>
         `;
     });
+}
+
+function formatKpiThresholds(thresholds) {
+    const labels = {
+        good_min: "good ≥",
+        warning_min: "warning ≥",
+        critical_below: "critical <",
+        good_below: "good <",
+        warning_max: "warning ≤",
+        critical_above: "critical >",
+        good_max: "good ≤"
+    };
+
+    return Object.entries(thresholds)
+        .map(([key, threshold]) => `${labels[key] || key} ${threshold}`)
+        .join(" · ");
+}
+
+function kpiEvidenceSummary(kpi) {
+    const evidence = kpi.evidence || {};
+
+    if (kpi.metric === "connected_devices_rate_percent") {
+        return `${evidence.connected_devices || 0} connected / ${evidence.status_evidence_devices || 0} status-known`;
+    }
+
+    if (kpi.metric === "invalid_payload_rate_percent") {
+        return `${evidence.invalid_payloads || 0} invalid / ${evidence.content_instances_scanned || 0} payloads`;
+    }
+
+    return evidence.source || kpi.source || "company DB";
+}
+
+function renderKpiDeviceSamples(title, devices) {
+    if (!Array.isArray(devices) || devices.length === 0) {
+        return "";
+    }
+
+    return `
+        <div class="kpi-device-samples">
+            <span>${escapeHtml(title)}</span>
+            ${devices.map(device => `
+                <div class="kpi-device-row">
+                    <div>
+                        <strong>${escapeHtml(device.device_name || device.device_id || "Unknown device")}</strong>
+                        <small class="device-subtext">
+                            ${escapeHtml(device.device_id || "")} ·
+                            ${escapeHtml(device.status || "unknown")} ·
+                            ${Number(device.telemetry_record_count || 0)} records
+                        </small>
+                    </div>
+                    <div class="kpi-device-actions">
+                        <button onclick="diagnoseDevice('${escapeJsString(device.device_id || "")}')">
+                            Diagnose
+                        </button>
+                        <button class="secondary-btn" onclick="showDeviceHistory('${escapeJsString(device.device_id || "")}')">
+                            History
+                        </button>
+                    </div>
+                </div>
+            `).join("")}
+        </div>
+    `;
 }
 
 function renderCompanyPocAlerts(badge, summary, alertList) {

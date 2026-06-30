@@ -1,3 +1,12 @@
+"""Vendored copy of the main iot-ops-agent repo's services/company_mongo_proxy.py.
+
+mcp_server/ is deployed as a fully independent service (separate process,
+separate env, separate deploy target) from the Flask app in this repo -- it
+must not import anything from the parent app's package tree. This file is
+duplicated on purpose rather than imported across repo boundaries; if the
+allowlist/guardrail logic in the original services/company_mongo_proxy.py
+changes, re-sync this copy manually.
+"""
 import os
 import threading
 import time

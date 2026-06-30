@@ -197,3 +197,17 @@ Current guardrails include:
 Production work still includes shared/distributed rate limiting, RBAC,
 centralized audit storage, official company rule integration, and approval
 gates for any future write action.
+
+## MCP Server (peer service)
+
+`mcp_server/` is a separate, independently deployed process — not part of
+the Flask app above — that exposes read-only MongoDB, Grafana Loki, and
+(optionally) Grafana/Prometheus tools over the MCP protocol (Streamable
+HTTP) for external agents over the public Internet. It is the sole holder
+of the real Mongo/Loki/Grafana credentials; external callers authenticate
+only with a bearer key scoped to the MCP server itself, verified with
+`hmac.compare_digest` before any tool runs (`mcp_server/auth.py`). The Mongo
+tools reuse `services/company_mongo_proxy.py` directly rather than
+duplicating its allowlist/rate-limit/audit logic. See
+[docs/MCP_SERVER_PLAN.md](MCP_SERVER_PLAN.md) and
+[docs/MCP_SERVER_DEPLOYMENT.md](MCP_SERVER_DEPLOYMENT.md).

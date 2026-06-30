@@ -340,6 +340,14 @@ function escapeHtml(value) {
         .replace(/'/g, "&#39;");
 }
 
+function escapeJsString(value) {
+    return String(value ?? "")
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\\'")
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "");
+}
+
 function formatConversationalText(value) {
     return String(value ?? "")
         .replace(/\r\n/g, "\n")
@@ -1473,7 +1481,10 @@ async function refreshDevices() {
             reason: data.reason || "",
             rules_message: data.rules_message || "",
             summary: data.summary || {},
-            alerts: data.alerts || {}
+            alerts: data.alerts || {},
+            official_alerts: data.official_alerts || {},
+            kpi_evaluations: data.kpi_evaluations || [],
+            company_rule_mappings: data.company_rule_mappings || []
         };
         allDevices = data.devices || [];
         currentAlerts = data.alerts || {
@@ -1816,14 +1827,41 @@ function renderCompanyMetrics(metrics) {
     return `
         <div class="metric-chip-list">
             ${metrics.map(metric => `
-                <span class="metric-chip">
-                    <strong>${escapeHtml(metric.name)}</strong>
+                <span class="metric-chip" title="${escapeHtml(companyMetricTooltip(metric))}">
+                    <strong>${escapeHtml(companyMetricLabel(metric))}</strong>
                     ${escapeHtml(metric.value)}
                     ${metric.unit ? `<small>${escapeHtml(metric.unit)}</small>` : ""}
+                    ${metric.inferred_from ? '<small class="metric-source">mapped</small>' : ""}
                 </span>
             `).join("")}
         </div>
     `;
+}
+
+function companyMetricLabel(metric) {
+    if (metric.inferred_from) {
+        return metric.name;
+    }
+
+    return metric.name === "value" ? "raw value" : metric.name;
+}
+
+function companyMetricTooltip(metric) {
+    const parts = [
+        `${companyMetricLabel(metric)}: ${metric.value}`
+    ];
+
+    if (metric.inferred_from) {
+        parts.push(`mapped from ${metric.inferred_from}`);
+    } else if (metric.name === "value") {
+        parts.push("The company payload did not include a metric name for this value.");
+    }
+
+    if (metric.rule_operator || metric.rule_threshold) {
+        parts.push(`rule ${metric.rule_operator || ""} ${metric.rule_threshold || ""}`.trim());
+    }
+
+    return parts.join(" · ");
 }
 
 function renderCompanyDataSummary() {
@@ -1880,10 +1918,11 @@ function renderCompanyDataSummary() {
             </div>
         </div>
         <p class="company-rules-notice">
-            ${sourceSummary.unmapped_telemetry_count || 0} telemetry records could not
-            be mapped safely. ${tenantCount} tenant${tenantCount === 1 ? "" : "s"} are
-            represented. Alerts use provisional PoC rules; official company and
-            Grafana rule evaluation is still pending.
+            ${sourceSummary.telemetry_payload_count || 0} telemetry payloads scanned.
+            ${sourceSummary.unmapped_telemetry_count || 0} records could not be mapped
+            safely. Raw value chips mean the payload has no metric name in
+            datamgmt.CIN.con. ${tenantCount} tenant${tenantCount === 1 ? "" : "s"}
+            are represented.
         </p>
     `;
 }
@@ -4020,36 +4059,159 @@ function renderAlertCenter() {
 }
 
 function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
+    const officialAlerts = currentDataSourceState.official_alerts || {};
+    const alerts = officialAlerts.active_alerts || [];
+    const critical = officialAlerts.critical_count || 0;
+    const warning = officialAlerts.warning_count || 0;
+    const total = alerts.length;
+
     if (badge) {
-        badge.classList.add("hidden");
+        if (total > 0) {
+            badge.classList.remove("hidden");
+            badge.textContent = total;
+        } else {
+            badge.classList.add("hidden");
+        }
     }
 
     if (!summary || !alertList) {
         return;
     }
 
+    if (total === 0) {
+        summary.textContent = "No active alerts.";
+        alertList.innerHTML = "";
+        return;
+    }
+
     summary.innerHTML = `
-        <div class="alert-summary-card rules-pending-alert">
-            <h2>Pending</h2>
-            <p>Official alerts</p>
+        <div class="alert-summary-card critical-alert">
+            <h2>${critical}</h2>
+            <p>KPI critical</p>
         </div>
         <div class="alert-summary-card warning-alert">
-            <h2>0</h2>
-            <p>Fallback hidden</p>
+            <h2>${warning}</h2>
+            <p>KPI warning</p>
         </div>
     `;
 
     alertList.innerHTML = `
-        <div class="alert-item info">
-            <div>
-                <h3>Official company/Grafana alerts are not connected yet</h3>
-                <p>
-                    The KPI workbook and Grafana client endpoints are ready for
-                    the IOA v3 workflow, but the authoritative alert feed has
-                    not been mapped into this tab yet. Switch back to fallback
-                    alerts to view the current PoC device findings.
-                </p>
+        <div class="poc-alert-disclaimer">
+            Official view is using KPI workbook checks that are evaluable from
+            company DB evidence. Device-level datamgmt.RULE execution is still
+            read-only until enum/operator semantics are confirmed.
+        </div>
+    `;
+
+    alerts.forEach(kpi => {
+        const severityValue = kpi.severity || kpi.status;
+        const severity = ["critical", "warning", "good"].includes(severityValue)
+            ? severityValue
+            : "info";
+        const evidence = kpi.evidence || {};
+        const value = kpi.value === null || kpi.value === undefined
+            ? "not evaluable"
+            : `${kpi.value}${kpi.unit || ""}`;
+        const thresholdText = formatKpiThresholds(kpi.thresholds || {});
+        const affectedDevices = evidence.affected_devices || [];
+        const unknownDevices = evidence.unknown_status_samples || [];
+
+        alertList.innerHTML += `
+            <div class="alert-item kpi-alert-item ${escapeHtml(severity)}">
+                <div class="kpi-alert-main">
+                    <div class="kpi-alert-topline">
+                        <div class="poc-alert-heading">
+                            <h3>${escapeHtml(kpi.title || kpi.kpi)}</h3>
+                            <span class="poc-alert-badge">KPI workbook</span>
+                        </div>
+                        <span class="kpi-status-pill ${escapeHtml(severity)}">
+                            ${escapeHtml(severity)}
+                        </span>
+                    </div>
+                    <div class="kpi-alert-evidence">
+                        <div>
+                            <span>Metric</span>
+                            <strong>${escapeHtml(kpi.metric)}</strong>
+                        </div>
+                        <div>
+                            <span>Value</span>
+                            <strong>${escapeHtml(value)}</strong>
+                        </div>
+                        <div>
+                            <span>Evidence</span>
+                            <strong>${escapeHtml(kpiEvidenceSummary(kpi))}</strong>
+                        </div>
+                    </div>
+                    <p class="kpi-threshold-line">
+                        ${escapeHtml(thresholdText || "No fixed threshold")} ·
+                        ${escapeHtml(evidence.source || kpi.source || "company DB")}
+                    </p>
+                    ${renderKpiDeviceSamples("Affected devices", affectedDevices)}
+                    ${renderKpiDeviceSamples("Unknown status samples", unknownDevices)}
+                </div>
             </div>
+        `;
+    });
+}
+
+function formatKpiThresholds(thresholds) {
+    const labels = {
+        good_min: "good ≥",
+        warning_min: "warning ≥",
+        critical_below: "critical <",
+        good_below: "good <",
+        warning_max: "warning ≤",
+        critical_above: "critical >",
+        good_max: "good ≤"
+    };
+
+    return Object.entries(thresholds)
+        .map(([key, threshold]) => `${labels[key] || key} ${threshold}`)
+        .join(" · ");
+}
+
+function kpiEvidenceSummary(kpi) {
+    const evidence = kpi.evidence || {};
+
+    if (kpi.metric === "connected_devices_rate_percent") {
+        return `${evidence.connected_devices || 0} connected / ${evidence.status_evidence_devices || 0} status-known`;
+    }
+
+    if (kpi.metric === "invalid_payload_rate_percent") {
+        return `${evidence.invalid_payloads || 0} invalid / ${evidence.content_instances_scanned || 0} payloads`;
+    }
+
+    return evidence.source || kpi.source || "company DB";
+}
+
+function renderKpiDeviceSamples(title, devices) {
+    if (!Array.isArray(devices) || devices.length === 0) {
+        return "";
+    }
+
+    return `
+        <div class="kpi-device-samples">
+            <span>${escapeHtml(title)}</span>
+            ${devices.map(device => `
+                <div class="kpi-device-row">
+                    <div>
+                        <strong>${escapeHtml(device.device_name || device.device_id || "Unknown device")}</strong>
+                        <small class="device-subtext">
+                            ${escapeHtml(device.device_id || "")} ·
+                            ${escapeHtml(device.status || "unknown")} ·
+                            ${Number(device.telemetry_record_count || 0)} records
+                        </small>
+                    </div>
+                    <div class="kpi-device-actions">
+                        <button onclick="diagnoseDevice('${escapeJsString(device.device_id || "")}')">
+                            Diagnose
+                        </button>
+                        <button class="secondary-btn" onclick="showDeviceHistory('${escapeJsString(device.device_id || "")}')">
+                            History
+                        </button>
+                    </div>
+                </div>
+            `).join("")}
         </div>
     `;
 }
@@ -4679,7 +4841,9 @@ function renderCompanyDeviceHistory(history, canvas, emptyState) {
             ? safeHistory.slice(-12).reverse().map(item => `
                 <div>
                     <strong>${escapeHtml(formatCompanyTimestamp(item.timestamp))}</strong>
-                    <span>${escapeHtml(item.status || "No numeric telemetry in this record")}</span>
+                    <span>
+                        ${renderCompanyHistoryMetricSummary(item)}
+                    </span>
                 </div>
             `).join("")
             : "<p>No mapped telemetry history is available for this device.</p>";
@@ -4741,6 +4905,20 @@ function renderCompanyDeviceHistory(history, canvas, emptyState) {
             }
         }
     });
+}
+
+function renderCompanyHistoryMetricSummary(item) {
+    const metrics = Array.isArray(item.metrics) ? item.metrics : [];
+
+    if (metrics.length === 0) {
+        return escapeHtml(item.status || "No mapped telemetry in this record");
+    }
+
+    return metrics.slice(0, 4).map(metric => (
+        `${escapeHtml(companyMetricLabel(metric))}: ${escapeHtml(metric.value)}${
+            metric.unit ? ` ${escapeHtml(metric.unit)}` : ""
+        }`
+    )).join(" · ");
 }
 
 async function loadChatsFromDatabase() {

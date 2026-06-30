@@ -16,7 +16,7 @@ Use a read-only database user.
 COMPANY_DB_URL=postgresql://readonly_user:[PASSWORD]@company-db-host:5432/company_db
 COMPANY_MONGODB_URI=mongodb://readonly_user:[PASSWORD]@company-mongo-host:27017/?authSource=admin
 COMPANY_MONGODB_DB=
-COMPANY_MONGO_ALLOWED_NAMESPACES=devicemgmt.NODE,authorization.IDENTITY,datamgmt.CNT,datamgmt.CIN,datamgmt.DEVICE_TELEMETRY,datamgmt.RULE
+COMPANY_MONGO_ALLOWED_NAMESPACES=devicemgmt.NODE,authorization.IDENTITY,datamgmt.CNT,datamgmt.CIN,datamgmt.DEVICE_TELEMETRY,datamgmt.RULE,subNNotif.AE,subNNotif.SUB,orchestration.URI_MAPPER
 COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
 COMPANY_DB_STATEMENT_TIMEOUT_MS=5000
 COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS=120
@@ -156,6 +156,9 @@ datamgmt.CNT                            -> container ownership
 datamgmt.CIN.con                        -> status and telemetry values
 datamgmt.DEVICE_TELEMETRY               -> metric names and units
 datamgmt.RULE                           -> device rule references
+subNNotif.AE                            -> application entity resources
+subNNotif.SUB                           -> subscription resources
+orchestration.URI_MAPPER                -> URI/resource mapping
 ```
 
 Devices are joined by normalized platform identifiers or names. Telemetry
@@ -176,6 +179,7 @@ Before this becomes an operational dashboard, confirm:
 
 - which timestamp represents event time versus ingestion time
 - tenant and site ownership rules
+- AE, subscription, and URI mapper field ownership for OneM2M flow debugging
 - rule status, severity, trigger, and filter enum semantics
 - whether Grafana remains the authoritative alert execution source
 

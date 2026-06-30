@@ -12,6 +12,9 @@ from services.company_data_service import (
     get_company_agent_context,
     get_company_disconnected_context,
     get_company_inventory_context,
+    get_company_onem2m_command_flow_context,
+    get_company_onem2m_device_resource_context,
+    get_company_onem2m_telemetry_flow_context,
     get_company_provisional_alert_context,
     get_company_rule_readiness_context,
     get_company_telemetry_coverage_context,
@@ -64,6 +67,33 @@ COMPANY_DB_TOOLS = {
         "intent": "company_rule_readiness",
         "allowed_params": [],
         "description": "Read company rule discovery and Grafana integration readiness evidence.",
+    },
+    "get_company_onem2m_device_resources": {
+        "workflow_id": "company_onem2m_device_resources",
+        "intent": "company_onem2m_device_resources",
+        "allowed_params": ["device_id"],
+        "description": (
+            "Read company MongoDB OneM2M resource evidence for IDENTITY, AE, "
+            "CNT, CIN, SUBSCRIPTION, and URI_MAPPER."
+        ),
+    },
+    "get_company_onem2m_command_flow": {
+        "workflow_id": "company_onem2m_command_flow",
+        "intent": "company_onem2m_command_flow",
+        "allowed_params": ["device_id"],
+        "description": (
+            "Read company MongoDB OneM2M command downlink evidence including "
+            "identity, AE, command container, subscription, URI mapper, and command CIN."
+        ),
+    },
+    "get_company_onem2m_telemetry_flow": {
+        "workflow_id": "company_onem2m_telemetry_flow",
+        "intent": "company_onem2m_telemetry_flow",
+        "allowed_params": ["device_id"],
+        "description": (
+            "Read company MongoDB OneM2M telemetry uplink evidence including "
+            "identity, AE, telemetry container, latest telemetry CIN, and subscription."
+        ),
     },
     "scan_company_threshold": {
         "workflow_id": "company_threshold_scan",
@@ -425,11 +455,21 @@ class IOAV3LangGraphN8nAgent:
             "get_company_inventory": get_company_inventory_context,
             "get_company_telemetry_coverage": get_company_telemetry_coverage_context,
             "get_company_rule_readiness": get_company_rule_readiness_context,
+            "get_company_onem2m_device_resources": (
+                get_company_onem2m_device_resource_context
+            ),
+            "get_company_onem2m_command_flow": (
+                get_company_onem2m_command_flow_context
+            ),
+            "get_company_onem2m_telemetry_flow": (
+                get_company_onem2m_telemetry_flow_context
+            ),
         }
         context_loader = context_loaders.get(selected_tool)
+        params = workflow.get("params") or {}
 
         if selected_tool == "scan_company_threshold":
-            threshold = (workflow.get("params") or {}).get("threshold")
+            threshold = params.get("threshold")
             evidence = (
                 scan_company_payload_threshold(threshold)
                 if threshold is not None
@@ -440,6 +480,12 @@ class IOAV3LangGraphN8nAgent:
                     "error": "No numeric threshold was detected in the request.",
                 }
             )
+        elif selected_tool in {
+            "get_company_onem2m_device_resources",
+            "get_company_onem2m_command_flow",
+            "get_company_onem2m_telemetry_flow",
+        }:
+            evidence = context_loader(params.get("device_id"))
         elif context_loader is not None:
             evidence = context_loader()
         else:
@@ -485,45 +531,41 @@ class IOAV3LangGraphN8nAgent:
 
         for item in tool_outputs:
             selected_tool = item.get("tool")
+            rules = get_kpi_rules_for_tool(selected_tool)
+            item["kpi_rules"] = rules
 
-            if selected_tool in COMPANY_DB_TOOLS:
-                rule_output = {
-                    "selected_tool": selected_tool,
-                    "rule_count": 0,
-                    "rules": [],
-                    "rule_source": "config/grafana_kpi_rules.json",
-                    "status": "not_applicable_to_company_db_tool",
-                }
+            if rules:
+                status = "rules_applied"
+            elif selected_tool in COMPANY_DB_TOOLS:
+                status = "not_applicable_to_company_db_tool"
             else:
-                rules = get_kpi_rules_for_tool(selected_tool)
-                item["kpi_rules"] = rules
-                rule_output = {
-                    "selected_tool": selected_tool,
-                    "rule_count": len(rules),
-                    "rules": self.sanitize_evidence(rules),
-                    "rule_source": "config/grafana_kpi_rules.json",
-                    "status": "rules_applied" if rules else "no_kpi_rules_mapped",
-                }
+                status = "no_kpi_rules_mapped"
+
+            rule_output = {
+                "selected_tool": selected_tool,
+                "rule_count": len(rules),
+                "rules": self.sanitize_evidence(rules),
+                "rule_source": "config/grafana_kpi_rules.json",
+                "status": status,
+            }
 
             rule_outputs.append(rule_output)
 
         if not tool_outputs and state.get("selected_tool"):
             selected_tool = state.get("selected_tool")
-            rules = (
-                []
-                if selected_tool in COMPANY_DB_TOOLS
-                else get_kpi_rules_for_tool(selected_tool)
-            )
+            rules = get_kpi_rules_for_tool(selected_tool)
+            if rules:
+                status = "rules_applied"
+            elif selected_tool in COMPANY_DB_TOOLS:
+                status = "not_applicable_to_company_db_tool"
+            else:
+                status = "no_kpi_rules_mapped"
             rule_outputs.append({
                 "selected_tool": selected_tool,
                 "rule_count": len(rules),
                 "rules": self.sanitize_evidence(rules),
                 "rule_source": "config/grafana_kpi_rules.json",
-                "status": (
-                    "not_applicable_to_company_db_tool"
-                    if selected_tool in COMPANY_DB_TOOLS
-                    else ("rules_applied" if rules else "no_kpi_rules_mapped")
-                ),
+                "status": status,
             })
 
         output = {
@@ -553,7 +595,7 @@ class IOAV3LangGraphN8nAgent:
                 iteration=5,
                 node_id="apply_kpi_rules",
                 node_label="Apply KPI rules",
-                thought="IOA v3 attached Grafana KPI semantics where applicable and skipped DB-only workflows.",
+                thought="IOA v3 attached configured KPI semantics where applicable.",
                 action="apply_kpi_rules",
                 output=output,
             ),
@@ -632,7 +674,7 @@ class IOAV3LangGraphN8nAgent:
                 "error_type": exc.__class__.__name__,
             }
 
-        workflows = self.normalize_planner_workflows(parsed)
+        workflows = self.normalize_planner_workflows(parsed, user_input)
 
         if not workflows:
             return [], {
@@ -692,6 +734,10 @@ Planning rules:
 - Never invent a tool name. Use only the catalog below.
 - Params must be from the tool's allowed_params. If a threshold is requested
   and numeric, put it in params.threshold as a number.
+- Never invent placeholder params such as your_queue_name, start_time,
+  requested_start_time, requested_hours_back, or <device_id>. If the user did
+  not provide a concrete value, leave params empty and let the adapter use its
+  safe default window/scope.
 - If uncertain, choose the least invasive read-only workflow and set confidence
   below 0.7.
 
@@ -737,7 +783,7 @@ JSON schema:
 
             return json.loads(text[start:end + 1])
 
-    def normalize_planner_workflows(self, parsed):
+    def normalize_planner_workflows(self, parsed, user_input=""):
         if not isinstance(parsed, dict):
             return []
 
@@ -771,6 +817,7 @@ JSON schema:
             params = self.filter_tool_params(
                 item.get("params") or {},
                 spec.get("allowed_params") or [],
+                user_input=user_input,
             )
             normalized.append({
                 "tool": tool_name,
@@ -792,12 +839,13 @@ JSON schema:
 
         return max(0.0, min(confidence, 1.0))
 
-    def filter_tool_params(self, params, allowed_params):
+    def filter_tool_params(self, params, allowed_params, user_input=""):
         if not isinstance(params, dict):
             return {}
 
         allowed = set(allowed_params or [])
         filtered = {}
+        user_text = str(user_input or "").lower()
 
         for key, value in params.items():
             if key not in allowed:
@@ -808,10 +856,42 @@ JSON schema:
                     filtered[key] = float(value)
                 except (TypeError, ValueError):
                     continue
+            elif key == "device_id":
+                if self.is_placeholder_param(value):
+                    continue
+                filtered[key] = str(value)
             elif isinstance(value, (str, int, float, bool)):
+                if self.is_placeholder_param(value):
+                    continue
+                if key in {"start", "end", "step", "queue"}:
+                    value_text = str(value).strip().lower()
+                    if value_text and value_text not in user_text:
+                        continue
                 filtered[key] = value
 
         return filtered
+
+    def is_placeholder_param(self, value):
+        text = str(value or "").strip().lower()
+
+        if not text:
+            return True
+
+        if text.startswith("<") and text.endswith(">"):
+            return True
+
+        placeholder_fragments = (
+            "your_",
+            "requested_",
+            "placeholder",
+            "start_time",
+            "end_time",
+            "step_interval",
+            "queue_name",
+            "device_id",
+            "device id",
+        )
+        return any(fragment in text for fragment in placeholder_fragments)
 
     def get_tool_spec(self, tool_name):
         if tool_name in COMPANY_DB_TOOLS:
@@ -897,12 +977,17 @@ JSON schema:
 
         grafana_signals = [
             ("redis", "grafana_redis_health", "redis_infra_signal"),
+            ("queue trend", "grafana_queue_trend", "queue_trend_signal"),
+            ("linear", "grafana_queue_trend", "queue_trend_signal"),
             ("rabbitmq", "grafana_queue_backlog", "rabbitmq_infra_signal"),
             ("queue", "grafana_queue_backlog", "queue_infra_signal"),
+            ("pod cpu", "grafana_k8s_resources", "kubernetes_resource_signal"),
+            ("pod memory", "grafana_k8s_resources", "kubernetes_resource_signal"),
             ("k8s", "grafana_k8s_health", "kubernetes_infra_signal"),
             ("kubernetes", "grafana_k8s_health", "kubernetes_infra_signal"),
             ("http", "grafana_http_health", "http_infra_signal"),
             ("api", "grafana_http_health", "api_infra_signal"),
+            ("dropped", "grafana_emqx_dropped_trend", "emqx_dropped_signal"),
             ("emqx", "grafana_emqx_health", "emqx_infra_signal"),
             ("mqtt", "grafana_emqx_health", "mqtt_infra_signal"),
             ("loki", "grafana_logs", "logs_infra_signal"),
@@ -1034,6 +1119,61 @@ JSON schema:
             or (has_device_evidence_terms and not has_grafana_infra_terms)
             or (has_device_evidence_terms and has_company_alert_terms)
         )
+        device_id = self.extract_device_identifier(user_input)
+
+        def with_device_id():
+            return {"device_id": device_id} if device_id else {}
+
+        has_onem2m_resource_terms = has_any((
+            "onem2m",
+            "oneM2M",
+            "identity",
+            "ae",
+            "cnt",
+            "cin",
+            "subscription",
+            "uri_mapper",
+            "uri mapper",
+        ))
+
+        if has_onem2m_resource_terms and has_any((
+            "command",
+            "downlink",
+            "cnt_command",
+            "latest command",
+            "did not receive",
+            "không nhận lệnh",
+            "khong nhan lenh",
+        )):
+            return (
+                "get_company_onem2m_command_flow",
+                with_device_id(),
+                "company_onem2m_command_flow_keywords",
+            )
+
+        if has_onem2m_resource_terms and has_any((
+            "telemetry",
+            "uplink",
+            "cnt_telemetry",
+            "latest telemetry",
+            "backend",
+            "notify",
+            "did not reach",
+            "không tới backend",
+            "khong toi backend",
+        )):
+            return (
+                "get_company_onem2m_telemetry_flow",
+                with_device_id(),
+                "company_onem2m_telemetry_flow_keywords",
+            )
+
+        if has_onem2m_resource_terms:
+            return (
+                "get_company_onem2m_device_resources",
+                with_device_id(),
+                "company_onem2m_device_resource_keywords",
+            )
 
         if (
             "disconnect" in text
@@ -1041,7 +1181,7 @@ JSON schema:
             or "offline" in text
             or "mất kết nối" in text
             or "mat ket noi" in text
-        ):
+        ) and not has_grafana_infra_terms:
             return (
                 "get_company_disconnected_devices",
                 params,
@@ -1150,7 +1290,18 @@ JSON schema:
                 "company_evidence_default",
             )
 
+        if "queue" in text and (
+            "trend" in text
+            or "linear" in text
+            or "tăng tuyến tính" in text
+            or "increasing" in text
+        ):
+            return "grafana_queue_trend", params, "queue_trend_keywords"
+
         if "queue" in text and ("backlog" in text or "tồn" in text):
+            namespace = self.extract_param(text, "namespace")
+            if namespace:
+                params["namespace"] = namespace
             return "grafana_queue_backlog", params, "queue_backlog_keywords"
 
         if "throughput" in text or "publish" in text or "ack" in text:
@@ -1167,8 +1318,41 @@ JSON schema:
                 params["level"] = "error|warn"
             return "grafana_logs", params, "logs_keywords"
 
+        if ("emqx" in text or "mqtt" in text or "broker" in text) and (
+            "dropped" in text or "drop" in text
+        ):
+            return (
+                "grafana_emqx_dropped_trend",
+                params,
+                "emqx_dropped_trend_keywords",
+            )
+
+        if ("emqx" in text or "mqtt" in text or "broker" in text) and (
+            "disconnect" in text
+            or "reconnect" in text
+            or "connected rate" in text
+            or "disconnected rate" in text
+        ):
+            return (
+                "grafana_emqx_connection_trend",
+                params,
+                "emqx_connection_trend_keywords",
+            )
+
         if "emqx" in text or "mqtt" in text or "broker" in text:
             return "grafana_emqx_health", params, "emqx_keywords"
+
+        if ("k8s" in text or "kubernetes" in text or "pod" in text) and (
+            "resource" in text
+            or "cpu" in text
+            or "memory" in text
+            or "restart" in text
+            or "namespace" in text
+        ):
+            namespace = self.extract_param(text, "namespace")
+            if namespace:
+                params["namespace"] = namespace
+            return "grafana_k8s_resources", params, "kubernetes_resource_keywords"
 
         if "k8s" in text or "kubernetes" in text or "pod" in text:
             return "grafana_k8s_health", params, "kubernetes_keywords"
@@ -1206,6 +1390,28 @@ JSON schema:
     def extract_param(self, text, name):
         match = re.search(rf"{name}\s*[=:]\s*([A-Za-z0-9_.:-]+)", text)
         return match.group(1) if match else None
+
+    def extract_device_identifier(self, text):
+        patterns = [
+            r"device[_\s-]?id\s*[=:]\s*([A-Za-z0-9_.:-]+)",
+            r"device\s*[=:]\s*([A-Za-z0-9_.:-]+)",
+            r"device\s+([A-Za-z0-9_.:-]+)",
+            r"thiết bị\s+([A-Za-z0-9_.:-]+)",
+            r"thiet bi\s+([A-Za-z0-9_.:-]+)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, str(text or ""), flags=re.IGNORECASE)
+
+            if not match:
+                continue
+
+            candidate = match.group(1).strip()
+
+            if not self.is_placeholder_param(candidate):
+                return candidate
+
+        return None
 
     def extract_threshold(self, text):
         matches = re.findall(r"-?\d+(?:\.\d+)?", text)
@@ -1392,6 +1598,10 @@ JSON schema:
             "note",
             "disclaimer",
             "db_audit_status",
+            "query_device_id",
+            "device_match_count",
+            "command_record_count",
+            "next_diagnostic_step",
         ):
             if key in result:
                 summary[key] = result[key]
@@ -1418,6 +1628,24 @@ JSON schema:
             summary["top_metric_fields"] = (
                 result["top_metric_fields"][:MAX_ANSWER_RECORDS]
             )
+
+        if isinstance(result.get("resource_summary"), dict):
+            summary["resource_summary"] = {
+                name: {
+                    "namespace": resource.get("namespace"),
+                    "count": resource.get("count"),
+                    "matched_count": resource.get("matched_count"),
+                    "direct_match_count": resource.get("direct_match_count"),
+                    "related_match_count": resource.get("related_match_count"),
+                    "present": resource.get("present"),
+                    "command_count": resource.get("command_count"),
+                    "telemetry_count": resource.get("telemetry_count"),
+                }
+                for name, resource in result["resource_summary"].items()
+            }
+
+        if isinstance(result.get("flow_checks"), dict):
+            summary["flow_checks"] = result["flow_checks"]
 
         if isinstance(result.get("sample_devices_with_telemetry"), list):
             summary["sample_devices_with_telemetry"] = [

@@ -103,6 +103,9 @@ Supported commands:
 /alarms
 /diagnose
 /heartbeat
+/ingestion
+/apihealth
+/infra
 /companyfleet
 /coverage
 /pocalerts
@@ -122,6 +125,14 @@ Any other text is sent to the existing LangGraph runtime only after identity
 and data-source authorization pass. Telegram receives the formatted final
 answer. The platform stores the request, reasoning steps, final answer, and
 token metadata under the mapped IoT Ops Agent user.
+
+Telegram slash commands reuse the same default prompt catalog used by the web
+Prompts tab where possible. For example, `/overview`, `/ingestion`,
+`/apihealth`, `/infra`, `/companyfleet`, `/coverage`, `/pocalerts`,
+`/disconnected`, and `/ruleready` resolve to the corresponding default prompt
+commands from `services.prompt_service.DEFAULT_PROMPTS`. Free-form Telegram
+messages are still passed through as written, so web prompt text can be copied
+directly into Telegram when a command alias does not exist.
 
 ## Test Company DB Through Localhost
 

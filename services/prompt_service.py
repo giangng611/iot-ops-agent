@@ -126,11 +126,68 @@ DEFAULT_PROMPTS = [
         "category": "IOA v3 Mixed Ops",
         "is_default": 1,
     },
+    {
+        "id": "onem2m-1",
+        "title": "Command Downlink Debug",
+        "command": "Debug why device <device_id> did not receive a command. Check adapter logs, core logs, IDENTITY, AE, cnt_command, subscription, URI mapper, latest command CIN, then summarize the likely failure point.",
+        "category": "OneM2M Ops",
+        "is_default": 1,
+    },
+    {
+        "id": "onem2m-2",
+        "title": "Telemetry Uplink Debug",
+        "command": "Debug why telemetry from device <device_id> did not reach the backend. Check adapter logs, cnt_telemetry, latest telemetry CIN, backend subscription, notify logs, and relevant EMQX/RabbitMQ evidence.",
+        "category": "OneM2M Ops",
+        "is_default": 1,
+    },
+    {
+        "id": "onem2m-3",
+        "title": "Device Resource Check",
+        "command": "Check whether device <device_id> is on the platform and whether required OneM2M resources exist: IDENTITY, AE, CNT, CIN, SUBSCRIPTION, and URI_MAPPER.",
+        "category": "OneM2M Ops",
+        "is_default": 1,
+    },
+    {
+        "id": "onem2m-4",
+        "title": "RabbitMQ Queue Trend",
+        "command": "Check whether RabbitMQ queue messages are increasing linearly over the requested time range and suggest which consumer or service to inspect next.",
+        "category": "OneM2M Ops",
+        "is_default": 1,
+    },
+    {
+        "id": "onem2m-5",
+        "title": "EMQX Dropped Messages",
+        "command": "Check whether EMQX messages dropped increased over the requested time range, then inspect broker health, MQTT adapter logs, queue backlog, and core service evidence.",
+        "category": "OneM2M Ops",
+        "is_default": 1,
+    },
+    {
+        "id": "onem2m-6",
+        "title": "EMQX Reconnect Trend",
+        "command": "Check EMQX client connected and disconnected rates to identify onboarding spikes or reconnect loops, then suggest device/log follow-up.",
+        "category": "OneM2M Ops",
+        "is_default": 1,
+    },
+    {
+        "id": "onem2m-7",
+        "title": "Kubernetes Resource Debug",
+        "command": "Check Kubernetes resource health in namespace one-iot: pod CPU, memory, restart count, pod status, node resources, and latest service error logs.",
+        "category": "OneM2M Ops",
+        "is_default": 1,
+    },
 ]
 
 
 def list_prompts(user_id):
     return DEFAULT_PROMPTS + get_prompts(user_id)
+
+
+def get_default_prompt_command(prompt_id):
+    for prompt in DEFAULT_PROMPTS:
+        if prompt["id"] == prompt_id:
+            return prompt["command"]
+
+    return None
 
 
 def create_user_prompt(user_id, title, command, category):

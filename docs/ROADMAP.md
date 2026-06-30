@@ -43,6 +43,15 @@ evidence quality and pilot readiness over date-driven feature expansion.
    handed over.
 5. Rerun benchmark and acceptance tests against frozen company-task snapshots.
 
+The current seed scenario backlog lives in
+`eval/company_pilot_scenarios.json`; use
+`docs/PILOT_SCENARIO_CHECKLIST.md` to convert company-provided scenarios into
+repeatable acceptance tests.
+
+The company OneM2M debug scenarios are mapped in
+`docs/ONEM2M_OPERATIONAL_SCENARIOS.md`. They require typed read-only DB, log,
+and Grafana adapter tools before they should be treated as production-ready.
+
 ---
 
 ## Infrastructure & Deployment

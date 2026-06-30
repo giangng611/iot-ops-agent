@@ -32,7 +32,7 @@ def get_grafana_client_base_url():
 
 
 def grafana_kpi_rules_enabled():
-    return os.getenv("IOA_V3_ENABLE_KPI_RULES", "false").strip().lower() in {
+    return os.getenv("IOA_V3_ENABLE_KPI_RULES", "true").strip().lower() in {
         "1",
         "true",
         "yes",

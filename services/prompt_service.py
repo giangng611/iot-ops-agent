@@ -129,21 +129,49 @@ DEFAULT_PROMPTS = [
     {
         "id": "onem2m-1",
         "title": "Command Downlink Debug",
-        "command": "Debug why device <device_id> did not receive a command. Check adapter logs, core logs, IDENTITY, AE, cnt_command, subscription, URI mapper, latest command CIN, then summarize the likely failure point.",
+        "command": (
+            "Debug why device <device_id> did not receive a command. "
+            "Treat <device_id> as the only required operator input. Derive AE ID "
+            "and request/correlation IDs from MongoDB resources, URI mapper, "
+            "latest command CIN records, and adapter/core logs. Check iot-http-api "
+            "and iot-mqtt-client-adapter logs, core logs, IDENTITY, AE, cnt_command, "
+            "SUBSCRIPTION, URI_MAPPER, and latest command CIN evidence. Summarize "
+            "the most likely failure point, supporting evidence, evidence gaps, "
+            "and the next action."
+        ),
         "category": "OneM2M Ops",
         "is_default": 1,
     },
     {
         "id": "onem2m-2",
         "title": "Telemetry Uplink Debug",
-        "command": "Debug why telemetry from device <device_id> did not reach the backend. Check adapter logs, cnt_telemetry, latest telemetry CIN, backend subscription, notify logs, and relevant EMQX/RabbitMQ evidence.",
+        "command": (
+            "Debug why telemetry from device <device_id> did not reach the backend. "
+            "Treat <device_id> as the only required operator input. Derive AE ID "
+            "and request/correlation IDs from MongoDB resources, URI mapper, "
+            "latest telemetry CIN records, adapter logs, and notify logs. Check "
+            "iot-http-api and iot-mqtt-client-adapter logs, cnt_telemetry, latest "
+            "telemetry CIN evidence, backend SUBSCRIPTION, notify logs, and relevant "
+            "EMQX/RabbitMQ evidence. Do not mark any resource as present unless it "
+            "is found in DB or log evidence. Summarize the most likely failure point, "
+            "supporting evidence, evidence gaps, and the next action."
+        ),
         "category": "OneM2M Ops",
         "is_default": 1,
     },
     {
         "id": "onem2m-3",
         "title": "Device Resource Check",
-        "command": "Check whether device <device_id> is on the platform and whether required OneM2M resources exist: IDENTITY, AE, CNT, CIN, SUBSCRIPTION, and URI_MAPPER.",
+        "command": (
+            "Check whether device <device_id> is registered on the platform and "
+            "whether its required OneM2M resources exist. Treat <device_id> as the "
+            "only required operator input. Derive AE ID and request/correlation IDs "
+            "from MongoDB resources and logs when needed. Check iot-http-api and "
+            "iot-mqtt-client-adapter logs, then verify IDENTITY, AE, CNT, CIN, "
+            "SUBSCRIPTION, and URI_MAPPER evidence. List exactly which resources "
+            "exist, which are missing, what evidence supports each status, and the "
+            "next action."
+        ),
         "category": "OneM2M Ops",
         "is_default": 1,
     },

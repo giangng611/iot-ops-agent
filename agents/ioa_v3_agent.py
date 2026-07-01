@@ -71,7 +71,14 @@ COMPANY_DB_TOOLS = {
     "get_company_onem2m_device_resources": {
         "workflow_id": "company_onem2m_device_resources",
         "intent": "company_onem2m_device_resources",
-        "allowed_params": ["device_id"],
+        "allowed_params": [
+            "device_id",
+            "ae_id",
+            "request_id",
+            "payload_hint",
+            "time_range",
+            "application_domain",
+        ],
         "description": (
             "Read company MongoDB OneM2M resource evidence for IDENTITY, AE, "
             "CNT, CIN, SUBSCRIPTION, and URI_MAPPER."
@@ -80,7 +87,14 @@ COMPANY_DB_TOOLS = {
     "get_company_onem2m_command_flow": {
         "workflow_id": "company_onem2m_command_flow",
         "intent": "company_onem2m_command_flow",
-        "allowed_params": ["device_id"],
+        "allowed_params": [
+            "device_id",
+            "ae_id",
+            "request_id",
+            "payload_hint",
+            "time_range",
+            "application_domain",
+        ],
         "description": (
             "Read company MongoDB OneM2M command downlink evidence including "
             "identity, AE, command container, subscription, URI mapper, and command CIN."
@@ -89,7 +103,14 @@ COMPANY_DB_TOOLS = {
     "get_company_onem2m_telemetry_flow": {
         "workflow_id": "company_onem2m_telemetry_flow",
         "intent": "company_onem2m_telemetry_flow",
-        "allowed_params": ["device_id"],
+        "allowed_params": [
+            "device_id",
+            "ae_id",
+            "request_id",
+            "payload_hint",
+            "time_range",
+            "application_domain",
+        ],
         "description": (
             "Read company MongoDB OneM2M telemetry uplink evidence including "
             "identity, AE, telemetry container, latest telemetry CIN, and subscription."
@@ -265,6 +286,7 @@ class IOAV3LangGraphN8nAgent:
             "selected_tool": selected_tool,
             "selected_params": params,
             "selected_workflows": workflows,
+            "token_usage": planner_metadata.get("token_usage"),
             "steps": self.append_step(
                 state,
                 iteration=2,
@@ -485,7 +507,7 @@ class IOAV3LangGraphN8nAgent:
             "get_company_onem2m_command_flow",
             "get_company_onem2m_telemetry_flow",
         }:
-            evidence = context_loader(params.get("device_id"))
+            evidence = context_loader(**self.onem2m_context_params(params))
         elif context_loader is not None:
             evidence = context_loader()
         else:
@@ -602,8 +624,39 @@ class IOAV3LangGraphN8nAgent:
         }
 
     def generate_answer_node(self, state):
+        deterministic_answer = self.build_deterministic_answer(state)
+
+        if deterministic_answer:
+            token_usage = (
+                state.get("token_usage")
+                or {
+                    "source": "deterministic_answer",
+                    "deterministic": True,
+                }
+            )
+            return {
+                "final_answer": deterministic_answer,
+                "token_usage": token_usage,
+                "steps": self.append_step(
+                    state,
+                    iteration=6,
+                    node_id="generate_answer",
+                    node_label="Generate answer",
+                    thought="IOA v3 generated a deterministic final answer from required workflow evidence.",
+                    action="generate_answer",
+                    output={
+                        "framework": "LangGraph+n8n",
+                        "status": "deterministic_final_answer_ready",
+                        "token_usage": token_usage,
+                    },
+                ),
+            }
+
         response = self.model.invoke(self.build_answer_prompt(state))
-        token_usage = self.extract_token_usage(response)
+        token_usage = self.combine_token_usage(
+            state.get("token_usage"),
+            self.extract_token_usage(response),
+        )
         return {
             "final_answer": response.content,
             "token_usage": token_usage,
@@ -621,6 +674,144 @@ class IOAV3LangGraphN8nAgent:
                 },
             ),
         }
+
+    def build_deterministic_answer(self, state):
+        selected_tool = state.get("selected_tool")
+
+        if selected_tool != "get_company_onem2m_device_resources":
+            return None
+
+        for output in state.get("tool_outputs") or []:
+            if output.get("tool") != "get_company_onem2m_device_resources":
+                continue
+
+            result = output.get("result")
+
+            if not isinstance(result, dict):
+                return None
+
+            resource_summary = result.get("resource_summary")
+
+            if not isinstance(resource_summary, dict):
+                return None
+
+            return self.build_onem2m_resource_answer(result)
+
+        return None
+
+    def build_onem2m_resource_answer(self, result):
+        device_id = result.get("query_device_id") or "requested device"
+        resource_summary = result.get("resource_summary") or {}
+        required_resources = result.get("required_resources") or [
+            "IDENTITY",
+            "AE",
+            "CNT",
+            "CIN",
+            "SUBSCRIPTION",
+            "URI_MAPPER",
+        ]
+        devices = result.get("devices") or []
+        device_status = (
+            devices[0].get("status")
+            if devices and isinstance(devices[0], dict)
+            else "unknown"
+        )
+        telemetry_count = (
+            devices[0].get("telemetry_record_count")
+            if devices and isinstance(devices[0], dict)
+            else None
+        )
+        resource_lines = []
+        missing_resources = []
+        present_resources = []
+
+        for name in required_resources:
+            resource = resource_summary.get(name) or {}
+            present = bool(resource.get("present"))
+            matched_count = int(resource.get("matched_count") or 0)
+            direct_count = int(resource.get("direct_match_count") or 0)
+            related_count = int(resource.get("related_match_count") or 0)
+            command_count = resource.get("command_count")
+            telemetry_resource_count = resource.get("telemetry_count")
+            status = "Present" if present else "Missing"
+
+            if present:
+                present_resources.append(name)
+            else:
+                missing_resources.append(name)
+
+            extra_counts = []
+            if command_count is not None:
+                extra_counts.append(f"command_count={command_count}")
+            if telemetry_resource_count is not None:
+                extra_counts.append(f"telemetry_count={telemetry_resource_count}")
+
+            count_suffix = (
+                f"; {', '.join(extra_counts)}"
+                if extra_counts
+                else ""
+            )
+            resource_lines.append(
+                f"- {name}: {status} "
+                f"(matched_count={matched_count}, direct_match_count={direct_count}, "
+                f"related_match_count={related_count}{count_suffix})"
+            )
+
+        if missing_resources:
+            summary_status = (
+                f"has partial OneM2M registration/resource evidence but is missing "
+                f"{', '.join(missing_resources)}."
+            )
+            likely_cause = (
+                "The likely failure point is incomplete OneM2M registration, "
+                "resource provisioning, or URI mapping for the missing resources: "
+                f"{', '.join(missing_resources)}. This is a likely operational "
+                "failure point from resource evidence, not a proven underlying "
+                "code/config root cause."
+            )
+            next_action = (
+                "Re-run the registration/provisioning trace for the missing "
+                "resources, then inspect iot-http-api and iot-mqtt-client-adapter "
+                "logs around the device registration or latest command/telemetry "
+                "attempt."
+            )
+        else:
+            summary_status = (
+                "has all required OneM2M resources present in the bounded company "
+                "MongoDB evidence."
+            )
+            likely_cause = (
+                "No missing required OneM2M resource was identified in this "
+                "resource check. Root cause requires command, telemetry, or log "
+                "workflow evidence."
+            )
+            next_action = (
+                "Continue with the command or telemetry flow workflow and correlate "
+                "latest CIN records with adapter/core logs."
+            )
+
+        telemetry_text = (
+            f" Telemetry record count in the device summary is {telemetry_count}."
+            if telemetry_count is not None
+            else ""
+        )
+
+        return "\n".join([
+            "Summary",
+            (
+                f"Device {device_id} {summary_status} Device status is "
+                f"{device_status}.{telemetry_text}"
+            ),
+            "",
+            "Evidence",
+            *resource_lines,
+            "",
+            "Likely Cause",
+            likely_cause,
+            "",
+            "Suggested Next Action",
+            next_action,
+        ])
 
     def deny_request_node(self, state):
         reason = state.get("policy_reason") or "request_denied"
@@ -663,8 +854,10 @@ class IOAV3LangGraphN8nAgent:
         }
 
     def plan_workflows_semantically(self, user_input):
+        token_usage = None
         try:
             response = self.model.invoke(self.build_planner_prompt(user_input))
+            token_usage = self.extract_token_usage(response)
             raw_content = getattr(response, "content", response)
             parsed = self.parse_json_object(raw_content)
         except Exception as exc:
@@ -672,6 +865,7 @@ class IOAV3LangGraphN8nAgent:
                 "type": "semantic_llm",
                 "status": "planner_failed",
                 "error_type": exc.__class__.__name__,
+                "token_usage": token_usage,
             }
 
         workflows = self.normalize_planner_workflows(parsed, user_input)
@@ -680,6 +874,7 @@ class IOAV3LangGraphN8nAgent:
             return [], {
                 "type": "semantic_llm",
                 "status": "no_valid_workflows",
+                "token_usage": token_usage,
             }
 
         return workflows, {
@@ -688,6 +883,7 @@ class IOAV3LangGraphN8nAgent:
             "confidence": parsed.get("confidence"),
             "reason": parsed.get("reason"),
             "raw_workflow_count": len(parsed.get("workflows") or []),
+            "token_usage": token_usage,
         }
 
     def build_planner_prompt(self, user_input):
@@ -821,7 +1017,11 @@ JSON schema:
             )
             normalized.append({
                 "tool": tool_name,
-                "params": params,
+                "params": self.enrich_workflow_params(
+                    tool_name,
+                    params,
+                    user_input,
+                ),
                 "reason": str(item.get("reason") or "semantic_planner"),
                 "confidence": confidence,
                 "planner": "semantic_llm",
@@ -829,7 +1029,156 @@ JSON schema:
             })
             seen.add(tool_name)
 
-        return normalized
+        return self.ensure_runbook_required_workflows(
+            normalized,
+            user_input,
+            seen,
+        )
+
+    def enrich_workflow_params(self, tool_name, params, user_input):
+        enriched = dict(params or {})
+
+        if tool_name in {
+            "get_company_onem2m_device_resources",
+            "get_company_onem2m_command_flow",
+            "get_company_onem2m_telemetry_flow",
+        }:
+            for key, value in self.extract_onem2m_identifiers(user_input).items():
+                current_value = enriched.get(key)
+
+                if key == "device_id" and self.is_weak_device_identifier(
+                    current_value
+                ):
+                    enriched[key] = value
+                    continue
+
+                enriched.setdefault(key, value)
+
+        return enriched
+
+    def is_weak_device_identifier(self, value):
+        if value in (None, ""):
+            return True
+
+        normalized = str(value).strip()
+
+        if self.is_placeholder_param(normalized):
+            return True
+
+        if len(normalized) < 8:
+            return True
+
+        return not any(character.isdigit() for character in normalized)
+
+    def ensure_runbook_required_workflows(self, workflows, user_input, seen=None):
+        text = str(user_input or "").lower()
+        seen = set(seen or {workflow.get("tool") for workflow in workflows})
+        runbook_tool, runbook_params, runbook_reason = self.classify_tool(user_input)
+        onem2m_tools = {
+            "get_company_onem2m_device_resources",
+            "get_company_onem2m_command_flow",
+            "get_company_onem2m_telemetry_flow",
+        }
+
+        if runbook_tool in onem2m_tools:
+            next_workflows = [
+                workflow
+                for workflow in workflows
+                if workflow.get("tool") not in onem2m_tools
+            ]
+            next_workflows.insert(0, {
+                "tool": runbook_tool,
+                "params": self.enrich_workflow_params(
+                    runbook_tool,
+                    runbook_params,
+                    user_input,
+                ),
+                "reason": runbook_reason,
+                "confidence": 0.9,
+                "planner": "runbook_keyword_override",
+                "tool_family": "company_db",
+            })
+            workflows = next_workflows[:MAX_WORKFLOW_EXECUTIONS]
+            seen = {workflow.get("tool") for workflow in workflows}
+
+        selected_tools = {workflow.get("tool") for workflow in workflows}
+        has_onem2m = bool(selected_tools & onem2m_tools)
+
+        if not has_onem2m:
+            return workflows
+
+        if not any(term in text for term in (
+            "log",
+            "loki",
+            "adapter",
+            "iot-http-api",
+            "iot-mqtt-client-adapter",
+            "notify",
+        )):
+            return workflows
+
+        target_services = []
+        if "iot-http-api" in text:
+            target_services.append("iot-http-api")
+        if "iot-mqtt-client-adapter" in text or "mqtt" in text:
+            target_services.append("iot-mqtt-client-adapter")
+        if "notify" in text:
+            target_services.append("notify")
+
+        if not target_services:
+            target_services.append("iot-http-api")
+
+        log_params = {
+            "level": "error|warn",
+            "hours_back": 6,
+            "limit": 50,
+        }
+        if len(set(target_services)) == 1:
+            log_params["service"] = target_services[0]
+
+        next_workflows = list(workflows)
+        if "grafana_logs" in seen:
+            for workflow in next_workflows:
+                if workflow.get("tool") == "grafana_logs":
+                    workflow["params"] = log_params
+                    workflow["reason"] = "runbook_required_adapter_logs"
+                    workflow["planner"] = (
+                        workflow.get("planner") or "runbook_required"
+                    )
+                    break
+            return next_workflows[:MAX_WORKFLOW_EXECUTIONS]
+
+        log_workflow = {
+            "tool": "grafana_logs",
+            "params": log_params,
+            "reason": "runbook_required_adapter_logs",
+            "confidence": 0.68,
+            "planner": "runbook_required",
+            "tool_family": "grafana_n8n",
+        }
+
+        if len(next_workflows) >= MAX_WORKFLOW_EXECUTIONS:
+            replace_index = next(
+                (
+                    index
+                    for index in range(len(next_workflows) - 1, -1, -1)
+                    if (
+                        next_workflows[index].get("tool_family")
+                        or self.tool_family(next_workflows[index].get("tool"))
+                    ) == "grafana_n8n"
+                ),
+                None,
+            )
+            if replace_index is not None:
+                next_workflows[replace_index] = log_workflow
+            else:
+                next_workflows = next_workflows[:MAX_WORKFLOW_EXECUTIONS - 1]
+                next_workflows.append(log_workflow)
+        else:
+            insert_at = 1 if next_workflows else 0
+            next_workflows.insert(insert_at, log_workflow)
+
+        return next_workflows[:MAX_WORKFLOW_EXECUTIONS]
 
     def coerce_confidence(self, value):
         try:
@@ -857,6 +1206,16 @@ JSON schema:
                 except (TypeError, ValueError):
                     continue
             elif key == "device_id":
+                if self.is_placeholder_param(value):
+                    continue
+                filtered[key] = str(value)
+            elif key in {
+                "ae_id",
+                "request_id",
+                "payload_hint",
+                "time_range",
+                "application_domain",
+            }:
                 if self.is_placeholder_param(value):
                     continue
                 filtered[key] = str(value)
@@ -892,6 +1251,120 @@ JSON schema:
             "device id",
         )
         return any(fragment in text for fragment in placeholder_fragments)
+
+    def normalize_identifier_value(self, value):
+        return str(value or "").strip().strip(".,;)]}\"'")
+
+    def onem2m_context_params(self, params):
+        return {
+            "device_id": params.get("device_id"),
+            "ae_id": params.get("ae_id"),
+            "request_id": params.get("request_id"),
+            "payload_hint": params.get("payload_hint"),
+            "time_range": params.get("time_range"),
+            "application_domain": params.get("application_domain"),
+        }
+
+    def extract_onem2m_identifiers(self, text):
+        raw_text = str(text or "")
+        identifiers = {}
+        device_id = self.extract_device_identifier(raw_text)
+        if device_id:
+            identifiers["device_id"] = device_id
+
+        patterns = {
+            "ae_id": [
+                r"\bae[_\s-]?id\s*[=:]\s*([A-Za-z0-9_.:-]+)",
+                r"\bae[_\s-]?id\s+([A-Za-z0-9_.:-]+)",
+                r"\baeid\s*[=:]\s*([A-Za-z0-9_.:-]+)",
+                r"\baeid\s+([A-Za-z0-9_.:-]+)",
+                r"\bmã\s+ae\s*[=:]?\s*([A-Za-z0-9_.:-]+)",
+                r"\bma\s+ae\s*[=:]?\s*([A-Za-z0-9_.:-]+)",
+            ],
+            "request_id": [
+                r"\brequest[_\s-]?id\s*[=:]\s*([A-Za-z0-9_.:-]+)",
+                r"\brequest[_\s-]?id\s+([A-Za-z0-9_.:-]+)",
+                r"\breq[_\s-]?id\s*[=:]\s*([A-Za-z0-9_.:-]+)",
+                r"\breq[_\s-]?id\s+([A-Za-z0-9_.:-]+)",
+                r"\bmã\s+request\s*[=:]?\s*([A-Za-z0-9_.:-]+)",
+                r"\bma\s+request\s*[=:]?\s*([A-Za-z0-9_.:-]+)",
+            ],
+            "time_range": [
+                r"\btime[_\s-]?range\s*[=:]\s*([A-Za-z0-9_.:/+ -]+)",
+                r"\bwindow\s*[=:]\s*([A-Za-z0-9_.:/+ -]+)",
+            ],
+            "application_domain": [
+                r"\bapplication[_\s-]?domain\s*[=:]\s*([A-Za-z0-9_.:-]+)",
+                r"\bapp[_\s-]?domain\s*[=:]\s*([A-Za-z0-9_.:-]+)",
+            ],
+        }
+
+        for key, key_patterns in patterns.items():
+            for pattern in key_patterns:
+                match = re.search(pattern, raw_text, flags=re.IGNORECASE)
+                if match:
+                    value = self.normalize_identifier_value(match.group(1))
+                    if (
+                        not self.is_placeholder_param(value)
+                        and not self.is_weak_correlation_identifier(value)
+                    ):
+                        identifiers[key] = value
+                    break
+
+        return identifiers
+
+    def is_plausible_device_identifier(self, value):
+        if self.is_placeholder_param(value):
+            return False
+
+        normalized = str(value or "").strip()
+
+        if normalized.lower() in {
+            "a",
+            "an",
+            "and",
+            "as",
+            "by",
+            "for",
+            "from",
+            "in",
+            "is",
+            "of",
+            "on",
+            "or",
+            "the",
+            "to",
+            "with",
+        }:
+            return False
+
+        return len(normalized) >= 8 or (
+            len(normalized) >= 3
+            and any(character.isdigit() for character in normalized)
+        ) or (
+            len(normalized) >= 5
+            and any(character in normalized for character in ("-", "_"))
+        )
+
+    def is_weak_correlation_identifier(self, value):
+        normalized = str(value or "").strip().lower()
+        return normalized in {
+            "a",
+            "an",
+            "and",
+            "as",
+            "by",
+            "for",
+            "from",
+            "in",
+            "is",
+            "of",
+            "on",
+            "or",
+            "the",
+            "to",
+            "with",
+        }
 
     def get_tool_spec(self, tool_name):
         if tool_name in COMPANY_DB_TOOLS:
@@ -969,7 +1442,7 @@ JSON schema:
             if len(workflows) >= MAX_WORKFLOW_EXECUTIONS:
                 break
 
-        return workflows
+        return self.ensure_runbook_required_workflows(workflows, user_input)
 
     def detect_additional_grafana_tools(self, user_input, primary_tool):
         text = user_input.lower()
@@ -1121,8 +1594,11 @@ JSON schema:
         )
         device_id = self.extract_device_identifier(user_input)
 
-        def with_device_id():
-            return {"device_id": device_id} if device_id else {}
+        def with_onem2m_identifiers():
+            identifiers = self.extract_onem2m_identifiers(user_input)
+            if device_id:
+                identifiers.setdefault("device_id", device_id)
+            return identifiers
 
         has_onem2m_resource_terms = has_any((
             "onem2m",
@@ -1137,6 +1613,8 @@ JSON schema:
         ))
 
         if has_onem2m_resource_terms and has_any((
+            "kịch bản 5",
+            "kich ban 5",
             "command",
             "downlink",
             "cnt_command",
@@ -1147,11 +1625,13 @@ JSON schema:
         )):
             return (
                 "get_company_onem2m_command_flow",
-                with_device_id(),
+                with_onem2m_identifiers(),
                 "company_onem2m_command_flow_keywords",
             )
 
         if has_onem2m_resource_terms and has_any((
+            "kịch bản 6",
+            "kich ban 6",
             "telemetry",
             "uplink",
             "cnt_telemetry",
@@ -1164,14 +1644,14 @@ JSON schema:
         )):
             return (
                 "get_company_onem2m_telemetry_flow",
-                with_device_id(),
+                with_onem2m_identifiers(),
                 "company_onem2m_telemetry_flow_keywords",
             )
 
         if has_onem2m_resource_terms:
             return (
                 "get_company_onem2m_device_resources",
-                with_device_id(),
+                with_onem2m_identifiers(),
                 "company_onem2m_device_resource_keywords",
             )
 
@@ -1394,8 +1874,11 @@ JSON schema:
     def extract_device_identifier(self, text):
         patterns = [
             r"device[_\s-]?id\s*[=:]\s*([A-Za-z0-9_.:-]+)",
+            r"device[_\s-]?id\s+([A-Za-z0-9_.:-]+)",
             r"device\s*[=:]\s*([A-Za-z0-9_.:-]+)",
             r"device\s+([A-Za-z0-9_.:-]+)",
+            r"mã\s+thiết\s+bị\s*[=:]?\s*([A-Za-z0-9_.:-]+)",
+            r"ma\s+thiet\s+bi\s*[=:]?\s*([A-Za-z0-9_.:-]+)",
             r"thiết bị\s+([A-Za-z0-9_.:-]+)",
             r"thiet bi\s+([A-Za-z0-9_.:-]+)",
         ]
@@ -1406,9 +1889,9 @@ JSON schema:
             if not match:
                 continue
 
-            candidate = match.group(1).strip()
+            candidate = self.normalize_identifier_value(match.group(1))
 
-            if not self.is_placeholder_param(candidate):
+            if self.is_plausible_device_identifier(candidate):
                 return candidate
 
         return None
@@ -1606,6 +2089,9 @@ JSON schema:
             if key in result:
                 summary[key] = result[key]
 
+        if isinstance(result.get("input_evidence"), dict):
+            summary["input_evidence"] = result["input_evidence"]
+
         if isinstance(result.get("devices"), list):
             summary["devices"] = [
                 self.compact_device_for_answer(device)
@@ -1638,6 +2124,7 @@ JSON schema:
                     "direct_match_count": resource.get("direct_match_count"),
                     "related_match_count": resource.get("related_match_count"),
                     "present": resource.get("present"),
+                    "device_presence": resource.get("device_presence"),
                     "command_count": resource.get("command_count"),
                     "telemetry_count": resource.get("telemetry_count"),
                 }
@@ -1759,8 +2246,27 @@ Security instructions:
   was not provided by this workflow.
 - Likely Cause must be grounded in explicit evidence. If evidence is
   insufficient, write "Not enough evidence to determine root cause."
+- For OneM2M device resource checks, if required resources are missing for the
+  requested device, Likely Cause should state the likely failure point as
+  incomplete OneM2M registration/resource provisioning or URI mapping for the
+  missing resources. Make clear this is a likely failure point, not a proven
+  underlying code/config root cause, unless logs prove that root cause.
 - Suggested Next Action must be an investigation step, not a claimed fix, unless
   the evidence explicitly supports the fix.
+- For OneM2M workflows, treat flow_checks and resource_summary as authoritative.
+  Do not say a resource is absent if its `present` flag is true or its
+  command/telemetry count is greater than zero.
+- For OneM2M resource_summary, `count` is the bounded collection count and
+  `matched_count`/`present`/`device_presence` are the requested device status.
+  Never describe a resource as present for the device when `present` is false.
+- For OneM2M command/telemetry workflows, `device_id` is the minimum operator
+  input. AE ID and request ID are optional correlation fields that may be
+  derived from Mongo/log evidence. If they are not provided and no derived
+  candidates are available, say correlation is weaker, but do not claim the
+  operator failed to provide mandatory platform identifiers.
+- If input_evidence.missing_for_command_flow or missing_for_telemetry_flow is
+  non-empty, say the investigation request still lacks the minimum input named
+  there and do not mark the scenario as fully passed.
 
 User request:
 {state["user_input"]}
@@ -1829,6 +2335,41 @@ Workflow evidence:
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
             "source": "openai_response_metadata",
+        }
+
+    def combine_token_usage(self, *usages):
+        numeric_fields = ("input_tokens", "output_tokens", "total_tokens")
+        combined = {field: 0 for field in numeric_fields}
+        found_numeric = False
+        non_numeric_usage = None
+        sources = []
+
+        for usage in usages:
+            if not isinstance(usage, dict):
+                continue
+
+            has_numeric = False
+            for field in numeric_fields:
+                value = usage.get(field)
+                if isinstance(value, (int, float)):
+                    combined[field] += value
+                    has_numeric = True
+                    found_numeric = True
+
+            source = usage.get("source")
+            if source:
+                sources.append(str(source))
+
+            if not has_numeric and non_numeric_usage is None:
+                non_numeric_usage = usage
+
+        if not found_numeric:
+            return non_numeric_usage
+
+        return {
+            **combined,
+            "source": "ioa_v3_graph",
+            "sources": sources,
         }
 
     def run(

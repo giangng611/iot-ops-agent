@@ -1,8 +1,9 @@
+import json
 import os
 import time
 
 from werkzeug.security import check_password_hash, generate_password_hash
-from services.time_service import now_iso
+from services.time_service import now, now_iso, parse_timestamp
 
 from storage import sqlite_store
 from storage.postgres_store import (
@@ -1117,6 +1118,42 @@ def get_user_usage_stats(user_id):
 
                 cursor.execute(
                     """
+                    select token_usage, created_at
+                    from public.messages
+                    where token_usage is not null
+                    and chat_id in (
+                        select id from public.chats where user_id = %s
+                    )
+                    """,
+                    (user_id,),
+                )
+                today = now().date()
+                today_token_total = 0
+
+                for row in cursor.fetchall():
+                    try:
+                        created_at = parse_timestamp(str(row["created_at"]))
+                    except Exception:
+                        continue
+
+                    if created_at.date() != today:
+                        continue
+
+                    token_usage = row["token_usage"]
+
+                    if isinstance(token_usage, str):
+                        try:
+                            token_usage = json.loads(token_usage)
+                        except ValueError:
+                            continue
+
+                    if isinstance(token_usage, dict):
+                        today_token_total += int(
+                            token_usage.get("total_tokens") or 0
+                        )
+
+                cursor.execute(
+                    """
                     select count(*) as count
                     from public.prompts
                     where user_id = %s
@@ -1138,6 +1175,7 @@ def get_user_usage_stats(user_id):
             "message_count": message_count,
             "custom_prompt_count": custom_prompt_count,
             "device_count": device_count,
+            "today_token_total": today_token_total,
         }
 
     return _with_fallback(

@@ -347,43 +347,58 @@ body {
 .chat-input-wrapper {
     position: relative;
     flex-shrink: 0;
-    padding: 16px 60px 10px 60px;
+    padding: 34px 60px 18px 60px;
     background: #0f0f0f;
 }
 
-.input-row {
-    display: grid;
-    grid-template-columns: 240px 1fr 110px;
-    gap: 12px;
+.chat-composer {
+    background: #212121;
+    border: 1px solid #3f3f46;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     margin-bottom: 12px;
+    padding: 12px;
 }
 
-.chat-input-row {
-    padding-top: 0;
-    border-top: none;
+.composer-footer {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+}
+
+.composer-actions {
+    align-items: center;
+    display: flex;
+    flex: 1;
+    gap: 10px;
+    justify-content: flex-end;
+    min-width: 0;
 }
 
 .mode-picker {
     position: relative;
     width: 240px;
     min-width: 240px;
-    height: 64px;
+    height: 42px;
     flex-shrink: 0;
 }
 
 .mode-picker-button {
     width: 100%;
-    height: 64px;
+    height: 42px;
     padding: 0 48px 0 16px;
 
     display: flex;
     align-items: center;
 
-    background: #212121;
+    background: #171717;
     color: #ececec;
     border: 1px solid #3f3f46;
     border-radius: 12px;
-    font-size: 15px;
+    font-size: 14px;
     text-align: left;
 }
 
@@ -438,12 +453,14 @@ body {
 }
 
 input,
-select {
+select,
+textarea {
     background: #212121;
     color: #ececec;
     border: 1px solid #3f3f46;
     border-radius: 12px;
     font-size: 15px;
+    font-family: inherit;
 }
 
 input {
@@ -451,7 +468,21 @@ input {
     height: 64px;
 }
 
-input::placeholder {
+#messageInput {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    min-height: 48px;
+    max-height: 220px;
+    padding: 12px 6px 0 6px;
+    line-height: 1.45;
+    outline: none;
+    resize: none;
+    width: 100%;
+}
+
+input::placeholder,
+textarea::placeholder {
     color: #8a8a8a;
 }
 
@@ -470,17 +501,53 @@ button:hover {
 }
 
 .run-button {
-    min-width: 110px;
-    height: 64px;
+    align-items: center;
+    border-radius: 12px;
+    display: inline-flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    gap: 2px;
+    height: 42px;
+    justify-content: center;
     line-height: 1.1;
+    min-width: 86px;
+    padding: 0 18px;
 }
 
 .run-button span {
     display: block;
+    font-size: 14px;
+    font-weight: 800;
+    opacity: 1;
+    margin-top: 0;
+}
+
+.run-button small {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    opacity: 0.62;
+}
+
+.today-token-meter {
+    align-items: center;
+    background: #102318;
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    border-radius: 12px;
+    color: #b6f3cf;
+    display: inline-flex;
+    flex: 0 1 auto;
     font-size: 12px;
-    font-weight: 600;
-    opacity: 0.75;
-    margin-top: 4px;
+    font-weight: 700;
+    height: 42px;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 14px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .run-button:disabled {
@@ -489,17 +556,33 @@ button:hover {
 }
 
 .loading {
+    align-items: center;
     color: #a1a1aa;
-    margin: 8px 0 12px 0;
+    display: flex;
+    font-size: 13px;
+    font-weight: 600;
+    justify-content: space-between;
+    line-height: 1.3;
+    margin: 4px 0 12px 0;
+    min-height: 20px;
+    width: 100%;
 }
 
 .reasoning-loading-btn {
-    margin-left: 12px;
-    background: #2f2f2f;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    color: #8a8a8a;
+    font-size: 13px;
+    font-weight: 600;
+    margin-left: 20px;
+    padding: 0;
+    white-space: nowrap;
+}
+
+.reasoning-loading-btn:hover {
+    background: transparent;
     color: #ffffff;
-    border: 1px solid #444444;
-    padding: 8px 10px;
-    border-radius: 8px;
 }
 
 .suggestions {
@@ -1684,6 +1767,55 @@ th {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.copyable-device {
+    align-items: flex-start;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+.copyable-device-text {
+    min-width: 0;
+}
+
+.device-id-text {
+    color: #f4f4f5;
+    display: block;
+    font-weight: 650;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.device-copy-btn {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    color: #a1a1aa;
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 700;
+    opacity: 0.76;
+    padding: 0;
+    transform: none;
+    transition: opacity 160ms ease, transform 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.copyable-device:hover .device-copy-btn,
+.copyable-device:focus-within .device-copy-btn,
+.device-copy-btn.copied {
+    opacity: 1;
+    transform: none;
+}
+
+.device-copy-btn:hover,
+.device-copy-btn.copied {
+    background: transparent;
+    color: #ffffff;
 }
 
 .company-id,

@@ -2646,8 +2646,70 @@ def telemetry_like_records(resource_sets):
     return resource_sets.get("CIN", {}).get("telemetry_samples") or []
 
 
+def collect_onem2m_identifier_candidates(resource_summary):
+    ae_candidates = set()
+    request_candidates = set()
+
+    def add_candidate(target, value):
+        if value in (None, ""):
+            return
+        target.add(str(value))
+
+    def visit_payload(value):
+        parsed = parse_payload_value(value)
+        if not isinstance(parsed, dict):
+            return
+
+        for key, payload_value in parsed.items():
+            normalized_key = str(key).lower()
+
+            if normalized_key in {"aeid", "ae_id", "aei"}:
+                add_candidate(ae_candidates, payload_value)
+            if normalized_key in {
+                "requestid",
+                "request_id",
+                "reqid",
+                "req_id",
+                "request",
+            }:
+                add_candidate(request_candidates, payload_value)
+
+    for resource_name, resource in (resource_summary or {}).items():
+        samples = []
+        samples.extend(resource.get("samples") or [])
+        samples.extend(resource.get("command_samples") or [])
+        samples.extend(resource.get("telemetry_samples") or [])
+
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+
+            if resource_name == "AE":
+                for key in ("_id", "ri", "aei", "rn"):
+                    add_candidate(ae_candidates, sample.get(key))
+
+            for key in ("aei", "api"):
+                add_candidate(ae_candidates, sample.get(key))
+
+            for key in ("requestId", "request_id", "reqId", "req_id"):
+                add_candidate(request_candidates, sample.get(key))
+
+            if "con" in sample:
+                visit_payload(sample.get("con"))
+
+    return {
+        "ae_id_candidates": sorted(ae_candidates)[:MAX_AGENT_SAMPLE_RECORDS],
+        "request_id_candidates": sorted(request_candidates)[:MAX_AGENT_SAMPLE_RECORDS],
+    }
+
+
 def get_company_onem2m_device_resource_context(
     device_id=None,
+    ae_id=None,
+    request_id=None,
+    payload_hint=None,
+    time_range=None,
+    application_domain=None,
     limit=MAX_AGENT_SAMPLE_RECORDS,
 ):
     if company_db_type() != "mongodb":
@@ -2657,32 +2719,68 @@ def get_company_onem2m_device_resource_context(
 
     try:
         with get_company_mongo_read_proxy("company-llm-tools") as proxy:
-            model = load_company_device_read_model(proxy)
             resource_sets = read_onem2m_resource_sets(proxy, device_id)
+            model = None if device_id else load_company_device_read_model(proxy)
             db_audit = proxy.get_audit_events()
     except Exception as exc:
         return simulator_fallback_snapshot(
             f"Company MongoDB read failed: {exc}"
         )
 
-    devices = [serialize_company_device(device) for device in model["devices"]]
     target = normalize_company_key(device_id)
+    provided_inputs = {
+        "device_id": device_id,
+        "ae_id": ae_id,
+        "request_id": request_id,
+        "payload_hint": payload_hint,
+        "time_range": time_range,
+        "application_domain": application_domain,
+    }
+    command_required = ["device_id"]
+    telemetry_required = ["device_id"]
 
-    if target:
-        matched_devices = [
-            compact_company_device(device)
-            for device in devices
-            if target in company_aliases(
-                device.get("device_id"),
-                device.get("device_name"),
-                device.get("node_id"),
-            )
-        ]
+    if model is None:
+        any_resource_match = any(
+            resource.get("matched_count", 0) > 0
+            for resource in resource_sets.values()
+        )
+        devices = []
+        matched_devices = (
+            [{
+                "device_id": device_id,
+                "device_name": device_id,
+                "status": (
+                    "resource_matches_found"
+                    if any_resource_match
+                    else "resource_matches_not_found"
+                ),
+                "status_source": "onem2m_resource_scan",
+                "telemetry_record_count": resource_sets.get("CIN", {}).get(
+                    "telemetry_count",
+                    0,
+                ),
+            }]
+            if device_id
+            else []
+        )
     else:
-        matched_devices = [
-            compact_company_device(device)
-            for device in devices[:max(1, min(int(limit), 10))]
-        ]
+        devices = [serialize_company_device(device) for device in model["devices"]]
+
+        if target:
+            matched_devices = [
+                compact_company_device(device)
+                for device in devices
+                if target in company_aliases(
+                    device.get("device_id"),
+                    device.get("device_name"),
+                    device.get("node_id"),
+                )
+            ]
+        else:
+            matched_devices = [
+                compact_company_device(device)
+                for device in devices[:max(1, min(int(limit), 10))]
+            ]
 
     resource_summary = {
         label: {
@@ -2692,14 +2790,26 @@ def get_company_onem2m_device_resource_context(
             "direct_match_count": resource.get("direct_match_count"),
             "related_match_count": resource.get("related_match_count"),
             "present": resource.get("matched_count", 0) > 0,
+            "device_presence": (
+                "present_for_device"
+                if resource.get("matched_count", 0) > 0
+                else "missing_for_device"
+            ),
             "command_count": resource.get("command_count"),
             "telemetry_count": resource.get("telemetry_count"),
+            "command_samples": resource.get("command_samples", [])[
+                :max(1, min(int(limit), ONEM2M_RESOURCE_SAMPLE_LIMIT))
+            ],
+            "telemetry_samples": resource.get("telemetry_samples", [])[
+                :max(1, min(int(limit), ONEM2M_RESOURCE_SAMPLE_LIMIT))
+            ],
             "samples": resource.get("samples", [])[
                 :max(1, min(int(limit), ONEM2M_RESOURCE_SAMPLE_LIMIT))
             ],
         }
         for label, resource in resource_sets.items()
     }
+    derived_identifiers = collect_onem2m_identifier_candidates(resource_summary)
 
     return {
         "source": "company_mongodb",
@@ -2708,6 +2818,40 @@ def get_company_onem2m_device_resource_context(
         "db_audit_status": (
             "runtime_audit_available" if db_audit else "missing_runtime_audit"
         ),
+        "input_evidence": {
+            "provided": {
+                key: value
+                for key, value in provided_inputs.items()
+                if value not in (None, "")
+            },
+            "required_for_command_flow": command_required,
+            "required_for_telemetry_flow": telemetry_required,
+            "derived_identifiers": derived_identifiers,
+            "optional_correlation_fields": [
+                "ae_id",
+                "request_id",
+                "payload_hint",
+                "time_range",
+                "application_domain",
+            ],
+            "missing_for_command_flow": [
+                key for key in command_required if not provided_inputs.get(key)
+            ],
+            "missing_for_telemetry_flow": [
+                key for key in telemetry_required if not provided_inputs.get(key)
+            ],
+            "status": (
+                "sufficient_for_command_flow"
+                if all(provided_inputs.get(key) for key in command_required)
+                else "missing_required_identifiers"
+            ),
+            "note": (
+                "Theo luồng vận hành hiện tại, operator/platform thường chỉ "
+                "cung cấp device_id. AE ID, request_id, payload/time range là "
+                "trường correlation tùy chọn hoặc được derive từ Mongo/log để "
+                "đóng gói request điều tra trước khi gọi tool."
+            ),
+        },
         "query_device_id": device_id,
         "device_match_count": len(matched_devices),
         "devices": matched_devices[:max(1, min(int(limit), 10))],
@@ -2722,14 +2866,36 @@ def get_company_onem2m_device_resource_context(
         ],
         "summary": {
             "device_count": len(devices),
-            "inventory_node_count": model["inventory_node_count"],
-            "identity_count": model["identity_count"],
-            "container_count": model["container_count"],
-            "content_instance_count": model["content_instance_count"],
-            "command_record_count": model["command_record_count"],
-            "unmapped_telemetry_count": model["unmapped_telemetry_count"],
+            "inventory_node_count": (
+                model["inventory_node_count"] if model is not None else None
+            ),
+            "identity_count": (
+                model["identity_count"]
+                if model is not None
+                else resource_sets.get("IDENTITY", {}).get("count")
+            ),
+            "container_count": (
+                model["container_count"]
+                if model is not None
+                else resource_sets.get("CNT", {}).get("count")
+            ),
+            "content_instance_count": (
+                model["content_instance_count"]
+                if model is not None
+                else resource_sets.get("CIN", {}).get("count")
+            ),
+            "command_record_count": (
+                model["command_record_count"]
+                if model is not None
+                else resource_sets.get("CIN", {}).get("command_count", 0)
+            ),
+            "unmapped_telemetry_count": (
+                model["unmapped_telemetry_count"] if model is not None else None
+            ),
         },
-        "kpi_evaluations": build_company_kpi_evaluations(model),
+        "kpi_evaluations": (
+            build_company_kpi_evaluations(model) if model is not None else []
+        ),
         "note": (
             "OneM2M resources are read from bounded company MongoDB testbed "
             "collections through the read proxy."
@@ -2737,8 +2903,22 @@ def get_company_onem2m_device_resource_context(
     }
 
 
-def get_company_onem2m_command_flow_context(device_id=None):
-    context = get_company_onem2m_device_resource_context(device_id)
+def get_company_onem2m_command_flow_context(
+    device_id=None,
+    ae_id=None,
+    request_id=None,
+    payload_hint=None,
+    time_range=None,
+    application_domain=None,
+):
+    context = get_company_onem2m_device_resource_context(
+        device_id=device_id,
+        ae_id=ae_id,
+        request_id=request_id,
+        payload_hint=payload_hint,
+        time_range=time_range,
+        application_domain=application_domain,
+    )
 
     if context.get("source") != "company_mongodb":
         return context
@@ -2753,6 +2933,10 @@ def get_company_onem2m_command_flow_context(device_id=None):
         ),
         "latest_command_cin_samples": command_records[:MAX_AGENT_SAMPLE_RECORDS],
         "flow_checks": {
+            "required_input_complete": not context.get(
+                "input_evidence",
+                {},
+            ).get("missing_for_command_flow"),
             "identity_present": resources.get("IDENTITY", {}).get("present"),
             "ae_present": resources.get("AE", {}).get("present"),
             "command_container_present": (
@@ -2770,8 +2954,22 @@ def get_company_onem2m_command_flow_context(device_id=None):
     return context
 
 
-def get_company_onem2m_telemetry_flow_context(device_id=None):
-    context = get_company_onem2m_device_resource_context(device_id)
+def get_company_onem2m_telemetry_flow_context(
+    device_id=None,
+    ae_id=None,
+    request_id=None,
+    payload_hint=None,
+    time_range=None,
+    application_domain=None,
+):
+    context = get_company_onem2m_device_resource_context(
+        device_id=device_id,
+        ae_id=ae_id,
+        request_id=request_id,
+        payload_hint=payload_hint,
+        time_range=time_range,
+        application_domain=application_domain,
+    )
 
     if context.get("source") != "company_mongodb":
         return context
@@ -2788,6 +2986,10 @@ def get_company_onem2m_telemetry_flow_context(device_id=None):
             if evaluation.get("tool") == "get_company_onem2m_telemetry_flow"
         ],
         "flow_checks": {
+            "required_input_complete": not context.get(
+                "input_evidence",
+                {},
+            ).get("missing_for_telemetry_flow"),
             "identity_present": resources.get("IDENTITY", {}).get("present"),
             "ae_present": resources.get("AE", {}).get("present"),
             "telemetry_container_present": (

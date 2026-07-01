@@ -1,6 +1,7 @@
+import json
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
-from services.time_service import now_iso
+from services.time_service import now, now_iso, parse_timestamp
 
 DB_NAME = "telemetry.db"
 
@@ -977,6 +978,34 @@ def get_user_usage_stats(user_id):
     message_count = cursor.fetchone()[0]
 
     cursor.execute("""
+        SELECT token_usage, created_at
+        FROM messages
+        WHERE token_usage IS NOT NULL
+        AND chat_id IN (
+            SELECT id FROM chats WHERE user_id = ?
+        )
+    """, (user_id,))
+    today = now().date()
+    today_token_total = 0
+
+    for row in cursor.fetchall():
+        try:
+            created_at = parse_timestamp(row[1])
+        except Exception:
+            continue
+
+        if created_at.date() != today:
+            continue
+
+        try:
+            token_usage = json.loads(row[0])
+        except (TypeError, ValueError):
+            continue
+
+        if isinstance(token_usage, dict):
+            today_token_total += int(token_usage.get("total_tokens") or 0)
+
+    cursor.execute("""
         SELECT COUNT(*)
         FROM prompts
         WHERE user_id = ?
@@ -996,5 +1025,6 @@ def get_user_usage_stats(user_id):
         "chat_count": chat_count,
         "message_count": message_count,
         "custom_prompt_count": custom_prompt_count,
-        "device_count": device_count
+        "device_count": device_count,
+        "today_token_total": today_token_total
     }

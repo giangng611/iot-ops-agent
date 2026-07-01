@@ -62,6 +62,18 @@ def normalize_token_usage(token_usage):
         else token_usage
     )
 
+    if usage.get("deterministic") or usage.get("source") == "deterministic_answer":
+        normalized = {
+            "deterministic": True,
+            "source": "deterministic_answer",
+        }
+
+        for metadata_key in ("runtime_label", "model_name"):
+            if usage.get(metadata_key):
+                normalized[metadata_key] = usage[metadata_key]
+
+        return normalized
+
     input_tokens = parse_token_count(
         usage.get("input_tokens")
         or usage.get("prompt_tokens")

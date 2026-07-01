@@ -368,6 +368,10 @@ function wait(ms) {
 }
 
 function formatTokenUsage(tokenUsage) {
+    if (tokenUsage?.deterministic || tokenUsage?.source === "deterministic_answer") {
+        return "rule-rendered, no model tokens";
+    }
+
     if (!tokenUsage || !tokenUsage.total_tokens) {
         return "";
     }
@@ -385,6 +389,42 @@ function formatModelUsage(tokenUsage) {
 
     const runtimeLabel = tokenUsage.runtime_label || tokenUsage.runtimeLabel || "";
     return runtimeLabel || "";
+}
+
+function formatCompactNumber(value) {
+    const number = Number(value || 0);
+
+    if (number >= 1000000) {
+        return `${(number / 1000000).toFixed(1)}M`;
+    }
+
+    if (number >= 1000) {
+        return `${(number / 1000).toFixed(1)}K`;
+    }
+
+    return String(number);
+}
+
+async function refreshTodayTokenMeter() {
+    const meter = document.getElementById("todayTokenMeter");
+
+    if (!meter) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/api/profile/usage-stats");
+
+        if (!response.ok) {
+            return;
+        }
+
+        const data = await response.json();
+        meter.textContent = `Today ${formatCompactNumber(data.today_token_total)} tokens`;
+        meter.title = `${Number(data.today_token_total || 0).toLocaleString()} tokens used today`;
+    } catch (error) {
+        console.error("Failed to refresh today token meter:", error);
+    }
 }
 
 function parseJsonField(value, fallback) {
@@ -599,6 +639,14 @@ function showTab(tabName, buttonElement) {
         buttonElement.classList.add("active");
     }
 
+    if (tabName === "prompts") {
+        renderPromptCards();
+    }
+
+    if (tabName === "devices") {
+        renderDeviceTable();
+    }
+
     if (tabName !== "home") {
         closeReasoningDrawer();
     }
@@ -622,6 +670,8 @@ function newChat() {
     workflowFinalized = false;
 
     document.getElementById("messageInput").value = "";
+    autoResizeMessageInput();
+    updateRunButtonState();
     document.getElementById("chatMessages").innerHTML = "";
 
     const hero = document.getElementById("homeHero");
@@ -681,18 +731,62 @@ function usePrompt(promptText) {
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
 
+    scheduleMessageInputResize();
+    updateRunButtonState();
     input.focus();
 }
 
 function handleEnter(event) {
-    if (event.key === "Enter") {
-        if (isAgentRunning) {
+    if (event.key === "Enter" && !event.shiftKey) {
+        if (isAgentRunning || !getMessageInputValue()) {
             event.preventDefault();
             return;
         }
 
+        event.preventDefault();
         sendMessage();
     }
+}
+
+function autoResizeMessageInput() {
+    const input = document.getElementById("messageInput");
+
+    if (!input) {
+        return;
+    }
+
+    input.style.height = "auto";
+    const maxHeight = 220;
+    const nextHeight = Math.min(input.scrollHeight, maxHeight);
+    input.style.height = `${Math.max(nextHeight, 48)}px`;
+    input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
+}
+
+function scheduleMessageInputResize() {
+    requestAnimationFrame(() => {
+        autoResizeMessageInput();
+        requestAnimationFrame(autoResizeMessageInput);
+    });
+}
+
+function handleMessageInput() {
+    handlePromptSuggestions();
+    scheduleMessageInputResize();
+    updateRunButtonState();
+}
+
+function getMessageInputValue() {
+    return (document.getElementById("messageInput")?.value || "").trim();
+}
+
+function updateRunButtonState() {
+    const runButton = document.querySelector(".run-button");
+
+    if (!runButton) {
+        return;
+    }
+
+    runButton.disabled = isAgentRunning || !getMessageInputValue();
 }
 
 function handlePromptSuggestions() {
@@ -748,6 +842,8 @@ function selectSlashCommand(command) {
     const palette = document.getElementById("slashPalette");
 
     input.value = command;
+    scheduleMessageInputResize();
+    updateRunButtonState();
 
     palette.classList.add("hidden");
     palette.innerHTML = "";
@@ -759,8 +855,8 @@ async function loadSlashCommands() {
     const response = await fetch("/api/prompts");
     const data = await response.json();
 
-    promptsData = data.prompts;
-    slashCommands = data.prompts;
+    promptsData = data.prompts || [];
+    slashCommands = promptsData;
 
     renderPromptCards();
 }
@@ -804,7 +900,9 @@ function renderPromptCards() {
             <div class="prompt-card">
                 <div class="prompt-card-top">
                     <span class="prompt-category">${escapeHtml(prompt.category)}</span>
-                    ${prompt.is_default ? `<span class="prompt-default">Default</span>` : `<span class="prompt-custom">Custom</span>`}
+                    ${prompt.is_default
+                        ? `<span class="prompt-default">Default</span>`
+                        : `<span class="prompt-custom">Custom</span>`}
                 </div>
 
                 <h3>${escapeHtml(prompt.title)}</h3>
@@ -971,6 +1069,7 @@ async function sendMessage() {
 
     if (!message) {
         isAgentRunning = false;
+        updateRunButtonState();
         return;
     }
 
@@ -981,12 +1080,15 @@ async function sendMessage() {
         input.reportValidity();
         input.setCustomValidity("");
         isAgentRunning = false;
+        updateRunButtonState();
         return;
     }
 
     resetLiveReasoningRun();
 
     input.value = "";
+    autoResizeMessageInput();
+    updateRunButtonState();
     input.disabled = true;
     setAppBusyState(true);
 
@@ -1020,8 +1122,8 @@ async function sendMessage() {
 
     runButton.disabled = true;
     runButton.innerHTML = `
-        Running...
-        <span>Please wait</span>
+        <span>Running...</span>
+        <small>Please wait</small>
     `;
 
     addUserMessage(message);
@@ -1068,6 +1170,8 @@ async function sendMessage() {
             latestTokenUsage
         );
         input.value = "";
+        autoResizeMessageInput();
+        updateRunButtonState();
 
     } catch (error) {
         addAssistantMessage("Request failed: " + error, false);
@@ -1079,13 +1183,15 @@ async function sendMessage() {
 
         runButton.disabled = false;
         runButton.innerHTML = `
-            Run
-            <span>Enter ↵</span>
+            <span>Run</span>
+            <small>Enter ↵</small>
         `;
 
         input.disabled = false;
+        autoResizeMessageInput();
         isAgentRunning = false;
         setAppBusyState(false);
+        updateRunButtonState();
     }
 }
 
@@ -1230,11 +1336,53 @@ async function sendStreamMessage(message) {
 function diagnoseDevice(deviceId) {
     const input = document.getElementById("messageInput");
     input.value = `/diagnose ${deviceId}`;
+    scheduleMessageInputResize();
+    updateRunButtonState();
 
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
 
     sendMessage();
+}
+
+async function copyDeviceId(deviceId, button = null) {
+    const value = String(deviceId || "").trim();
+
+    if (!value) {
+        return;
+    }
+
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+        } else {
+            const tempInput = document.createElement("textarea");
+            tempInput.value = value;
+            tempInput.setAttribute("readonly", "");
+            tempInput.style.position = "fixed";
+            tempInput.style.left = "-9999px";
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand("copy");
+            tempInput.remove();
+        }
+    } catch (error) {
+        console.error("Failed to copy device ID:", error);
+        return;
+    }
+
+    if (!button) {
+        return;
+    }
+
+    const previousText = button.textContent;
+    button.textContent = "Copied";
+    button.classList.add("copied");
+
+    setTimeout(() => {
+        button.textContent = previousText || "Copy";
+        button.classList.remove("copied");
+    }, 1200);
 }
 
 function renderChatHistory() {
@@ -1347,12 +1495,12 @@ async function loadChat(chatId) {
 
     let lastUserMessage = null;
 
-    chat.messages.forEach(message => {
+    for (const message of chat.messages) {
         if (message.role === "user") {
             lastUserMessage = message.content;
             renderUserMessage(message.content, message.createdAt);
         } else {
-            renderAssistantMessage(
+            await renderAssistantMessage(
                 message.content,
                 message.hasReasoning,
                 message.reasoningSteps || [],
@@ -1362,7 +1510,7 @@ async function loadChat(chatId) {
                 message.tokenUsage || null
             );
         }
-    });
+    }
 
     renderChatHistory();
 }
@@ -2091,15 +2239,27 @@ function renderDeviceTable() {
             tableBody.innerHTML += `
                 <tr>
                     <td class="company-device-cell">
-                        <strong
-                            class="company-device-name"
-                            title="${escapeHtml(view.name)}"
-                        >
-                            ${escapeHtml(view.name)}
-                        </strong>
-                        <small class="device-subtext company-id" title="${escapeHtml(view.id)}">
-                            ${escapeHtml(view.id)}
-                        </small>
+                        <div class="copyable-device">
+                            <div class="copyable-device-text">
+                                <strong
+                                    class="company-device-name"
+                                    title="${escapeHtml(view.name)}"
+                                >
+                                    ${escapeHtml(view.name)}
+                                </strong>
+                                <small class="device-subtext company-id" title="${escapeHtml(view.id)}">
+                                    ${escapeHtml(view.id)}
+                                </small>
+                            </div>
+                            <button
+                                class="device-copy-btn"
+                                type="button"
+                                title="Copy device ID"
+                                onclick="copyDeviceId('${escapeJsString(view.id)}', this)"
+                            >
+                                Copy
+                            </button>
+                        </div>
                     </td>
                     <td>
                         <span class="connection-badge ${connectionClass}">
@@ -2130,7 +2290,7 @@ function renderDeviceTable() {
                         <span>
                             ${Number(device.rule_count || 0)} mapped rules
                         </span>
-                        <button onclick="showDeviceHistory('${escapeHtml(device.device_id)}')">
+                        <button onclick="showDeviceHistory('${escapeJsString(device.device_id)}')">
                             History
                         </button>
                     </td>
@@ -2142,12 +2302,25 @@ function renderDeviceTable() {
         const priority = calculatePriority(device);
         const payloadSummary = formatCompanyPayloadSummary(device);
         const deviceLabel = escapeHtml(device.device_id);
+        const rawDeviceId = escapeJsString(device.device_id);
 
         tableBody.innerHTML += `
             <tr>
                 <td>
-                    ${deviceLabel}
-                    ${payloadSummary ? `<small class="device-subtext">${escapeHtml(payloadSummary)}</small>` : ""}
+                    <div class="copyable-device">
+                        <div class="copyable-device-text">
+                            <span class="device-id-text">${deviceLabel}</span>
+                            ${payloadSummary ? `<small class="device-subtext">${escapeHtml(payloadSummary)}</small>` : ""}
+                        </div>
+                        <button
+                            class="device-copy-btn"
+                            type="button"
+                            title="Copy device ID"
+                            onclick="copyDeviceId('${rawDeviceId}', this)"
+                        >
+                            Copy
+                        </button>
+                    </div>
                 </td>
                 <td>${formatDeviceStatus(device)}</td>
                 <td>${formatMetricValue(device.cpu_usage, "%")}</td>
@@ -2155,7 +2328,7 @@ function renderDeviceTable() {
                 <td>${formatMetricValue(device.heartbeat_delay, "s ago")}</td>
                 <td>${priority}</td>
                 <td>
-                    <button onclick="diagnoseDevice('${deviceLabel}')">
+                    <button onclick="diagnoseDevice('${rawDeviceId}')">
                         Diagnose
                     </button>
                 </td>
@@ -2166,7 +2339,7 @@ function renderDeviceTable() {
                             Raw record
                         </button>
                     ` : `
-                        <button onclick="showDeviceHistory('${deviceLabel}')">
+                        <button onclick="showDeviceHistory('${rawDeviceId}')">
                             History
                         </button>
                     `}
@@ -2378,6 +2551,8 @@ function editUserMessage(messageId) {
     const input = document.getElementById("messageInput");
     input.value = storedMessage.content;
     input.disabled = false;
+    scheduleMessageInputResize();
+    updateRunButtonState();
     input.focus();
 }
 
@@ -2411,6 +2586,8 @@ function tryAssistantMessageAgain(messageId) {
 
     const input = document.getElementById("messageInput");
     input.value = storedMessage.retryPrompt;
+    scheduleMessageInputResize();
+    updateRunButtonState();
     sendMessage();
 }
 
@@ -4943,6 +5120,15 @@ document.addEventListener("DOMContentLoaded", () => {
     loadChatsFromDatabase();
     loadSlashCommands();
     refreshDevices();
+    const messageInput = document.getElementById("messageInput");
+
+    if (messageInput) {
+        messageInput.addEventListener("paste", scheduleMessageInputResize);
+    }
+
+    scheduleMessageInputResize();
+    updateRunButtonState();
+    refreshTodayTokenMeter();
 });
 
 async function saveMessageToDatabase(
@@ -4981,7 +5167,10 @@ async function saveMessageToDatabase(
             "Failed to save chat message:",
             data.error || response.status
         );
+        return;
     }
+
+    refreshTodayTokenMeter();
 }
 
 function toggleHistoryMenu(chatId) {
@@ -5135,7 +5324,7 @@ async function openProfileDrawer(type) {
     if (type === "settings") {
         title.textContent = "Settings";
         subtitle.textContent =
-            "Manage account preferences and workspace actions.";
+            "Manage password, username, logout, and account actions.";
 
         content.innerHTML = `
             <div class="drawer-info-list">
@@ -5276,7 +5465,7 @@ async function openProfileDrawer(type) {
 
     if (type === "workspace") {
         title.textContent = "Workspace & Data";
-        subtitle.textContent = "Operational data source and runtime status for this session.";
+        subtitle.textContent = "Choose the operational data source and review runtime status.";
 
         const selectedMode =
         document.getElementById("modeSelect")?.dataset.value ||
@@ -5445,7 +5634,7 @@ async function openProfileDrawer(type) {
         title.textContent = "Notifications";
 
         subtitle.textContent =
-            "Realtime alert behavior and workspace notification preferences.";
+            "Review realtime alert behavior.";
 
         const alertBadgeEnabled =
             !document
@@ -5514,7 +5703,7 @@ async function openProfileDrawer(type) {
 
     if (type === "telegram") {
         title.textContent = "Telegram";
-        subtitle.textContent = "Link your Telegram account with a one-time code.";
+        subtitle.textContent = "Link this account to the Telegram bot with a one-time code.";
 
         content.innerHTML = `
             <div class="drawer-info-list">
@@ -5918,12 +6107,12 @@ function setTelegramRunState(isRunning) {
         runButton.disabled = isRunning;
         runButton.innerHTML = isRunning
             ? `
-                Running...
-                <span>Telegram</span>
+                <span>Running...</span>
+                <small>Please wait</small>
             `
             : `
-                Run
-                <span>Enter ↵</span>
+                <span>Run</span>
+                <small>Enter ↵</small>
             `;
     }
 

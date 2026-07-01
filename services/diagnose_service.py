@@ -6,7 +6,7 @@ import requests
 from agents.langgraph_agent import TOOL_REGISTRY
 from benchmark_logger import log_benchmark_result
 from prompts import COMPANY_CONTEXT_INSTRUCTION, DIAGNOSIS_OUTPUT_FORMAT
-from services.company_data_service import get_company_agent_context
+from services.company_data_service import company_db_type, get_company_agent_context
 from storage.telemetry_store import (
     get_all_latest_devices,
     get_device_telemetry_history,
@@ -133,6 +133,28 @@ def resolve_agent_operational_context(selected_source):
         "active_source": "simulator_fallback",
         "operational_context": None,
         "fallback_reason": company_context.get("reason"),
+    }
+
+
+def resolve_ioa_v3_operational_context(selected_source):
+    normalized_source = str(selected_source or "simulator").strip().lower()
+
+    if normalized_source != "company":
+        return resolve_agent_operational_context(selected_source)
+
+    if company_db_type() == "mongodb":
+        return {
+            "selected_source": "company",
+            "active_source": "company_mongodb",
+            "operational_context": None,
+            "fallback_reason": None,
+        }
+
+    return {
+        "selected_source": "company",
+        "active_source": "simulator_fallback",
+        "operational_context": None,
+        "fallback_reason": "Company MongoDB URL is not configured.",
     }
 
 

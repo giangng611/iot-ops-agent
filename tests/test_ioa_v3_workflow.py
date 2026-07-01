@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from agents.ioa_v3_agent import IOAV3LangGraphN8nAgent
+from services.company_data_service import collect_onem2m_identifier_candidates
 from services.company_data_service import is_configured_threshold_metric
 from services.grafana_tool_registry import (
     build_grafana_workflow_policy,
@@ -276,6 +277,126 @@ class IOAV3WorkflowTests(unittest.TestCase):
                 self.assertEqual(tool, expected_tool)
                 self.assertEqual(params, expected_params)
 
+    def test_ioa_v3_runbook_override_keeps_command_flow_primary(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        workflows = [
+            {
+                "tool": "get_company_onem2m_device_resources",
+                "params": {"device_id": "S123"},
+                "reason": "semantic_resource_check",
+                "confidence": 0.8,
+                "planner": "semantic_llm",
+                "tool_family": "company_db",
+            },
+            {
+                "tool": "grafana_logs",
+                "params": {},
+                "reason": "logs",
+                "confidence": 0.7,
+                "planner": "semantic_llm",
+                "tool_family": "grafana_n8n",
+            },
+        ]
+
+        planned = agent.ensure_runbook_required_workflows(
+            workflows,
+            (
+                "Debug why device S123 did not receive a command. Check "
+                "adapter logs, core logs, IDENTITY, AE, cnt_command, "
+                "subscription, URI mapper, latest command CIN."
+            ),
+        )
+
+        self.assertEqual(planned[0]["tool"], "get_company_onem2m_command_flow")
+        self.assertEqual(planned[0]["params"]["device_id"], "S123")
+        self.assertNotIn(
+            "get_company_onem2m_device_resources",
+            [workflow["tool"] for workflow in planned],
+        )
+
+    def test_ioa_v3_replaces_weak_semantic_device_id(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        params = agent.enrich_workflow_params(
+            "get_company_onem2m_device_resources",
+            {"device_id": "as"},
+            (
+                "Check whether device "
+                "Seeaf28d9-2fc3-4a0d-be53-1212037ff95e is registered"
+            ),
+        )
+
+        self.assertEqual(
+            params["device_id"],
+            "Seeaf28d9-2fc3-4a0d-be53-1212037ff95e",
+        )
+
+    def test_ioa_v3_ignores_instruction_words_as_identifiers(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        identifiers = agent.extract_onem2m_identifiers(
+            (
+                "Check whether device "
+                "Seeaf28d9-2fc3-4a0d-be53-1212037ff95e is registered. "
+                "Treat the device ID as the only required operator input. "
+                "Derive AE ID and request/correlation IDs from MongoDB."
+            )
+        )
+
+        self.assertEqual(
+            identifiers["device_id"],
+            "Seeaf28d9-2fc3-4a0d-be53-1212037ff95e",
+        )
+        self.assertNotIn("ae_id", identifiers)
+
+    def test_onem2m_resource_answer_uses_present_flags_exactly(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_onem2m_resource_answer({
+            "query_device_id": "S123",
+            "devices": [{
+                "status": "resource_matches_found",
+                "telemetry_record_count": 0,
+            }],
+            "required_resources": [
+                "IDENTITY",
+                "AE",
+                "CIN",
+                "URI_MAPPER",
+            ],
+            "resource_summary": {
+                "IDENTITY": {
+                    "present": False,
+                    "matched_count": 0,
+                    "direct_match_count": 0,
+                    "related_match_count": 0,
+                },
+                "AE": {
+                    "present": True,
+                    "matched_count": 1,
+                    "direct_match_count": 1,
+                    "related_match_count": 0,
+                },
+                "CIN": {
+                    "present": False,
+                    "matched_count": 0,
+                    "direct_match_count": 0,
+                    "related_match_count": 0,
+                    "command_count": 0,
+                    "telemetry_count": 0,
+                },
+                "URI_MAPPER": {
+                    "present": False,
+                    "matched_count": 0,
+                    "direct_match_count": 0,
+                    "related_match_count": 0,
+                },
+            },
+        })
+
+        self.assertIn("IDENTITY: Missing", answer)
+        self.assertIn("AE: Present", answer)
+        self.assertIn("CIN: Missing", answer)
+        self.assertIn("URI_MAPPER: Missing", answer)
+        self.assertIn("incomplete OneM2M registration", answer)
+
     def test_ioa_v3_filters_placeholder_planner_params(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
 
@@ -292,6 +413,88 @@ class IOAV3WorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(params, {"namespace": "default"})
+
+    def test_ioa_v3_runbook_log_workflow_replaces_optional_grafana_slots(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        workflows = [
+            {
+                "tool": "get_company_onem2m_command_flow",
+                "params": {"device_id": "dvi-1"},
+                "reason": "command_flow",
+                "confidence": 0.9,
+                "planner": "semantic_llm",
+                "tool_family": "company_db",
+            },
+            {
+                "tool": "grafana_http_health",
+                "params": {},
+                "reason": "http_context",
+                "confidence": 0.8,
+                "planner": "semantic_llm",
+                "tool_family": "grafana_n8n",
+            },
+            {
+                "tool": "grafana_emqx_health",
+                "params": {},
+                "reason": "mqtt_context",
+                "confidence": 0.8,
+                "planner": "semantic_llm",
+                "tool_family": "grafana_n8n",
+            },
+        ]
+
+        planned = agent.ensure_runbook_required_workflows(
+            workflows,
+            (
+                "Kịch bản 5 oneM2M device ID dvi-1 AE ID AE1 request ID req1; "
+                "đọc log iot-http-api và iot-mqtt-client-adapter qua Loki"
+            ),
+        )
+
+        tools = [workflow["tool"] for workflow in planned]
+        self.assertEqual(len(tools), 3)
+        self.assertIn("get_company_onem2m_command_flow", tools)
+        self.assertIn("grafana_logs", tools)
+        self.assertNotIn("grafana_emqx_health", tools)
+        log_workflow = next(
+            workflow for workflow in planned if workflow["tool"] == "grafana_logs"
+        )
+        self.assertNotIn("service", log_workflow["params"])
+        self.assertEqual(log_workflow["params"]["level"], "error|warn")
+
+    def test_ioa_v3_strips_trailing_punctuation_from_onem2m_ids(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        identifiers = agent.extract_onem2m_identifiers(
+            "Device ID dvi-abc. AE ID ae-123. Request ID req-456."
+        )
+
+        self.assertEqual(identifiers["device_id"], "dvi-abc")
+        self.assertEqual(identifiers["ae_id"], "ae-123")
+        self.assertEqual(identifiers["request_id"], "req-456")
+
+    def test_onem2m_identifier_candidates_can_be_derived_from_resources(self):
+        candidates = collect_onem2m_identifier_candidates({
+            "AE": {
+                "samples": [{
+                    "_id": "C-AE-device-1",
+                    "aei": "AEI-device-1",
+                }],
+            },
+            "CIN": {
+                "command_samples": [{
+                    "con": {
+                        "requestId": "req-001",
+                        "command": "turn_on",
+                    },
+                }],
+            },
+        })
+
+        self.assertIn("C-AE-device-1", candidates["ae_id_candidates"])
+        self.assertIn("AEI-device-1", candidates["ae_id_candidates"])
+        self.assertIn("req-001", candidates["request_id_candidates"])
 
     def test_company_threshold_metric_filter_excludes_metadata(self):
         self.assertTrue(is_configured_threshold_metric("measurements[0].temperature"))
@@ -528,6 +731,98 @@ class IOAV3WorkflowTests(unittest.TestCase):
             ["get_company_disconnected_devices", "grafana_redis_health"],
         )
         self.assertEqual(events[-1]["type"], "final")
+
+    def test_ioa_v3_semantic_planner_token_usage_is_counted(self):
+        planner_response = MagicMock()
+        planner_response.content = """
+        {
+          "confidence": 0.91,
+          "reason": "Needs resource evidence.",
+          "workflows": [
+            {
+              "tool": "get_company_onem2m_device_resources",
+              "params": {"device_id": "dev-1"},
+              "reason": "Check required resources.",
+              "confidence": 0.93
+            }
+          ]
+        }
+        """
+        planner_response.response_metadata = {
+            "token_usage": {
+                "prompt_tokens": 20,
+                "completion_tokens": 7,
+                "total_tokens": 27,
+            }
+        }
+        model = MagicMock()
+        model.invoke.return_value = planner_response
+        agent = IOAV3LangGraphN8nAgent(model=model)
+
+        workflows, metadata = agent.plan_workflows_semantically(
+            "Check OneM2M resources for dev-1."
+        )
+
+        self.assertEqual(
+            workflows[0]["tool"],
+            "get_company_onem2m_device_resources",
+        )
+        self.assertEqual(metadata["token_usage"]["total_tokens"], 27)
+
+    def test_ioa_v3_deterministic_answer_preserves_prior_token_usage(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        state = {
+            "selected_tool": "get_company_onem2m_device_resources",
+            "token_usage": {
+                "input_tokens": 20,
+                "output_tokens": 7,
+                "total_tokens": 27,
+                "source": "openai_response_metadata",
+            },
+            "steps": [],
+            "tool_outputs": [{
+                "tool": "get_company_onem2m_device_resources",
+                "result": {
+                    "query_device_id": "dev-1",
+                    "resource_summary": {
+                        "IDENTITY": {"present": False, "matched_count": 0},
+                        "AE": {"present": True, "matched_count": 1},
+                        "CNT": {"present": True, "matched_count": 2},
+                        "CIN": {"present": False, "matched_count": 0},
+                        "SUBSCRIPTION": {"present": True, "matched_count": 1},
+                        "URI_MAPPER": {"present": False, "matched_count": 0},
+                    },
+                },
+            }],
+        }
+
+        result = agent.generate_answer_node(state)
+
+        self.assertEqual(result["token_usage"]["total_tokens"], 27)
+        self.assertIn("IDENTITY: Missing", result["final_answer"])
+
+    def test_ioa_v3_combines_planner_and_answer_token_usage(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        usage = agent.combine_token_usage(
+            {
+                "input_tokens": 20,
+                "output_tokens": 7,
+                "total_tokens": 27,
+                "source": "planner",
+            },
+            {
+                "input_tokens": 30,
+                "output_tokens": 9,
+                "total_tokens": 39,
+                "source": "answer",
+            },
+        )
+
+        self.assertEqual(usage["input_tokens"], 50)
+        self.assertEqual(usage["output_tokens"], 16)
+        self.assertEqual(usage["total_tokens"], 66)
+        self.assertEqual(usage["source"], "ioa_v3_graph")
 
     def test_ioa_v3_answer_evidence_keeps_concrete_samples(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=15">
+    <link rel="stylesheet" href="/static/style.css?v=27">
 </head>
 
 <body>
@@ -63,7 +63,7 @@
                     class="logout-text-btn"
                     onclick="event.stopPropagation(); openLogoutModal();"
                 >
-                    Logout
+                    <span>Logout</span>
                 </button>
             </div>
         </div>
@@ -75,7 +75,7 @@
             <button class="top-tab active" onclick="showTab('home', this)">Home</button>
             <button class="top-tab" onclick="showTab('devices', this)">Devices</button>
             <button class="top-tab" onclick="showTab('alerts', this)">
-                Alerts
+                <span>Alerts</span>
                 <span id="alertBadge" class="alert-badge hidden">0</span>
             </button>
             <button class="top-tab" onclick="showTab('prompts', this)">Prompts</button>
@@ -101,59 +101,72 @@
                     </div>
 
                     <div id="slashPalette" class="slash-palette hidden"></div>
-                    <div class="input-row chat-input-row">
-                        <div id="modeSelect" class="mode-picker" data-value="ioa_v3_langgraph_n8n">
-                            <button
-                                class="mode-picker-button"
-                                type="button"
-                                onclick="toggleModePicker()"
-                                aria-haspopup="listbox"
-                                aria-expanded="false"
-                            >
-                                <span id="modePickerLabel">IOA v3 · Ops Graph</span>
-                                <svg viewBox="0 0 20 20">
-                                    <path d="M5.5 7.5 10 12l4.5-4.5"></path>
-                                </svg>
-                            </button>
+                    <div class="chat-composer">
+                        <textarea
+                            id="messageInput"
+                            maxlength="2000"
+                            rows="1"
+                            placeholder="Type / to see prompts..."
+                            oninput="handleMessageInput()"
+                            onkeydown="handleEnter(event)"
+                        ></textarea>
 
-                            <div id="modePickerMenu" class="mode-picker-menu hidden" role="listbox">
-                                <button type="button" data-mode="ioa_v1_custom" onclick="selectModeOption(this)">
-                                    IOA v1 · Custom Python
+                        <div class="composer-footer">
+                            <div id="modeSelect" class="mode-picker" data-value="ioa_v3_langgraph_n8n">
+                                <button
+                                    class="mode-picker-button"
+                                    type="button"
+                                    onclick="toggleModePicker()"
+                                    aria-haspopup="listbox"
+                                    aria-expanded="false"
+                                >
+                                    <span id="modePickerLabel">IOA v3 · Ops Graph</span>
+                                    <svg viewBox="0 0 20 20">
+                                        <path d="M5.5 7.5 10 12l4.5-4.5"></path>
+                                    </svg>
                                 </button>
-                                <button type="button" data-mode="ioa_v2_custom" onclick="selectModeOption(this)">
-                                    IOA v2 · Custom Python
-                                </button>
-                                <button type="button" data-mode="ioa_v2_langchain" onclick="selectModeOption(this)">
-                                    IOA v2 · LangChain
-                                </button>
-                                <button type="button" data-mode="ioa_v2_langgraph" onclick="selectModeOption(this)">
-                                    IOA v2 · LangGraph
-                                </button>
-                                <button type="button" data-mode="ioa_v2_n8n" onclick="selectModeOption(this)">
-                                    IOA v2 · n8n
-                                </button>
-                                <button type="button" data-mode="ioa_v2_dify" onclick="selectModeOption(this)">
-                                    IOA v2 · Dify
-                                </button>
-                                <button type="button" data-mode="ioa_v3_langgraph_n8n" onclick="selectModeOption(this)" class="selected">
-                                    IOA v3 · Ops Graph
+
+                                <div id="modePickerMenu" class="mode-picker-menu hidden" role="listbox">
+                                    <button type="button" data-mode="ioa_v1_custom" onclick="selectModeOption(this)">
+                                        IOA v1 · Custom Python
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_custom" onclick="selectModeOption(this)">
+                                        IOA v2 · Custom Python
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_langchain" onclick="selectModeOption(this)">
+                                        IOA v2 · LangChain
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_langgraph" onclick="selectModeOption(this)">
+                                        IOA v2 · LangGraph
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_n8n" onclick="selectModeOption(this)">
+                                        IOA v2 · n8n
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_dify" onclick="selectModeOption(this)">
+                                        IOA v2 · Dify
+                                    </button>
+                                    <button type="button" data-mode="ioa_v3_langgraph_n8n" onclick="selectModeOption(this)" class="selected">
+                                        IOA v3 · Ops Graph
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="composer-actions">
+                                <div id="todayTokenMeter" class="today-token-meter">
+                                    Today 0 tokens
+                                </div>
+
+                                <button
+                                    class="run-button"
+                                    onclick="sendMessage()"
+                                    title="Send message"
+                                    aria-label="Send message"
+                                >
+                                    <span>Run</span>
+                                    <small>Enter ↵</small>
                                 </button>
                             </div>
                         </div>
-
-                        <input
-                            id="messageInput"
-                            type="text"
-                            maxlength="2000"
-                            placeholder="Type / to see prompts..."
-                            oninput="handlePromptSuggestions()"
-                            onkeydown="handleEnter(event)"
-                        >
-
-                        <button class="run-button" onclick="sendMessage()">
-                            Run
-                            <span>Enter ↵</span>
-                        </button>
                     </div>
                 </div>
 
@@ -749,6 +762,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=26"></script>
+<script src="/static/script.js?v=37"></script>
 </body>
 </html>

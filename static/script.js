@@ -17,7 +17,7 @@ socket.on("connect_error", () => {
 });
 
 socket.on("device_update", (data) => {
-    if (selectedDataSource !== "simulator") {
+    if (devicesLoading || selectedDataSource !== "simulator") {
         return;
     }
 
@@ -272,6 +272,8 @@ let userMessageActionStore = {};
 let workflowNodeDetailStore = {};
 let selectedDataSource = "simulator";
 let allowedDataSources = ["simulator"];
+let selectedPromptDeviceId = "";
+let devicesLoading = true;
 const LIVE_REASONING_VIEW_ID = "__live_reasoning_trace__";
 
 function isLiveReasoningDrawerOpen() {
@@ -723,7 +725,7 @@ function usePrompt(promptText) {
     const input = document.getElementById("messageInput");
     const suggestions = document.getElementById("promptSuggestions");
 
-    input.value = promptText;
+    input.value = fillPromptDevicePlaceholder(promptText);
 
     suggestions.classList.add("hidden");
     suggestions.innerHTML = "";
@@ -841,7 +843,7 @@ function selectSlashCommand(command) {
     const input = document.getElementById("messageInput");
     const palette = document.getElementById("slashPalette");
 
-    input.value = command;
+    input.value = fillPromptDevicePlaceholder(command);
     scheduleMessageInputResize();
     updateRunButtonState();
 
@@ -1334,6 +1336,7 @@ async function sendStreamMessage(message) {
 }
 
 function diagnoseDevice(deviceId) {
+    rememberPromptDeviceId(deviceId);
     const input = document.getElementById("messageInput");
     input.value = `/diagnose ${deviceId}`;
     scheduleMessageInputResize();
@@ -1351,6 +1354,9 @@ async function copyDeviceId(deviceId, button = null) {
     if (!value) {
         return;
     }
+
+    rememberPromptDeviceId(value);
+    replaceInputDevicePlaceholder(value);
 
     try {
         if (navigator.clipboard && window.isSecureContext) {
@@ -1383,6 +1389,32 @@ async function copyDeviceId(deviceId, button = null) {
         button.textContent = previousText || "Copy";
         button.classList.remove("copied");
     }, 1200);
+}
+
+function rememberPromptDeviceId(deviceId) {
+    selectedPromptDeviceId = String(deviceId || "").trim();
+}
+
+function fillPromptDevicePlaceholder(promptText) {
+    const text = String(promptText || "");
+
+    if (!selectedPromptDeviceId) {
+        return text;
+    }
+
+    return text.replace(/<device_id>/g, selectedPromptDeviceId);
+}
+
+function replaceInputDevicePlaceholder(deviceId) {
+    const input = document.getElementById("messageInput");
+
+    if (!input || !input.value.includes("<device_id>")) {
+        return;
+    }
+
+    input.value = input.value.replace(/<device_id>/g, deviceId);
+    scheduleMessageInputResize();
+    updateRunButtonState();
 }
 
 function renderChatHistory() {
@@ -1614,6 +1646,8 @@ async function prefetchRecentChats(limit = PREFETCH_CHAT_LIMIT) {
 }
 
 async function refreshDevices() {
+    setDevicesLoadingState(true);
+
     try {
         const response = await fetch("/api/devices");
         const data = await response.json();
@@ -1639,6 +1673,7 @@ async function refreshDevices() {
             critical_count: 0,
             warning_count: 0
         };
+        devicesLoading = false;
         updateDataSourceControl();
         updateAlertPolicyControl();
         updateDataSourceDisplay();
@@ -1650,6 +1685,8 @@ async function refreshDevices() {
 
     } catch (error) {
         console.error("Failed to refresh devices:", error);
+        devicesLoading = false;
+        renderDeviceLoadingState("Unable to load devices. Please try again.");
     }
 }
 
@@ -1765,11 +1802,17 @@ function updateAlertPolicyControl() {
 function formatDataSourceLabel(value) {
     const labels = {
         simulator: "Simulator",
-        sqlite: "SQLite simulator",
-        mongodb: "MongoDB simulator",
-        company: "Company DB",
-        company_mongodb: "Company MongoDB",
-        simulator_fallback: "Simulator fallback"
+        sqlite: "SQLite (Local)",
+        mongodb: "MongoDB (Testbed)",
+        postgres: "Postgres",
+        company: "Company",
+        company_mongodb: "MongoDB (Prod)",
+        simulator_fallback: "Fallback",
+        official: "Official",
+        fallback: "Fallback",
+        provisional_poc: "PoC",
+        not_configured: "Not configured",
+        available_unmapped: "Unmapped"
     };
 
     return labels[value] || value || "Unknown";
@@ -1788,10 +1831,15 @@ function updateDataSourceDisplay() {
     const rulesStatus = currentDataSourceState.rules_status || "unknown";
 
     if (badge) {
-        badge.textContent = selectedDataSource === "simulator"
-            ? activeLabel
-            : `${selectedLabel} → ${activeLabel}`;
-        badge.className = `source-badge ${rulesStatus}`;
+        const activeSource = (
+            currentDataSourceState.active_source ||
+            currentDataSourceState.source ||
+            selectedDataSource ||
+            "unknown"
+        );
+        badge.textContent = activeLabel;
+        badge.title = `Selected: ${selectedLabel}; Active: ${activeLabel}`;
+        badge.className = `source-badge ${rulesStatus} ${activeSource}`;
     }
 
     if (!note) {
@@ -2097,6 +2145,41 @@ function updateDeviceControlsForSource() {
     }
 }
 
+function renderDeviceLoadingState(message = "Loading devices...") {
+    const tableBody = document.getElementById("deviceTableBody");
+    const tableHeader = document.getElementById("deviceTableHeader");
+    const charts = document.getElementById("devicesCharts");
+    const summary = document.getElementById("companyDataSummary");
+    const tableCard = document.getElementById("devicesTableCard");
+    const companyMode = isCompanyDataActive();
+
+    charts?.classList.add("hidden");
+    summary?.classList.add("hidden");
+    tableCard?.classList.toggle("company-table-card", companyMode);
+
+    if (tableHeader) {
+        tableHeader.innerHTML = "";
+    }
+
+    if (tableBody) {
+        tableBody.innerHTML = `
+            <tr>
+                <td class="devices-loading-cell">
+                    ${escapeHtml(message)}
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function setDevicesLoadingState(isLoading) {
+    devicesLoading = isLoading;
+
+    if (isLoading) {
+        renderDeviceLoadingState();
+    }
+}
+
 function renderDeviceTable() {
     const tableBody = document.getElementById("deviceTableBody");
     const tableHeader = document.getElementById("deviceTableHeader");
@@ -2106,6 +2189,12 @@ function renderDeviceTable() {
     }
 
     const companyMode = isCompanyDataActive();
+
+    if (devicesLoading) {
+        renderDeviceLoadingState();
+        return;
+    }
+
     updateDeviceControlsForSource();
 
     tableHeader.innerHTML = companyMode
@@ -5119,6 +5208,7 @@ async function loadChatsFromDatabase() {
 document.addEventListener("DOMContentLoaded", () => {
     loadChatsFromDatabase();
     loadSlashCommands();
+    setDevicesLoadingState(true);
     refreshDevices();
     const messageInput = document.getElementById("messageInput");
 

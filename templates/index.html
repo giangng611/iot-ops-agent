@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=27">
+    <link rel="stylesheet" href="/static/style.css?v=31">
 </head>
 
 <body>
@@ -288,7 +288,7 @@
 
                 <div id="companyDataSummary" class="company-data-summary hidden"></div>
 
-                <div id="devicesCharts" class="charts-grid">
+                <div id="devicesCharts" class="charts-grid hidden">
                     <div class="chart-card">
                         <h2 id="healthChartTitle">Fleet Health Distribution</h2>
                         <canvas id="healthChart"></canvas>
@@ -325,8 +325,8 @@
 
                             <tbody id="deviceTableBody">
                                 <tr id="devicesLoadingRow">
-                                    <td colspan="8">
-                                        Loading realtime device telemetry...
+                                    <td class="devices-loading-cell">
+                                        Loading devices...
                                     </td>
                                 </tr>
                             </tbody>
@@ -762,6 +762,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=37"></script>
+<script src="/static/script.js?v=40"></script>
 </body>
 </html>

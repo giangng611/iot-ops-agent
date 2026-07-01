@@ -3,6 +3,7 @@
 telemetry.db
 benchmark_results.csv
 venv/
+.venv/
 __pycache__/
 *.pyc
 .DS_Store

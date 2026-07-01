@@ -1,8 +1,16 @@
+"""Vendored copy of the main iot-ops-agent repo's services/company_mongo_proxy.py.
+
+mcp_server/ is deployed as a fully independent service (separate process,
+separate env, separate deploy target) from the Flask app in this repo -- it
+must not import anything from the parent app's package tree. This file is
+duplicated on purpose rather than imported across repo boundaries; if the
+allowlist/guardrail logic in the original services/company_mongo_proxy.py
+changes, re-sync this copy manually.
+"""
 import os
 import threading
 import time
 from collections import defaultdict, deque
-from urllib.parse import parse_qs, urlparse
 
 from pymongo import MongoClient
 
@@ -100,37 +108,6 @@ def _validate_sort(sort):
         raise ValueError("MongoDB sort direction must be 1 or -1.")
 
 
-def _mongo_seed_hosts(uri):
-    parsed = urlparse(uri or "")
-    netloc = parsed.netloc.rsplit("@", 1)[-1]
-
-    return [
-        seed.strip()
-        for seed in netloc.split(",")
-        if seed.strip()
-    ]
-
-
-def _mongo_query_options(uri):
-    parsed = urlparse(uri or "")
-    return {
-        key.lower(): values
-        for key, values in parse_qs(parsed.query).items()
-    }
-
-
-def should_use_direct_connection(uri):
-    options = _mongo_query_options(uri)
-
-    if any(
-        option in options
-        for option in ("directconnection", "replicaset", "loadbalanced")
-    ):
-        return False
-
-    return len(_mongo_seed_hosts(uri)) == 1
-
-
 def get_allowed_namespaces():
     configured = os.getenv("COMPANY_MONGO_ALLOWED_NAMESPACES", "").strip()
 
@@ -217,18 +194,11 @@ class CompanyMongoReadProxy:
         self._actor = actor
         self._statement_timeout_ms = statement_timeout_ms
         self._audit_events = []
-        client_kwargs = {
-            "serverSelectionTimeoutMS": timeout_ms,
-            "connectTimeoutMS": timeout_ms,
-            "socketTimeoutMS": statement_timeout_ms,
-        }
-
-        if should_use_direct_connection(uri):
-            client_kwargs["directConnection"] = True
-
         self._client = factory(
             uri,
-            **client_kwargs,
+            serverSelectionTimeoutMS=timeout_ms,
+            connectTimeoutMS=timeout_ms,
+            socketTimeoutMS=statement_timeout_ms,
         )
         self._client.admin.command("ping")
 

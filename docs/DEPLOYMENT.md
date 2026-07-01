@@ -370,6 +370,18 @@ Custom Domain + HTTPS
 
 ---
 
+## 11b. MCP Server (separate service)
+
+`mcp_server/` is a second, independently deployed service that exposes
+read-only MongoDB/Loki/Grafana tools over MCP (Streamable HTTP) to external
+agents over the public Internet. It is not part of the Render web service
+above — deploy it as its own Render Web Service with Root Directory
+`mcp_server/`. Full setup, env vars, and auth/rotation procedure:
+[docs/MCP_SERVER_DEPLOYMENT.md](MCP_SERVER_DEPLOYMENT.md). Design rationale
+and diagram: [docs/MCP_SERVER_PLAN.md](MCP_SERVER_PLAN.md).
+
+---
+
 ## 12. Troubleshooting
 
 ### Invalid OpenAI API Key

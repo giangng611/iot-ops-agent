@@ -34,11 +34,11 @@ HASH=b210b4660de91484074f62370a43766b8669bab7ab21814fe3c2e8bf1638cc78
 ```bash
 $env:MCP_API_KEYS_JSON='{"demo-caller":"b210b4660de91484074f62370a43766b8669bab7ab21814fe3c2e8bf1638cc78"}'
 $env:PORT=8000
-$env:COMPANY_MONGODB_URI="mongodb://adminread:admin123@14.225.164.193:27017/?authSource=admin&directConnection=true"   # MongoDB thật của bạn -- directConnection=true bắt buộc nếu seed host là 1 member duy nhất expose qua IP public/NAT, còn các member khác chỉ advertise IP nội bộ (192.168.x.x) không reach được từ ngoài
+$env:COMPANY_MONGODB_URI="mongodb://readonly_user:replace_me@company-mongo-host:27017/?authSource=admin&directConnection=true"   # MongoDB thật của bạn -- directConnection=true bắt buộc nếu seed host là 1 member duy nhất expose qua IP public/NAT, còn các member khác chỉ advertise IP nội bộ (192.168.x.x) không reach được từ ngoài
 $env:MCP_ENABLE_GRAFANA_TOOLS="true"
-$env:GRAFANA_URL="https://monitor-03xguca7u7.obs.vnptplatform.vn"
-$env:GRAFANA_USERNAME="bachnc"
-$env:GRAFANA_PASSWORD="Admin@123"
+$env:GRAFANA_URL="https://your-grafana-host"
+$env:GRAFANA_USERNAME="readonly_user"
+$env:GRAFANA_PASSWORD="replace_me"
 python mcp_server/server.py
 ```
 

@@ -397,6 +397,112 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("URI_MAPPER: Missing", answer)
         self.assertIn("incomplete OneM2M registration", answer)
 
+    def test_onem2m_command_answer_uses_failure_point_not_root_cause(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_onem2m_flow_answer(
+            {
+                "query_device_id": "S123",
+                "command_record_count": 0,
+                "devices": [{
+                    "status": "resource_matches_found",
+                    "telemetry_record_count": 0,
+                }],
+                "input_evidence": {
+                    "derived_identifiers": {
+                        "ae_id_candidates": ["AE-S123"],
+                        "request_id_candidates": [],
+                    },
+                },
+                "resource_summary": {
+                    "IDENTITY": {"present": False, "matched_count": 0},
+                    "AE": {"present": True, "matched_count": 1},
+                    "CNT": {
+                        "present": True,
+                        "matched_count": 2,
+                        "command_count": 1,
+                        "telemetry_count": 1,
+                    },
+                    "CIN": {
+                        "present": False,
+                        "matched_count": 0,
+                        "command_count": 0,
+                        "telemetry_count": 0,
+                    },
+                    "SUBSCRIPTION": {"present": True, "matched_count": 1},
+                    "URI_MAPPER": {"present": False, "matched_count": 0},
+                },
+                "flow_checks": {
+                    "required_input_complete": True,
+                    "identity_present": False,
+                    "ae_present": True,
+                    "command_container_present": True,
+                    "subscription_present": True,
+                    "uri_mapper_present": False,
+                    "latest_command_cin_present": False,
+                },
+            },
+            "get_company_onem2m_command_flow",
+            [{
+                "source": "n8n_grafana_gateway",
+                "tool": "grafana_logs",
+                "http_call": {"method": "GET", "path": "/grafana/logs"},
+                "result": {"level": "error|warn"},
+            }],
+        )
+
+        self.assertIn("Likely Failure Point", answer)
+        self.assertIn("Evidence Gaps", answer)
+        self.assertIn("grafana_logs: executed GET /grafana/logs", answer)
+        self.assertIn("not a proven underlying code/config root cause", answer)
+        self.assertNotIn("most likely root cause", answer.lower())
+
+    def test_onem2m_telemetry_answer_includes_notify_style_next_step(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_onem2m_flow_answer(
+            {
+                "query_device_id": "S123",
+                "devices": [{
+                    "status": "resource_matches_found",
+                    "telemetry_record_count": 0,
+                }],
+                "resource_summary": {
+                    "IDENTITY": {"present": False, "matched_count": 0},
+                    "AE": {"present": True, "matched_count": 1},
+                    "CNT": {
+                        "present": True,
+                        "matched_count": 2,
+                        "telemetry_count": 1,
+                    },
+                    "CIN": {
+                        "present": False,
+                        "matched_count": 0,
+                        "telemetry_count": 0,
+                    },
+                    "SUBSCRIPTION": {"present": True, "matched_count": 1},
+                    "URI_MAPPER": {"present": False, "matched_count": 0},
+                },
+                "flow_checks": {
+                    "required_input_complete": True,
+                    "identity_present": False,
+                    "ae_present": True,
+                    "telemetry_container_present": True,
+                    "backend_subscription_present": True,
+                    "latest_telemetry_cin_present": False,
+                },
+                "next_diagnostic_step": (
+                    "Compare adapter receive logs with CNT/CIN creation and "
+                    "subscription notification evidence."
+                ),
+            },
+            "get_company_onem2m_telemetry_flow",
+            [],
+        )
+
+        self.assertIn("cnt_telemetry container: Present", answer)
+        self.assertIn("Latest telemetry CIN: Missing", answer)
+        self.assertIn("Compare adapter receive logs", answer)
+        self.assertIn("No Grafana/Loki workflow evidence", answer)
+
     def test_ioa_v3_filters_placeholder_planner_params(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
 

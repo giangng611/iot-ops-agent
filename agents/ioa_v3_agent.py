@@ -678,11 +678,17 @@ class IOAV3LangGraphN8nAgent:
     def build_deterministic_answer(self, state):
         selected_tool = state.get("selected_tool")
 
-        if selected_tool != "get_company_onem2m_device_resources":
+        deterministic_tools = {
+            "get_company_onem2m_device_resources",
+            "get_company_onem2m_command_flow",
+            "get_company_onem2m_telemetry_flow",
+        }
+
+        if selected_tool not in deterministic_tools:
             return None
 
         for output in state.get("tool_outputs") or []:
-            if output.get("tool") != "get_company_onem2m_device_resources":
+            if output.get("tool") != selected_tool:
                 continue
 
             result = output.get("result")
@@ -695,9 +701,216 @@ class IOAV3LangGraphN8nAgent:
             if not isinstance(resource_summary, dict):
                 return None
 
+            if selected_tool in {
+                "get_company_onem2m_command_flow",
+                "get_company_onem2m_telemetry_flow",
+            }:
+                return self.build_onem2m_flow_answer(
+                    result,
+                    selected_tool,
+                    state.get("tool_outputs") or [],
+                )
+
             return self.build_onem2m_resource_answer(result)
 
         return None
+
+    def onem2m_status_text(self, value):
+        return "Present" if bool(value) else "Missing"
+
+    def onem2m_flow_check_lines(self, flow_checks, selected_tool):
+        if selected_tool == "get_company_onem2m_command_flow":
+            labels = [
+                ("identity_present", "IDENTITY resource"),
+                ("ae_present", "AE resource"),
+                ("command_container_present", "cnt_command container"),
+                ("subscription_present", "SUBSCRIPTION"),
+                ("uri_mapper_present", "URI_MAPPER"),
+                ("latest_command_cin_present", "Latest command CIN"),
+            ]
+        else:
+            labels = [
+                ("identity_present", "IDENTITY resource"),
+                ("ae_present", "AE resource"),
+                ("telemetry_container_present", "cnt_telemetry container"),
+                ("backend_subscription_present", "Backend SUBSCRIPTION"),
+                ("latest_telemetry_cin_present", "Latest telemetry CIN"),
+            ]
+
+        return [
+            f"- {label}: {self.onem2m_status_text(flow_checks.get(key))} "
+            f"(flow_checks.{key}={str(bool(flow_checks.get(key))).lower()})"
+            for key, label in labels
+        ]
+
+    def onem2m_resource_count_lines(self, resource_summary):
+        lines = []
+        for name in ["IDENTITY", "AE", "CNT", "CIN", "SUBSCRIPTION", "URI_MAPPER"]:
+            resource = resource_summary.get(name) or {}
+            if not resource:
+                continue
+
+            extra_counts = []
+            if resource.get("command_count") is not None:
+                extra_counts.append(f"command_count={resource.get('command_count')}")
+            if resource.get("telemetry_count") is not None:
+                extra_counts.append(
+                    f"telemetry_count={resource.get('telemetry_count')}"
+                )
+            count_suffix = (
+                f"; {', '.join(extra_counts)}"
+                if extra_counts
+                else ""
+            )
+            lines.append(
+                f"- {name}: {self.onem2m_status_text(resource.get('present'))} "
+                f"(matched_count={int(resource.get('matched_count') or 0)}, "
+                f"direct_match_count={int(resource.get('direct_match_count') or 0)}, "
+                f"related_match_count={int(resource.get('related_match_count') or 0)}"
+                f"{count_suffix})"
+            )
+        return lines
+
+    def summarize_onem2m_log_workflows(self, tool_outputs):
+        lines = []
+
+        for output in tool_outputs:
+            if output.get("source") != "n8n_grafana_gateway":
+                continue
+
+            http_call = output.get("http_call") or {}
+            result = output.get("result") or {}
+            level = result.get("level") if isinstance(result, dict) else None
+            line = (
+                f"- {output.get('tool')}: executed "
+                f"{http_call.get('method', 'GET')} {http_call.get('path', '')}"
+            ).strip()
+            if level:
+                line += f"; level={level}"
+            lines.append(line)
+
+        if lines:
+            return lines
+
+        return [
+            "- No Grafana/Loki workflow evidence was attached to this run."
+        ]
+
+    def build_onem2m_flow_answer(self, result, selected_tool, tool_outputs):
+        device_id = result.get("query_device_id") or "requested device"
+        resource_summary = result.get("resource_summary") or {}
+        flow_checks = result.get("flow_checks") or {}
+        input_evidence = result.get("input_evidence") or {}
+        devices = result.get("devices") or []
+        device_status = (
+            devices[0].get("status")
+            if devices and isinstance(devices[0], dict)
+            else "unknown"
+        )
+        telemetry_count = (
+            devices[0].get("telemetry_record_count")
+            if devices and isinstance(devices[0], dict)
+            else None
+        )
+        is_command = selected_tool == "get_company_onem2m_command_flow"
+        flow_name = "command downlink" if is_command else "telemetry uplink"
+        latest_key = (
+            "latest_command_cin_present"
+            if is_command
+            else "latest_telemetry_cin_present"
+        )
+        missing_resources = [
+            name
+            for name in ["IDENTITY", "AE", "CNT", "CIN", "SUBSCRIPTION", "URI_MAPPER"]
+            if not bool((resource_summary.get(name) or {}).get("present"))
+        ]
+        failed_checks = [
+            key
+            for key, value in flow_checks.items()
+            if key != "required_input_complete" and not bool(value)
+        ]
+        record_count_line = (
+            f"Command record count: {result.get('command_record_count', 0)}"
+            if is_command
+            else f"Telemetry record count: {telemetry_count if telemetry_count is not None else 0}"
+        )
+
+        if failed_checks:
+            likely_cause = (
+                f"The likely failure point is incomplete OneM2M {flow_name} "
+                f"evidence around {', '.join(failed_checks)}. Missing resources "
+                f"for this device: {', '.join(missing_resources) or 'none'}. "
+                "This is an operational failure point from DB/resource evidence, "
+                "not a proven underlying code/config root cause."
+            )
+        else:
+            likely_cause = (
+                f"No failing OneM2M {flow_name} resource check was found in the "
+                "bounded DB evidence. Root cause still requires correlated "
+                "adapter/core/notify log evidence."
+            )
+
+        evidence_gaps = []
+        if not flow_checks.get(latest_key):
+            evidence_gaps.append("latest CIN evidence is missing for the device")
+        if missing_resources:
+            evidence_gaps.append(
+                f"resource evidence is missing for {', '.join(missing_resources)}"
+            )
+        evidence_gaps.append(
+            "Grafana/Loki execution is present, but this summary does not prove "
+            "a device/request-specific log root cause unless the log payload "
+            "contains that correlation."
+        )
+
+        next_action = (
+            result.get("next_diagnostic_step")
+            or (
+                "Correlate the missing resource checks with adapter/core logs "
+                "and the latest CIN records before assigning root cause."
+            )
+        )
+
+        return "\n".join([
+            "Summary",
+            (
+                f"Device {device_id} has incomplete {flow_name} evidence. "
+                f"Device status is {device_status}."
+            ),
+            "",
+            "Supporting Evidence",
+            f"- Affected device: {device_id}",
+            f"- Required operator input complete: "
+            f"{str(bool(flow_checks.get('required_input_complete'))).lower()}",
+            f"- {record_count_line}",
+            *self.onem2m_flow_check_lines(flow_checks, selected_tool),
+            "",
+            "Resource Evidence",
+            *self.onem2m_resource_count_lines(resource_summary),
+            "",
+            "Log / Grafana Evidence",
+            *self.summarize_onem2m_log_workflows(tool_outputs),
+            "",
+            "Evidence Gaps",
+            *[f"- {gap}" for gap in evidence_gaps],
+            "",
+            "Likely Failure Point",
+            likely_cause,
+            "",
+            "Suggested Next Action",
+            next_action,
+            "",
+            "Input Handling",
+            (
+                "- Device ID is treated as the minimum required operator input. "
+                "AE ID and request/correlation IDs are optional correlation "
+                "fields derived from MongoDB/log evidence when available."
+            ),
+            (
+                f"- Derived candidates: "
+                f"{json.dumps(input_evidence.get('derived_identifiers') or {}, ensure_ascii=False)}"
+            ),
+        ])
 
     def build_onem2m_resource_answer(self, result):
         device_id = result.get("query_device_id") or "requested device"

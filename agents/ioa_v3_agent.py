@@ -25,6 +25,7 @@ from services.grafana_tool_registry import (
     get_grafana_tools,
     get_kpi_rules_for_tool,
 )
+from services.mcp_observability_service import query_loki_logs_via_mcp
 from services.n8n_gateway_service import call_n8n_grafana_workflow
 
 
@@ -426,6 +427,10 @@ class IOAV3LangGraphN8nAgent:
         selected_tool = workflow["tool"]
         selected_params = workflow.get("params") or {}
         tool = get_grafana_tool_by_name(selected_tool)
+
+        if selected_tool == "grafana_logs":
+            return self.execute_mcp_loki_workflow(state, workflow, tool)
+
         result = call_n8n_grafana_workflow(
             user_input=state["user_input"],
             selected_tool=selected_tool,
@@ -463,6 +468,68 @@ class IOAV3LangGraphN8nAgent:
                 "result": evidence,
                 "n8n_steps": result.get("steps", []),
                 "final_answer": result.get("final_answer"),
+                "planner_reason": workflow.get("reason"),
+                "planner_confidence": workflow.get("confidence"),
+            }
+        }
+
+    def execute_mcp_loki_workflow(self, state, workflow, tool):
+        selected_params = workflow.get("params") or {}
+        try:
+            evidence = query_loki_logs_via_mcp(
+                service_name=selected_params.get("service"),
+                contains=selected_params.get("contains"),
+                hours_back=selected_params.get("hours_back", 6),
+                limit=selected_params.get("limit", 50),
+            )
+        except Exception as exc:
+            evidence = {
+                "source": "mcp_server",
+                "mcp_tool": "loki_query_range",
+                "level": "unavailable",
+                "error": f"MCP Loki query failed: {exc}",
+                "request": {
+                    "service_name": selected_params.get("service"),
+                    "contains": selected_params.get("contains"),
+                    "hours_back": selected_params.get("hours_back", 6),
+                    "limit": selected_params.get("limit", 50),
+                },
+                "logs": [],
+            }
+        request = evidence.get("request") or {}
+        step_output = {
+            "source": "mcp_server",
+            "tool": "grafana_logs",
+            "workflow_id": "loki_recent_logs",
+            "workflow": {
+                "id": "mcp_loki_gateway",
+                "tool": "grafana_logs",
+                "workflow_id": "loki_recent_logs",
+                "method": "MCP",
+                "path": "loki_query_range",
+                "params": request,
+                "description": (tool or {}).get("description"),
+            },
+            "planner_reason": workflow.get("reason"),
+            "planner_confidence": workflow.get("confidence"),
+            "http_call": {
+                "method": "MCP",
+                "path": "loki_query_range",
+                "params": request,
+                "base_url": "mcp_server",
+            },
+            "evidence": self.sanitize_evidence(evidence),
+            "mcp_tool": "loki_query_range",
+        }
+
+        return {
+            "step_output": step_output,
+            "tool_output": {
+                "source": "mcp_server",
+                "tool": "grafana_logs",
+                "mcp_tool": "loki_query_range",
+                "http_call": step_output["http_call"],
+                "result": evidence,
                 "planner_reason": workflow.get("reason"),
                 "planner_confidence": workflow.get("confidence"),
             }
@@ -775,6 +842,22 @@ class IOAV3LangGraphN8nAgent:
         lines = []
 
         for output in tool_outputs:
+            if output.get("source") == "mcp_server" and output.get("tool") == "grafana_logs":
+                http_call = output.get("http_call") or {}
+                params = http_call.get("params") or {}
+                result = output.get("result") or {}
+                error = result.get("error") if isinstance(result, dict) else None
+                line = (
+                    "- grafana_logs: queried MCP loki_query_range"
+                    f"; service={params.get('service_name') or 'all'}"
+                    f"; contains={params.get('contains') or 'none'}"
+                    f"; hours_back={params.get('hours_back') or 'unknown'}"
+                )
+                if error:
+                    line += f"; error={error}"
+                lines.append(line)
+                continue
+
             if output.get("source") != "n8n_grafana_gateway":
                 continue
 
@@ -1320,6 +1403,16 @@ JSON schema:
         if not has_onem2m:
             return workflows
 
+        workflows = [
+            workflow
+            for workflow in workflows
+            if (
+                workflow.get("tool") in onem2m_tools
+                or workflow.get("tool") == "grafana_logs"
+            )
+        ]
+        seen = {workflow.get("tool") for workflow in workflows}
+
         if not any(term in text for term in (
             "log",
             "loki",
@@ -1346,6 +1439,10 @@ JSON schema:
             "hours_back": 6,
             "limit": 50,
         }
+        identifiers = self.extract_onem2m_identifiers(user_input)
+        if identifiers.get("device_id"):
+            log_params["contains"] = identifiers["device_id"]
+
         if len(set(target_services)) == 1:
             log_params["service"] = target_services[0]
 
@@ -1435,7 +1532,7 @@ JSON schema:
             elif isinstance(value, (str, int, float, bool)):
                 if self.is_placeholder_param(value):
                     continue
-                if key in {"start", "end", "step", "queue"}:
+                if key in {"start", "end", "step", "queue", "contains"}:
                     value_text = str(value).strip().lower()
                     if value_text and value_text not in user_text:
                         continue

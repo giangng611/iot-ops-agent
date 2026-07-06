@@ -24,9 +24,6 @@ TELEGRAM_COMMANDS = [
     {"command": "alarms", "description": "Show devices with alarms"},
     {"command": "diagnose", "description": "Diagnose the system or a device"},
     {"command": "heartbeat", "description": "Check delayed heartbeats"},
-    {"command": "ingestion", "description": "Check queue and throughput KPIs"},
-    {"command": "apihealth", "description": "Check API success, errors, and latency"},
-    {"command": "infra", "description": "Check infrastructure health"},
     {"command": "companyfleet", "description": "Company fleet snapshot"},
     {"command": "coverage", "description": "Company telemetry coverage"},
     {"command": "pocalerts", "description": "Provisional company PoC alerts"},
@@ -43,13 +40,10 @@ def default_prompt_command(prompt_id, fallback):
 
 
 TELEGRAM_COMMAND_PROMPTS = {
-    "overview": default_prompt_command("default-1", "overview system health"),
+    "overview": "overview system health",
     "unhealthy": default_prompt_command("default-2", "check all unhealthy devices"),
-    "alarms": default_prompt_command("default-6", "show devices with alarms"),
+    "alarms": "show devices with alarms",
     "heartbeat": "check devices with delayed heartbeat",
-    "ingestion": default_prompt_command("default-3", "check RabbitMQ queue health"),
-    "apihealth": default_prompt_command("default-4", "check API health KPIs"),
-    "infra": default_prompt_command("default-5", "check infrastructure health"),
     "companyfleet": default_prompt_command("company-1", "company fleet snapshot"),
     "coverage": default_prompt_command(
         "company-3",
@@ -219,9 +213,6 @@ def build_help_text():
         "/unhealthy - Devices needing attention",
         "/alarms - Current device alarms",
         "/heartbeat - Delayed heartbeat check",
-        "/ingestion - RabbitMQ backlog and throughput KPIs",
-        "/apihealth - HTTP success, 5xx, and p95 latency KPIs",
-        "/infra - Kubernetes, Linux, Redis, MongoDB, and MySQL health",
         "/companyfleet - Company inventory and telemetry snapshot",
         "/coverage - Company telemetry coverage",
         "/pocalerts - Provisional PoC alerts with evidence",

@@ -2,15 +2,19 @@ import os
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MCP_SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from dotenv import load_dotenv  # noqa: E402
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 import uvicorn  # noqa: E402
 
 from mcp_server.auth import BearerAuthMiddleware  # noqa: E402
 from mcp_server.tools.mongo_tools import register_mongo_tools  # noqa: E402
+
+load_dotenv(os.path.join(MCP_SERVER_DIR, ".env"))
 
 mcp = FastMCP("iot-ops-mcp-server", stateless_http=True)
 

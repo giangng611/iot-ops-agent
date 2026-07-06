@@ -559,7 +559,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
         )
 
         tools = [workflow["tool"] for workflow in planned]
-        self.assertEqual(len(tools), 3)
+        self.assertEqual(len(tools), 2)
         self.assertIn("get_company_onem2m_command_flow", tools)
         self.assertIn("grafana_logs", tools)
         self.assertNotIn("grafana_emqx_health", tools)
@@ -567,6 +567,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
             workflow for workflow in planned if workflow["tool"] == "grafana_logs"
         )
         self.assertNotIn("service", log_workflow["params"])
+        self.assertEqual(log_workflow["params"]["contains"], "dvi-1")
         self.assertEqual(log_workflow["params"]["level"], "error|warn")
 
     def test_ioa_v3_strips_trailing_punctuation_from_onem2m_ids(self):

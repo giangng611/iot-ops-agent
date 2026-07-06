@@ -858,27 +858,21 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         )
 
     def test_agent_source_resolver_uses_company_only_when_active(self):
-        company_context = {
-            "source": "company_mongodb",
-            "record_count": 3,
-            "sample_records": [{"device_id": "company-device-1"}],
-        }
-
         with patch(
-            "services.diagnose_service.get_company_agent_context",
-            return_value=company_context,
+            "services.diagnose_service.check_company_mongodb_read_available",
+            return_value={"available": True},
         ):
             resolved = diagnose_service.resolve_agent_operational_context(
                 "company"
             )
 
         self.assertEqual(resolved["active_source"], "company_mongodb")
-        self.assertIs(resolved["operational_context"], company_context)
+        self.assertIsNone(resolved["operational_context"])
 
         with patch(
-            "services.diagnose_service.get_company_agent_context",
+            "services.diagnose_service.check_company_mongodb_read_available",
             return_value={
-                "source": "simulator_fallback",
+                "available": False,
                 "reason": "company DB disconnected",
             },
         ):

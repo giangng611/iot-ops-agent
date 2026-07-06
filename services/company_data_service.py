@@ -9,7 +9,11 @@ from storage.sqlite_store import (
     get_all_latest_devices as get_sqlite_latest_devices,
     get_latest_status as get_sqlite_latest_status,
 )
-from services.company_mongo_proxy import get_company_mongo_read_proxy
+from services.company_mongo_proxy import (
+    company_data_access_mode,
+    get_company_mongo_read_proxy,
+)
+from services.mcp_client import get_mcp_bearer_key, get_mcp_server_url
 from services.company_poc_rule_service import (
     evaluate_company_poc_rules,
     get_company_poc_rule_catalog,
@@ -29,7 +33,7 @@ MAX_SCHEMA_FIELD_PATHS = 120
 MAX_PAYLOAD_CHARS_TO_PARSE = 20000
 DEFAULT_OPERATIONAL_RECORD_LIMIT = 100
 DEFAULT_COMPANY_CIN_SCAN_LIMIT = 500
-DEFAULT_COMPANY_CIN_PER_DEVICE_LIMIT = 20
+DEFAULT_COMPANY_CIN_PER_DEVICE_LIMIT = 0
 DEFAULT_COMPANY_CIN_SORT = ("_id", -1)
 MAX_COMPANY_INVENTORY_RECORDS = 1000
 MAX_THRESHOLD_SCAN_RECORDS = 80
@@ -100,11 +104,21 @@ def get_company_mongodb_db():
     return os.getenv("COMPANY_MONGODB_DB", "").strip()
 
 
+def company_mcp_configured():
+    return bool(get_mcp_server_url() and get_mcp_bearer_key())
+
+
 def company_db_configured():
+    if company_data_access_mode() == "mcp":
+        return company_mcp_configured()
+
     return bool(get_company_db_url() or get_company_mongodb_uri())
 
 
 def company_db_type():
+    if company_data_access_mode() == "mcp":
+        return "mongodb" if company_mcp_configured() else "none"
+
     if get_company_mongodb_uri():
         return "mongodb"
 
@@ -112,6 +126,35 @@ def company_db_type():
         return "postgres"
 
     return "none"
+
+
+def check_company_mongodb_read_available():
+    if company_db_type() != "mongodb":
+        return {
+            "available": False,
+            "reason": "Company MongoDB access is not configured.",
+        }
+
+    try:
+        with get_company_mongo_read_proxy("company-source-health") as proxy:
+            proxy.find(
+                "devicemgmt",
+                "NODE",
+                {},
+                {"_id": 0, "rn": 1},
+                limit=1,
+            )
+            db_audit = proxy.get_audit_events()
+    except Exception as exc:
+        return {
+            "available": False,
+            "reason": f"Company MongoDB read failed: {exc}",
+        }
+
+    return {
+        "available": True,
+        "db_audit": db_audit,
+    }
 
 
 def get_company_connection():
@@ -1300,6 +1343,20 @@ def load_company_device_read_model(
         sort=DEFAULT_COMPANY_CIN_SORT,
         limit=safe_cin_limit,
     )
+    debug_samples = {
+        "devicemgmt.NODE": [trim_document(row) for row in nodes[:3]],
+        "authorization.IDENTITY": [trim_document(row) for row in identities[:3]],
+        "datamgmt.CNT": [trim_document(row) for row in containers[:3]],
+        "datamgmt.RULE": [trim_document(row) for row in rules[:3]],
+        "datamgmt.DEVICE_TELEMETRY": [
+            trim_document(row)
+            for row in telemetry_catalog[:3]
+        ],
+        "datamgmt.CIN": [
+            trim_document(row)
+            for row in content_instances[:5]
+        ],
+    }
 
     identities_by_alias = {}
 
@@ -1366,7 +1423,7 @@ def load_company_device_read_model(
         for row in content_instances
     }
     cin_per_device_limit = max(
-        1,
+        0,
         min(
             int(os.getenv(
                 "COMPANY_CIN_PER_DEVICE_LIMIT",
@@ -1390,29 +1447,30 @@ def load_company_device_read_model(
         "appDomainName": 1,
     }
 
-    for container_ids in telemetry_container_ids_by_device.values():
-        for container_id in sorted(container_ids):
-            if not container_id:
-                continue
-
-            for row in proxy.find(
-                "datamgmt",
-                "CIN",
-                {"pi": container_id},
-                cin_projection,
-                sort=DEFAULT_COMPANY_CIN_SORT,
-                limit=cin_per_device_limit,
-            ):
-                content_key = (
-                    row.get("rn")
-                    or f"{row.get('pi')}:{row.get('ct')}:{row.get('lt')}"
-                )
-
-                if content_key in seen_content_records:
+    if cin_per_device_limit > 0:
+        for container_ids in telemetry_container_ids_by_device.values():
+            for container_id in sorted(container_ids):
+                if not container_id:
                     continue
 
-                seen_content_records.add(content_key)
-                content_instances.append(row)
+                for row in proxy.find(
+                    "datamgmt",
+                    "CIN",
+                    {"pi": container_id},
+                    cin_projection,
+                    sort=DEFAULT_COMPANY_CIN_SORT,
+                    limit=cin_per_device_limit,
+                ):
+                    content_key = (
+                        row.get("rn")
+                        or f"{row.get('pi')}:{row.get('ct')}:{row.get('lt')}"
+                    )
+
+                    if content_key in seen_content_records:
+                        continue
+
+                    seen_content_records.add(content_key)
+                    content_instances.append(row)
 
     units = metric_catalog_units(telemetry_catalog)
     catalog = metric_catalog_by_device(telemetry_catalog)
@@ -1640,6 +1698,7 @@ def load_company_device_read_model(
         "telemetry_payload_count": telemetry_payload_count,
         "unmapped_telemetry_count": unmapped_telemetry_count,
         "command_record_count": command_record_count,
+        "debug_samples": debug_samples,
     }
 
 
@@ -1823,9 +1882,31 @@ def get_company_operational_payload(
             )
             db_audit = proxy.get_audit_events()
     except Exception as exc:
-        return simulator_fallback_snapshot(
-            f"Company MongoDB read failed: {exc}"
-        )
+        if company_data_access_mode() != "mcp":
+            return simulator_fallback_snapshot(
+                f"Company MongoDB read failed: {exc}"
+            )
+
+        try:
+            with get_company_mongo_read_proxy(
+                f"{proxy_actor}-direct-fallback",
+                force_direct=True,
+            ) as proxy:
+                model = load_company_device_read_model(
+                    proxy,
+                    max(int(limit), DEFAULT_COMPANY_CIN_SCAN_LIMIT),
+                )
+                db_audit = proxy.get_audit_events()
+                db_transport_fallback_reason = (
+                    "MCP client transport failed; direct read fallback used "
+                    f"for local diagnostics: {exc}"
+                )
+        except Exception:
+            return simulator_fallback_snapshot(
+                f"Company MongoDB read failed: {exc}"
+            )
+    else:
+        db_transport_fallback_reason = ""
 
     db_read_plan = build_company_read_model_audit_plan(
         proxy_actor,
@@ -1872,10 +1953,13 @@ def get_company_operational_payload(
             "db_audit": db_audit,
             "db_read_plan": db_read_plan,
             "db_audit_status": db_audit_status,
+            "db_transport_fallback_reason": db_transport_fallback_reason,
         },
         "db_audit": db_audit,
         "db_read_plan": db_read_plan,
         "db_audit_status": db_audit_status,
+        "db_transport_fallback_reason": db_transport_fallback_reason,
+        "db_debug_samples": model.get("debug_samples", {}),
         "selected_source": "company",
         "active_source": "company_mongodb",
         "rules_status": "provisional_poc",

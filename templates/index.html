@@ -284,6 +284,16 @@
                         </option>
                     </select>
 
+                    <button
+                        id="companyDbDebugButton"
+                        class="db-debug-button company-only-control hidden"
+                        type="button"
+                        onclick="openCompanyDbDebug()"
+                        title="Show backend MongoDB read commands and sampled results"
+                    >
+                        DB debug
+                    </button>
+
                 </div>
 
                 <div id="companyDataSummary" class="company-data-summary hidden"></div>
@@ -557,6 +567,25 @@
         <div class="device-history-chart-wrapper">
             <canvas id="deviceHistoryChart"></canvas>
             <div id="deviceHistoryEmpty" class="device-history-empty hidden"></div>
+        </div>
+    </div>
+</div>
+
+<div id="companyDbDebugModal" class="modal-overlay hidden">
+    <div class="company-db-debug-modal">
+        <div class="device-history-header">
+            <div>
+                <h2>Company DB Debug</h2>
+                <p>Read-only backend commands, audit trace, and sampled results used by Devices.</p>
+            </div>
+
+            <button onclick="closeCompanyDbDebug()">
+                Close
+            </button>
+        </div>
+
+        <div id="companyDbDebugContent" class="company-db-debug-content">
+            No company database debug data yet.
         </div>
     </div>
 </div>

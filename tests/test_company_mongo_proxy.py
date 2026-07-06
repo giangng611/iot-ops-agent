@@ -4,8 +4,10 @@ from unittest.mock import patch
 from services.company_mongo_proxy import (
     CompanyMongoProxyRateLimitError,
     CompanyMongoReadProxy,
+    MCPCompanyMongoReadProxy,
     SlidingWindowRateLimiter,
     company_mongo_rate_limiter,
+    get_company_mongo_read_proxy,
     should_use_direct_connection,
 )
 
@@ -325,6 +327,66 @@ class CompanyMongoProxyTests(unittest.TestCase):
 
             with self.assertRaises(PermissionError):
                 proxy.find("datamgmt", "CIN")
+
+    def test_mcp_mode_returns_mcp_proxy_without_mongodb_uri(self):
+        with patch.dict(
+            "os.environ",
+            {"COMPANY_DATA_ACCESS_MODE": "mcp"},
+            clear=False,
+        ):
+            proxy = get_company_mongo_read_proxy("agent")
+
+        self.assertIsInstance(proxy, MCPCompanyMongoReadProxy)
+
+    def test_mcp_proxy_calls_mongo_find_tool(self):
+        calls = []
+
+        def tool_caller(tool_name, arguments):
+            calls.append((tool_name, arguments))
+            return [{"rn": "device-a"}]
+
+        proxy = MCPCompanyMongoReadProxy("agent", tool_caller=tool_caller)
+        rows = proxy.find(
+            "datamgmt",
+            "CIN",
+            {"rn": "device-a"},
+            {"_id": 0},
+            sort=("ct", -1),
+            limit=5,
+        )
+
+        self.assertEqual(rows, [{"rn": "device-a"}])
+        self.assertEqual(calls[0][0], "mongo_find")
+        self.assertEqual(
+            calls[0][1],
+            {
+                "database": "datamgmt",
+                "collection": "CIN",
+                "query": {"rn": "device-a"},
+                "projection": {"_id": 0},
+                "sort_field": "ct",
+                "sort_direction": -1,
+                "limit": 5,
+            },
+        )
+        self.assertEqual(
+            proxy.get_audit_events()[0]["access_path"],
+            "mcp_server",
+        )
+
+    def test_mcp_proxy_preserves_collection_shape_for_app(self):
+        proxy = MCPCompanyMongoReadProxy(
+            "agent",
+            tool_caller=lambda tool, args: ["CIN", "CNT"],
+        )
+
+        self.assertEqual(
+            proxy.list_collections("datamgmt"),
+            [
+                {"name": "CIN", "type": "collection"},
+                {"name": "CNT", "type": "collection"},
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -306,7 +306,11 @@ function resetLiveReasoningRun() {
 let currentDataSourceState = {
     selected_source: "simulator",
     active_source: "simulator",
-    rules_status: "simulator"
+    rules_status: "simulator",
+    db_audit_status: "unknown",
+    db_audit: [],
+    db_read_plan: [],
+    db_debug_samples: {}
 };
 
 const prompts = [
@@ -1666,7 +1670,12 @@ async function refreshDevices() {
             alerts: data.alerts || {},
             official_alerts: data.official_alerts || {},
             kpi_evaluations: data.kpi_evaluations || [],
-            company_rule_mappings: data.company_rule_mappings || []
+            company_rule_mappings: data.company_rule_mappings || [],
+            provenance: data.provenance || {},
+            db_audit_status: data.db_audit_status || data.provenance?.db_audit_status || "unknown",
+            db_audit: data.db_audit || data.provenance?.db_audit || [],
+            db_read_plan: data.db_read_plan || data.provenance?.db_read_plan || [],
+            db_debug_samples: data.db_debug_samples || {}
         };
         allDevices = data.devices || [];
         currentAlerts = data.alerts || {
@@ -1885,7 +1894,7 @@ function updateDataSourceDisplay() {
 
     if (selectedDataSource === "simulator") {
         note.textContent = (
-            "Fallback simulator is selected. Demo telemetry and demo alert rules are active."
+            "Simulator telemetry is selected. Demo alert rules are active."
         );
         note.classList.remove("hidden");
         return;
@@ -2015,6 +2024,66 @@ function getCompanyRecordView(device) {
     };
 }
 
+function displayCompanyValue(value, fallback = "-") {
+    if (value === null || value === undefined) {
+        return fallback;
+    }
+
+    const text = String(value).trim();
+
+    if (!text || text.toLowerCase() === "null" || text.toLowerCase() === "none") {
+        return fallback;
+    }
+
+    return text;
+}
+
+function companyProfileSummary(device) {
+    const category = displayCompanyValue(device.category, "Unknown type");
+    const maker = displayCompanyValue(device.manufacturer, "");
+    const model = displayCompanyValue(device.model, "");
+    const protocol = displayCompanyValue(device.protocol, "");
+    const source = device.inventory_source === "devicemgmt.NODE"
+        ? "devicemgmt.NODE device registry"
+        : displayCompanyValue(device.inventory_source, "telemetry-only row");
+
+    return {
+        category,
+        details: [maker, model, protocol].filter(Boolean).join(" · ") || "No device profile metadata",
+        source,
+        node: displayCompanyValue(device.node_id, ""),
+    };
+}
+
+function companyRuleFieldSummary() {
+    const rules = currentDataSourceState.company_rule_mappings || [];
+    const fields = [];
+
+    rules.forEach(rule => {
+        (rule.filters || []).forEach(filter => {
+            if (filter.field && !fields.includes(filter.field)) {
+                fields.push(filter.field);
+            }
+        });
+    });
+
+    return fields;
+}
+
+function companyMetricFieldSummary() {
+    const fields = [];
+
+    (allDevices || []).forEach(device => {
+        (device.metrics || []).forEach(metric => {
+            if (metric.name && !fields.includes(metric.name)) {
+                fields.push(metric.name);
+            }
+        });
+    });
+
+    return fields;
+}
+
 function renderCompanyMetrics(metrics) {
     if (!Array.isArray(metrics) || metrics.length === 0) {
         return '<span class="metric-empty">No additional telemetry in this record</span>';
@@ -2050,7 +2119,7 @@ function companyMetricTooltip(metric) {
     if (metric.inferred_from) {
         parts.push(`mapped from ${metric.inferred_from}`);
     } else if (metric.name === "value") {
-        parts.push("The company payload did not include a metric name for this value.");
+        parts.push("CIN.con contains a generic JSON field named value, not a business metric name.");
     }
 
     if (metric.rule_operator || metric.rule_threshold) {
@@ -2083,6 +2152,9 @@ function renderCompanyDataSummary() {
     const telemetryDevices = allDevices.filter(
         device => Number(device.telemetry_record_count || 0) > 0
     ).length;
+    const ruleFields = companyRuleFieldSummary();
+    const metricFields = companyMetricFieldSummary();
+    const missingRuleFields = ruleFields.filter(field => !metricFields.includes(field));
     const connectedCount = Object.entries(statusCounts)
         .filter(([status]) => status.includes("connected") && !status.includes("disconnected"))
         .reduce((total, [, count]) => total + count, 0);
@@ -2093,7 +2165,7 @@ function renderCompanyDataSummary() {
     summary.innerHTML = `
         <div class="company-summary-stats">
             <div>
-                <span>Inventory devices</span>
+                <span>Device profiles</span>
                 <strong>${uniqueDevices}</strong>
             </div>
             <div>
@@ -2115,10 +2187,14 @@ function renderCompanyDataSummary() {
         </div>
         <p class="company-rules-notice">
             ${sourceSummary.telemetry_payload_count || 0} telemetry payloads scanned.
-            ${sourceSummary.unmapped_telemetry_count || 0} records could not be mapped
-            safely. Raw value chips mean the payload has no metric name in
-            datamgmt.CIN.con. ${tenantCount} tenant${tenantCount === 1 ? "" : "s"}
-            are represented.
+            ${sourceSummary.unmapped_telemetry_count || 0} records could not be mapped safely.
+            Raw value means datamgmt.CIN.con literally exposes {"value": "..."} instead
+            of a metric such as Toc_do_xe, PM2.5, temp, or humidity.
+            ${missingRuleFields.length ? `
+                Rule fields not found in current telemetry chips:
+                ${escapeHtml(missingRuleFields.slice(0, 5).join(", "))}.
+            ` : ""}
+            ${tenantCount} tenant${tenantCount === 1 ? "" : "s"} are represented.
         </p>
     `;
 }
@@ -2128,6 +2204,12 @@ function updateDeviceControlsForSource() {
     const charts = document.getElementById("devicesCharts");
     const summary = document.getElementById("companyDataSummary");
     const tableCard = document.getElementById("devicesTableCard");
+    const debugButton = document.getElementById("companyDbDebugButton");
+
+    document.querySelector(".device-controls")?.classList.toggle(
+        "company-device-controls",
+        companyMode,
+    );
 
     document.querySelectorAll(".simulator-only-control").forEach(control => {
         control.classList.toggle("hidden", companyMode);
@@ -2139,9 +2221,343 @@ function updateDeviceControlsForSource() {
     charts?.classList.toggle("hidden", companyMode);
     summary?.classList.toggle("hidden", !companyMode);
     tableCard?.classList.toggle("company-table-card", companyMode);
+    debugButton?.classList.toggle("hidden", !companyMode);
 
     if (companyMode) {
         renderCompanyDataSummary();
+    }
+}
+
+function formatDebugJson(value) {
+    return escapeHtml(JSON.stringify(value ?? null, null, 2));
+}
+
+function renderDebugCopyBlock(label, rawText) {
+    return `
+        <div class="db-debug-copy-block">
+            <div class="db-debug-copy-header">
+                <label>${escapeHtml(label)}</label>
+                <button type="button" onclick="copyDebugBlock(this)">Copy</button>
+            </div>
+            <pre>${escapeHtml(rawText)}</pre>
+        </div>
+    `;
+}
+
+async function copyDebugBlock(button) {
+    const block = button.closest(".db-debug-copy-block");
+    const pre = block?.querySelector("pre");
+    const text = pre?.textContent || "";
+
+    if (!text) {
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied";
+        setTimeout(() => {
+            button.textContent = "Copy";
+        }, 1400);
+    } catch (error) {
+        console.error("Failed to copy debug block:", error);
+        button.textContent = "Failed";
+        setTimeout(() => {
+            button.textContent = "Copy";
+        }, 1400);
+    }
+}
+
+function mongoShellCommandFromPlan(plan) {
+    const namespace = String(plan.namespace || "");
+    const [database, collection] = namespace.split(".");
+
+    if (!database || !collection) {
+        return JSON.stringify(plan, null, 2);
+    }
+
+    const query = plan.query || {};
+    const projection = plan.projection || {};
+    const sort = plan.sort;
+    const limit = plan.effective_limit || plan.requested_limit || 100;
+    let command = `db.getSiblingDB(${JSON.stringify(database)}).getCollection(${JSON.stringify(collection)}).find(\n`;
+    command += `  ${JSON.stringify(query, null, 2).replace(/\n/g, "\n  ")},\n`;
+    command += `  ${JSON.stringify(projection, null, 2).replace(/\n/g, "\n  ")}\n`;
+    command += `)`;
+
+    if (Array.isArray(sort) && sort.length === 2) {
+        command += `.sort({ ${JSON.stringify(sort[0])}: ${sort[1]} })`;
+    }
+
+    command += `.limit(${limit});`;
+    return command;
+}
+
+function renderCompanyDbDebugSection(plan, index) {
+    const samples = currentDataSourceState.db_debug_samples || {};
+    const runtimeAudits = currentDataSourceState.db_audit || [];
+    const namespace = plan.namespace || `query-${index + 1}`;
+    const audit = runtimeAudits.find(item => item.namespace === namespace) || {};
+    const sampleRows = samples[namespace] || [];
+
+    return `
+        <section class="db-debug-section">
+            <div class="db-debug-section-header">
+                <div>
+                    <h3>${escapeHtml(namespace)}</h3>
+                    <p>
+                        ${escapeHtml(plan.operation || "find")}
+                        · requested ${escapeHtml(plan.requested_limit || "-")}
+                        · effective ${escapeHtml(plan.effective_limit || audit.effective_limit || "-")}
+                    </p>
+                </div>
+                <span>${sampleRows.length} sample${sampleRows.length === 1 ? "" : "s"}</span>
+            </div>
+            ${renderDebugCopyBlock("Mongo shell equivalent", mongoShellCommandFromPlan(plan))}
+            ${renderDebugCopyBlock("Runtime audit", JSON.stringify(audit || {}, null, 2))}
+            ${renderDebugCopyBlock("Sample result returned to backend", JSON.stringify(sampleRows, null, 2))}
+        </section>
+    `;
+}
+
+function companyConnectionState(device) {
+    const normalizedStatus = String(device.status || "unknown").toLowerCase();
+
+    if (normalizedStatus.includes("disconnected")) {
+        return "disconnected";
+    }
+
+    if (normalizedStatus.includes("connected")) {
+        return "connected";
+    }
+
+    return "unknown";
+}
+
+function companyDeviceSearchText(device) {
+    const searchableMetrics = Array.isArray(device.metrics)
+        ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
+        : "";
+
+    return [
+        device.device_id,
+        device.record_id,
+        device.parent_container,
+        device.device_name,
+        device.node_id,
+        device.category,
+        device.model,
+        device.manufacturer,
+        device.app_domain_name,
+        device.tenant_name,
+        searchableMetrics
+    ].join(" ").toLowerCase();
+}
+
+function getCompanyTableState() {
+    const searchValue = document.getElementById("deviceSearch")?.value.toLowerCase() || "";
+    const statusValue = document.getElementById("companyConnectionFilter")?.value || "all";
+    const sortValue = document.getElementById("companySortSelect")?.value || "latest";
+    let devices = [...(allDevices || [])];
+
+    devices = devices.filter(device => {
+        const matchesSearch = companyDeviceSearchText(device).includes(searchValue);
+        const matchesStatus = statusValue === "all" || companyConnectionState(device) === statusValue;
+        return matchesSearch && matchesStatus;
+    });
+
+    devices.sort((a, b) => {
+        if (sortValue === "name") {
+            return String(a.device_name || a.device_id || "").localeCompare(
+                String(b.device_name || b.device_id || "")
+            );
+        }
+
+        if (sortValue === "telemetry") {
+            return Number(b.telemetry_record_count || 0)
+                - Number(a.telemetry_record_count || 0);
+        }
+
+        if (sortValue === "rules") {
+            return Number(b.rule_count || 0) - Number(a.rule_count || 0);
+        }
+
+        return Number(b.timestamp || 0) - Number(a.timestamp || 0);
+    });
+
+    return {
+        searchValue,
+        statusValue,
+        sortValue,
+        devices,
+    };
+}
+
+function explainCompanyDeviceRow(device, visibleDevices) {
+    const visibleIds = new Set(visibleDevices.map(item => item.device_id));
+    const reasons = [];
+
+    if (!visibleIds.has(device.device_id)) {
+        reasons.push("Not visible with the current table search/filter/sort window.");
+    }
+
+    if (device.inventory_source === "devicemgmt.NODE") {
+        reasons.push("Device profile row from devicemgmt.NODE childDeviceInfoEntities.");
+    }
+
+    if (Number(device.telemetry_record_count || 0) === 0) {
+        reasons.push("No datamgmt.CIN payload was safely mapped to this device.");
+    } else {
+        reasons.push(`${device.telemetry_record_count} datamgmt.CIN payload records mapped through CNT/container ownership or payload identity.`);
+    }
+
+    if (!Array.isArray(device.metrics) || device.metrics.length === 0) {
+        reasons.push("No displayable metric name/value was extracted from the latest payload.");
+    } else if (device.metrics.some(metric => metric.name === "value")) {
+        reasons.push("Latest payload only exposed a generic value field, so the UI labels it raw value.");
+    } else {
+        reasons.push("Latest payload includes named metrics that can be displayed directly.");
+    }
+
+    if (device.connectivity) {
+        reasons.push(`connectivity=${device.connectivity} is inventory metadata from the DB, not the live connection status.`);
+    }
+
+    return reasons;
+}
+
+function renderCompanyDeviceDebugRows(rows, visibleDevices) {
+    if (!rows.length) {
+        return `
+            <div class="db-debug-empty">
+                <strong>No device rows matched the current table state.</strong>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="db-debug-device-list">
+            ${rows.map(device => `
+                <article class="db-debug-device-card">
+                    <div>
+                        <strong title="${escapeHtml(device.device_name || "")}">
+                            ${escapeHtml(device.device_name || "Unnamed device")}
+                        </strong>
+                        <small title="${escapeHtml(device.device_id || "")}">
+                            ${escapeHtml(device.device_id || "Unknown ID")}
+                        </small>
+                    </div>
+                    <dl>
+                        <div><dt>Device profile</dt><dd>${escapeHtml(device.inventory_source || "-")}</dd></div>
+                        <div><dt>Record</dt><dd title="${escapeHtml(device.record_id || "")}">${escapeHtml(device.record_id || "-")}</dd></div>
+                        <div><dt>Container</dt><dd title="${escapeHtml(device.parent_container || "")}">${escapeHtml(device.parent_container || "-")}</dd></div>
+                        <div><dt>Telemetry</dt><dd>${escapeHtml(device.telemetry_record_count || 0)} records</dd></div>
+                        <div><dt>Connectivity</dt><dd>${escapeHtml(device.connectivity || "-")}</dd></div>
+                        <div><dt>Protocol</dt><dd>${escapeHtml(device.protocol || "-")}</dd></div>
+                    </dl>
+                    <ul>
+                        ${explainCompanyDeviceRow(device, visibleDevices).map(reason => `
+                            <li>${escapeHtml(reason)}</li>
+                        `).join("")}
+                    </ul>
+                    ${renderDebugCopyBlock("Visible row payload", JSON.stringify({
+                        metrics: device.metrics || [],
+                        payload_summary: device.payload_summary || null,
+                        content_format: device.content_format || null,
+                    }, null, 2))}
+                </article>
+            `).join("")}
+        </div>
+    `;
+}
+
+function openCompanyDbDebug() {
+    const modal = document.getElementById("companyDbDebugModal");
+    const content = document.getElementById("companyDbDebugContent");
+
+    if (!modal || !content) {
+        return;
+    }
+
+    const plan = currentDataSourceState.db_read_plan || [];
+    const summary = currentDataSourceState.summary || {};
+    const provenance = currentDataSourceState.provenance || {};
+    const samples = currentDataSourceState.db_debug_samples || {};
+    const tableState = getCompanyTableState();
+    const sampleDeviceRows = tableState.devices.slice(0, 8);
+
+    if (!plan.length && !Object.keys(samples).length) {
+        content.innerHTML = `
+            <div class="db-debug-empty">
+                <strong>No MongoDB debug data is available for this page load.</strong>
+                <p>${escapeHtml(currentDataSourceState.reason || "Switch to Company data source and refresh Devices.")}</p>
+            </div>
+        `;
+        modal.classList.remove("hidden");
+        return;
+    }
+
+    content.innerHTML = `
+        <div class="db-debug-overview">
+            <div>
+                <span>Active source</span>
+                <strong>${escapeHtml(formatDataSourceLabel(currentDataSourceState.active_source))}</strong>
+            </div>
+            <div>
+                <span>Audit status</span>
+                <strong>${escapeHtml(currentDataSourceState.db_audit_status || provenance.db_audit_status || "unknown")}</strong>
+            </div>
+            <div>
+                <span>CIN scanned</span>
+                <strong>${escapeHtml(summary.content_instance_count || 0)}</strong>
+            </div>
+            <div>
+                <span>Unmapped telemetry</span>
+                <strong>${escapeHtml(summary.unmapped_telemetry_count || 0)}</strong>
+            </div>
+            <div>
+                <span>Rows after filter</span>
+                <strong>${escapeHtml(tableState.devices.length)} / ${escapeHtml((allDevices || []).length)}</strong>
+            </div>
+        </div>
+        <section class="db-debug-explainer">
+            <strong>How to read this</strong>
+            <p>
+                Device profile means the row came from devicemgmt.NODE. Telemetry records
+                come from datamgmt.CIN.con after the backend maps CIN through CNT/container
+                ownership or payload identity. The label "raw value" is UI wording for
+                a generic metric named "value"; the value itself, such as "abcd1", comes
+                from the database payload.
+                If datamgmt.RULE filters expect fields such as Toc_do_xe or ug/m3 but
+                CIN.con only contains {"value":"abcd1"}, the rule cannot be evaluated
+                against that telemetry without a confirmed field mapping.
+            </p>
+            <p>
+                Current table state: search="${escapeHtml(tableState.searchValue || "none")}",
+                connection="${escapeHtml(tableState.statusValue)}",
+                sort="${escapeHtml(tableState.sortValue)}".
+            </p>
+        </section>
+        <section class="db-debug-section">
+            <div class="db-debug-section-header">
+                <div>
+                    <h3>Visible joined device rows</h3>
+                    <p>Rows after the current Devices table search/filter/sort, with business interpretation.</p>
+                </div>
+                <span>${sampleDeviceRows.length} rows</span>
+            </div>
+            ${renderCompanyDeviceDebugRows(sampleDeviceRows, tableState.devices)}
+        </section>
+        ${plan.map(renderCompanyDbDebugSection).join("")}
+    `;
+    modal.classList.remove("hidden");
+}
+
+function closeCompanyDbDebug() {
+    const modal = document.getElementById("companyDbDebugModal");
+
+    if (modal) {
+        modal.classList.add("hidden");
     }
 }
 
@@ -2202,7 +2618,7 @@ function renderDeviceTable() {
             <th class="company-device-column">Device</th>
             <th>Connection</th>
             <th>Latest telemetry</th>
-            <th>Inventory</th>
+            <th>Device profile</th>
             <th>Last observed</th>
             <th>Rules / History</th>
         `
@@ -2238,58 +2654,34 @@ function renderDeviceTable() {
 
     let devices = [...allDevices];
 
-    devices = devices.filter(device => {
-        const searchableMetrics = Array.isArray(device.metrics)
-            ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
-            : "";
-        const searchableText = [
-            device.device_id,
-            device.parent_container,
-            device.device_name,
-            device.node_id,
-            device.category,
-            device.model,
-            device.manufacturer,
-            device.app_domain_name,
-            device.tenant_name,
-            searchableMetrics
-        ].join(" ").toLowerCase();
-        const matchesSearch = searchableText.includes(searchValue);
-        const normalizedStatus = String(device.status || "unknown").toLowerCase();
-        const connectionState = normalizedStatus.includes("disconnected")
-            ? "disconnected"
-            : normalizedStatus.includes("connected")
-                ? "connected"
-                : "unknown";
-        const matchesStatus = statusValue === "all" || (
-            companyMode
-                ? connectionState === statusValue
-                : device.status === statusValue
-        );
+    if (companyMode) {
+        devices = getCompanyTableState().devices;
+    } else {
+        devices = devices.filter(device => {
+            const searchableMetrics = Array.isArray(device.metrics)
+                ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
+                : "";
+            const searchableText = [
+                device.device_id,
+                device.parent_container,
+                device.device_name,
+                device.node_id,
+                device.category,
+                device.model,
+                device.manufacturer,
+                device.app_domain_name,
+                device.tenant_name,
+                searchableMetrics
+            ].join(" ").toLowerCase();
+            const matchesSearch = searchableText.includes(searchValue);
+            const matchesStatus = statusValue === "all" || device.status === statusValue;
 
-        return matchesSearch && matchesStatus;
-    });
+            return matchesSearch && matchesStatus;
+        });
+    }
 
-    devices.sort((a, b) => {
-        if (companyMode) {
-            if (sortValue === "name") {
-                return String(a.device_name || a.device_id || "").localeCompare(
-                    String(b.device_name || b.device_id || "")
-                );
-            }
-
-            if (sortValue === "telemetry") {
-                return Number(b.telemetry_record_count || 0)
-                    - Number(a.telemetry_record_count || 0);
-            }
-
-            if (sortValue === "rules") {
-                return Number(b.rule_count || 0) - Number(a.rule_count || 0);
-            }
-
-            return Number(b.timestamp || 0) - Number(a.timestamp || 0);
-        }
-
+    if (!companyMode) {
+        devices.sort((a, b) => {
         if (sortValue === "priority") {
             return calculatePriority(b) - calculatePriority(a);
         }
@@ -2311,13 +2703,15 @@ function renderDeviceTable() {
         }
 
         return 0;
-    });
+        });
+    }
 
     tableBody.innerHTML = "";
 
     devices.forEach(device => {
         if (companyMode) {
             const view = getCompanyRecordView(device);
+            const profile = companyProfileSummary(device);
             const normalizedStatus = String(view.status || "unknown").toLowerCase();
             const connectionClass = normalizedStatus.includes("disconnected")
                 ? "disconnected"
@@ -2336,8 +2730,10 @@ function renderDeviceTable() {
                                 >
                                     ${escapeHtml(view.name)}
                                 </strong>
-                                <small class="device-subtext company-id" title="${escapeHtml(view.id)}">
-                                    ${escapeHtml(view.id)}
+                                <small
+                                        class="device-subtext company-id"
+                                    >
+                                    ID: ${escapeHtml(view.id)}
                                 </small>
                             </div>
                             <button
@@ -2357,16 +2753,17 @@ function renderDeviceTable() {
                     </td>
                     <td>${renderCompanyMetrics(view.telemetry)}</td>
                     <td class="company-context-cell">
-                        <span>${escapeHtml(device.category || "Unknown type")}</span>
+                        <span>
+                            <b class="company-profile-label">Type</b>
+                            ${escapeHtml(profile.category)}
+                        </span>
                         <small class="device-subtext">
-                            ${escapeHtml([
-                                device.manufacturer,
-                                device.model,
-                                device.protocol
-                            ].filter(Boolean).join(" · ") || "No model metadata")}
+                            <b class="company-profile-label">Meta</b>
+                            ${escapeHtml(profile.details)}
                         </small>
-                        <small class="device-subtext" title="${escapeHtml(device.node_id || "")}">
-                            ${escapeHtml(device.node_id || device.inventory_source || "Telemetry only")}
+                        <small class="device-subtext">
+                            <b class="company-profile-label">Source</b>
+                            ${escapeHtml([profile.source, profile.node].filter(Boolean).join(" · "))}
                         </small>
                     </td>
                     <td class="company-time-cell">
@@ -5626,14 +6023,14 @@ async function openProfileDrawer(type) {
                             aria-pressed="${selectedDataSource === "simulator"}"
                             onclick="changeDataSource('simulator')"
                         >
-                            Fallback simulator
+                            Simulator
                         </button>
                     </div>
                     <p id="dataSourceNote" class="drawer-source-note"></p>
 
                     <div class="drawer-subsection">
                         <strong>Alert Policy</strong>
-                        <p>Choose whether the Alerts tab uses official Grafana/company alerts or the current safe fallback rules.</p>
+                        <p>Choose whether the Alerts tab uses official Grafana/company alerts or simulator rules.</p>
                     </div>
                     <div
                         id="alertPolicySegmented"
@@ -6395,9 +6792,21 @@ function getRealtimeStatusHtml() {
             : '<span class="status-offline">Fallback simulator disconnected</span>';
     }
 
+    if (currentDataSourceState.active_source === "mongodb") {
+        return realtimeSocketConnected
+            ? '<span class="status-online">MongoDB telemetry active</span>'
+            : '<span class="status-offline">MongoDB telemetry disconnected</span>';
+    }
+
+    if (currentDataSourceState.active_source === "sqlite") {
+        return realtimeSocketConnected
+            ? '<span class="status-fallback">SQLite telemetry active</span>'
+            : '<span class="status-offline">SQLite telemetry disconnected</span>';
+    }
+
     return realtimeSocketConnected
-        ? '<span class="status-fallback">Fallback simulator active</span>'
-        : '<span class="status-offline">Fallback simulator disconnected</span>';
+        ? '<span class="status-online">Realtime active</span>'
+        : '<span class="status-offline">Realtime disconnected</span>';
 }
 
 function updateRealtimeStatusDisplay() {

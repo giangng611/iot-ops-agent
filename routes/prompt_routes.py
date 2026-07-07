@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 
 from routes.helpers import current_user_id, require_login_json
 from services.prompt_service import (
@@ -19,7 +19,12 @@ def api_get_prompts():
     if unauthorized:
         return unauthorized
 
-    return jsonify({"prompts": list_prompts(current_user_id())})
+    return jsonify({
+        "prompts": list_prompts(
+            current_user_id(),
+            session.get("selected_data_source"),
+        )
+    })
 
 
 @prompt_bp.route("/api/prompts", methods=["POST"])

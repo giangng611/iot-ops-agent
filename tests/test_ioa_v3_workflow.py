@@ -10,6 +10,7 @@ from services.grafana_tool_registry import (
     get_grafana_tool_by_name,
     get_kpi_rules_for_tool,
 )
+from services.prompt_service import DEFAULT_PROMPTS, list_prompts
 from services.n8n_gateway_service import (
     DEFAULT_N8N_V3_WEBHOOK_URL,
     build_n8n_v3_payload,
@@ -34,6 +35,8 @@ class IOAV3WorkflowTests(unittest.TestCase):
             and item["path"] == "/grafana/emqx/connection-trend"
             for item in policy["allowed_workflows"]
         ))
+        connection_tool = get_grafana_tool_by_name("grafana_emqx_connection_trend")
+        self.assertNotIn("device_id", connection_tool["allowed_params"])
 
     def test_kpi_rules_are_mapped_to_grafana_tools(self):
         original_flag = os.environ.get("IOA_V3_ENABLE_KPI_RULES")
@@ -185,6 +188,389 @@ class IOAV3WorkflowTests(unittest.TestCase):
             with self.subTest(prompt=prompt):
                 tool, _, _ = agent.classify_tool(prompt)
                 self.assertEqual(tool, expected_tool)
+
+    def test_ioa_v3_routes_runbook_scenarios_8_to_12(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        cases = [
+            (
+                "Find the top 10 RabbitMQ queues by message backlog in namespace test and flag any queue above 10000 messages.",
+                "grafana_queue_backlog",
+                {"namespace": "test", "topk": 10, "threshold": 10000},
+            ),
+            (
+                "Check whether RabbitMQ queue messages are increasing linearly over the requested time range.",
+                "grafana_queue_trend",
+                {},
+            ),
+            (
+                "Check whether EMQX messages dropped increased over the requested time range.",
+                "grafana_emqx_dropped_trend",
+                {},
+            ),
+            (
+                "Check EMQX client connected and disconnected rates to detect reconnect loops.",
+                "grafana_emqx_connection_trend",
+                {},
+            ),
+            (
+                "Check Kubernetes resource health in namespace one-iot: pod CPU, memory, restart count, pod status, node resources.",
+                "grafana_k8s_resources",
+                {"namespace": "one-iot"},
+            ),
+        ]
+
+        for prompt, expected_tool, expected_params in cases:
+            with self.subTest(prompt=prompt):
+                tool, params, _ = agent.classify_tool(prompt)
+                self.assertEqual(tool, expected_tool)
+                for key, value in expected_params.items():
+                    self.assertEqual(params.get(key), value)
+
+    def test_ioa_v3_metric_runbook_override_keeps_dropped_trend_primary(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        prompt = (
+            "Check whether EMQX messages dropped increased over the requested "
+            "time range. Use sum(emqx_messages_dropped{namespace=\"emqx\",job=\"emqx\"}) "
+            "and then recommend checking EMQX logs, MQTT adapter logs, broker "
+            "CPU/memory, connection count, queue backlog, and core service errors."
+        )
+
+        workflows = agent.ensure_runbook_required_workflows(
+            [
+                {
+                    "tool": "grafana_emqx_health",
+                    "params": {},
+                    "reason": "semantic_emqx_health",
+                    "confidence": 0.7,
+                    "planner": "semantic_llm",
+                    "tool_family": "grafana_n8n",
+                },
+                {
+                    "tool": "grafana_queue_backlog",
+                    "params": {"namespace": "test"},
+                    "reason": "queue_backlog_keyword",
+                    "confidence": 0.6,
+                    "planner": "keyword",
+                    "tool_family": "grafana_n8n",
+                },
+            ],
+            prompt,
+        )
+
+        self.assertEqual(workflows[0]["tool"], "grafana_emqx_dropped_trend")
+        self.assertEqual(workflows[0]["planner"], "runbook_keyword_override")
+
+    def test_ioa_v3_reconnect_runbook_does_not_treat_candidates_as_device(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        prompt = (
+            "Check EMQX client connected and disconnected rates to detect "
+            "onboarding spikes or reconnect loops. Do not require a device_id "
+            "from the operator; derive affected device candidates from EMQX or "
+            "MQTT adapter evidence when available."
+        )
+
+        self.assertIsNone(agent.extract_device_identifier(prompt))
+
+        workflows = agent.ensure_runbook_required_workflows(
+            [{
+                "tool": "get_company_onem2m_device_resources",
+                "params": {"device_id": "candidates"},
+                "reason": "semantic_resource_guess",
+                "confidence": 0.6,
+                "planner": "semantic_llm",
+                "tool_family": "company_db",
+            }],
+            prompt,
+        )
+
+        self.assertEqual(workflows[0]["tool"], "grafana_emqx_connection_trend")
+        self.assertEqual(workflows[0]["planner"], "runbook_keyword_override")
+
+    def test_ioa_v3_executes_runbook_metric_tools_through_mcp(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        workflow = {
+            "tool": "grafana_queue_backlog",
+            "params": {"namespace": "test", "topk": 10, "threshold": 10000},
+            "reason": "scenario_8",
+            "confidence": 0.9,
+        }
+
+        with patch(
+            "agents.ioa_v3_agent.query_iot_platform_metric_via_mcp",
+            return_value={
+                "source": "mcp_server",
+                "mcp_tool": "grafana_query",
+                "tool": "grafana_queue_backlog",
+                "request": workflow["params"],
+                "promql_query": 'topk(10, sum by (queue) (rabbitmq_queue_messages{namespace="test",job="monitoring/rabbitmq"}))',
+                "result": {"data": {"result": []}},
+            },
+        ) as query_metric, patch(
+            "agents.ioa_v3_agent.call_n8n_grafana_workflow"
+        ) as n8n_call:
+            execution = agent.execute_grafana_workflow(
+                {"user_input": "scenario 8", "source_resolution": {}},
+                workflow,
+            )
+
+        query_metric.assert_called_once_with(
+            "grafana_queue_backlog",
+            workflow["params"],
+        )
+        n8n_call.assert_not_called()
+        self.assertEqual(execution["tool_output"]["source"], "mcp_server")
+        self.assertEqual(execution["tool_output"]["mcp_tool"], "grafana_query")
+
+    def test_ioa_v3_metric_runbooks_do_not_treat_empty_samples_as_normal(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        cases = [
+            (
+                "grafana_queue_trend",
+                {
+                    "request": {"namespace": "test", "start": 1, "end": 2, "step": 300},
+                    "promql_query": 'sum by (queue) (rabbitmq_queue_messages{namespace="test",job="monitoring/rabbitmq"})',
+                    "result": {"data": {"result": []}},
+                },
+                "insufficient metric evidence",
+            ),
+            (
+                "grafana_emqx_connection_trend",
+                {
+                    "request": {"device_scope": "all", "start": 1, "end": 2, "step": 300},
+                    "queries": {
+                        "connected": {"promql_query": "connected", "data": {"result": []}},
+                        "disconnected": {"promql_query": "disconnected", "data": {"result": []}},
+                    },
+                },
+                "insufficient metric evidence",
+            ),
+            (
+                "grafana_k8s_resources",
+                {
+                    "request": {"namespace": "one-iot"},
+                    "queries": {
+                        "pod_cpu": {"data": {"result": []}},
+                        "pod_memory": {"data": {"result": []}},
+                        "pod_restarts": {"data": {"result": []}},
+                        "pod_status": {"data": {"result": []}},
+                    },
+                },
+                "returned no Kubernetes resource samples",
+            ),
+        ]
+
+        for tool, result, expected in cases:
+            with self.subTest(tool=tool):
+                answer = agent.build_metric_runbook_answer(result, tool, "")
+                self.assertIn(expected, answer)
+                self.assertNotIn("near zero or only slightly elevated", answer)
+                self.assertNotIn("No restart count above threshold", answer)
+
+    def test_ioa_v3_metric_parser_reads_grafana_dataframe_results(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        result = {
+            "request": {"namespace": "test", "topk": 10, "threshold": 10000},
+            "promql_query": 'topk(10, sum by (queue) (rabbitmq_queue_messages{namespace="test",job="monitoring/rabbitmq"}))',
+            "result": {
+                "results": {
+                    "test": {
+                        "frames": [{
+                            "schema": {
+                                "fields": [
+                                    {"name": "Time", "type": "time"},
+                                    {
+                                        "name": "rabbitmq_queue_messages",
+                                        "type": "number",
+                                        "labels": {"queue": "queue.onem2m.datamgmt"},
+                                    },
+                                ],
+                            },
+                            "data": {
+                                "values": [
+                                    [1783413210000, 1783413240000],
+                                    [12, 15],
+                                ],
+                            },
+                        }],
+                    },
+                },
+            },
+        }
+
+        answer = agent.build_metric_runbook_answer(
+            result,
+            "grafana_queue_backlog",
+            "",
+        )
+
+        self.assertIn("queue.onem2m.datamgmt", answer)
+        self.assertIn("15 messages", answer)
+        self.assertNotIn("No queues were returned", answer)
+
+    def test_ioa_v3_infrastructure_overview_requires_all_five_tools(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        workflows = agent.ensure_infrastructure_overview_workflows(
+            [
+                {
+                    "tool": "grafana_k8s_health",
+                    "params": {},
+                    "reason": "semantic",
+                    "confidence": 0.6,
+                    "planner": "semantic_llm",
+                    "tool_family": "grafana_n8n",
+                },
+                {
+                    "tool": "grafana_redis_health",
+                    "params": {},
+                    "reason": "semantic",
+                    "confidence": 0.6,
+                    "planner": "semantic_llm",
+                    "tool_family": "grafana_n8n",
+                },
+            ],
+            "Check Kubernetes, Linux node, Redis, MongoDB, and MySQL health as diagnostic evidence for platform issues.",
+        )
+
+        self.assertEqual(
+            [workflow["tool"] for workflow in workflows],
+            [
+                "grafana_k8s_health",
+                "grafana_linux_health",
+                "grafana_redis_health",
+                "grafana_mongodb_health",
+                "grafana_mysql_health",
+            ],
+        )
+
+    def test_ioa_v3_infrastructure_overview_tools_use_mcp(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        workflow = {
+            "tool": "grafana_linux_health",
+            "params": {},
+            "reason": "infra",
+            "confidence": 0.7,
+        }
+
+        with patch(
+            "agents.ioa_v3_agent.query_iot_platform_metric_via_mcp",
+            return_value={
+                "source": "mcp_server",
+                "mcp_tool": "grafana_query",
+                "tool": "grafana_linux_health",
+                "request": {},
+                "queries": {},
+            },
+        ) as query_metric, patch(
+            "agents.ioa_v3_agent.call_n8n_grafana_workflow"
+        ) as n8n_call:
+            execution = agent.execute_grafana_workflow(
+                {"user_input": "infra", "source_resolution": {}},
+                workflow,
+            )
+
+        query_metric.assert_called_once_with("grafana_linux_health", {})
+        n8n_call.assert_not_called()
+        self.assertEqual(execution["tool_output"]["source"], "mcp_server")
+
+    def test_ioa_v3_runbook_metric_answer_uses_standard_format(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        state = {
+            "selected_tool": "grafana_queue_backlog",
+            "user_input": "scenario 8",
+            "tool_outputs": [{
+                "tool": "grafana_queue_backlog",
+                "source": "mcp_server",
+                "result": {
+                    "source": "mcp_server",
+                    "tool": "grafana_queue_backlog",
+                    "request": {
+                        "namespace": "test",
+                        "topk": 10,
+                        "threshold": 10000,
+                    },
+                    "promql_query": 'topk(10, sum by (queue) (rabbitmq_queue_messages{namespace="test",job="monitoring/rabbitmq"}))',
+                    "result": {
+                        "data": {
+                            "result": [{
+                                "metric": {"queue": "queue.telemetry.ingest"},
+                                "value": [1710000000, "12001"],
+                            }]
+                        }
+                    },
+                },
+            }],
+        }
+
+        answer = agent.build_deterministic_answer(state)
+
+        self.assertIn("# RabbitMQ Queue Backlog Check Result", answer)
+        self.assertIn("## 2. Input", answer)
+        self.assertIn("## 5. System Metrics", answer)
+        self.assertIn("queue.telemetry.ingest", answer)
+        self.assertIn("Assessment: abnormal", answer)
+
+    def test_prompt_catalog_for_mongo_prod_keeps_runbooks_first(self):
+        with patch("services.prompt_service.company_db_type", return_value="mongodb"), patch(
+            "services.prompt_service.get_prompts",
+            return_value=[
+                {
+                    "id": 99,
+                    "title": "Custom",
+                    "command": "custom command",
+                    "category": "Custom",
+                    "is_default": False,
+                },
+                {
+                    "id": 100,
+                    "title": "Old DB Default",
+                    "command": "old",
+                    "category": "Legacy",
+                    "is_default": True,
+                },
+            ],
+        ):
+            prompts = list_prompts(user_id=1, selected_source="company")
+
+        titles = [prompt["title"] for prompt in prompts]
+        shortcuts = {prompt["title"]: prompt.get("shortcut") for prompt in prompts}
+        self.assertEqual(titles[0], "Command Downlink Debug")
+        self.assertEqual(shortcuts["Command Downlink Debug"], "/cmd")
+        self.assertEqual(shortcuts["RabbitMQ Top Backlog"], "/rabbitmq")
+        self.assertEqual(shortcuts["Infrastructure Drilldown"], "/infra")
+        reconnect_prompt = next(
+            prompt for prompt in prompts
+            if prompt["title"] == "EMQX Reconnect Trend"
+        )
+        self.assertNotIn("<device_id>", reconnect_prompt["command"])
+        self.assertIn("Do not require a device_id", reconnect_prompt["command"])
+        self.assertIn("Ingestion Queue Health", titles)
+        self.assertIn("API Health KPI", titles)
+        self.assertIn("Infrastructure Drilldown", titles)
+        self.assertNotIn("Company Fleet Snapshot", titles)
+        self.assertNotIn("Old DB Default", titles)
+        self.assertEqual(titles[-1], "Custom")
+        self.assertNotIn("shortcut", prompts[-1])
+        self.assertFalse(any("Scenario" in title for title in titles))
+
+    def test_prompt_catalog_for_simulator_source_uses_simple_fallback_prompts(self):
+        with patch("services.prompt_service.get_prompts", return_value=[]):
+            prompts = list_prompts(user_id=1, selected_source="simulator")
+
+        titles = [prompt["title"] for prompt in prompts]
+        shortcuts = {prompt["title"]: prompt.get("shortcut") for prompt in prompts}
+        categories = {prompt["category"] for prompt in prompts}
+
+        self.assertEqual(titles[0], "Simulator Fleet Status")
+        self.assertEqual(shortcuts["Simulator Fleet Status"], "/sim-fleet")
+        self.assertEqual(shortcuts["Simulator Device Check"], "/sim-device")
+        self.assertIn("Simulator Device Check", titles)
+        self.assertIn("Simulator Fallback Smoke Test", titles)
+        self.assertEqual(categories, {"Simulator"})
+        self.assertNotIn("Command Downlink Debug", titles)
+        self.assertNotIn("Infrastructure Drilldown", titles)
 
     def test_ioa_v3_routes_disconnected_devices_to_company_db_tool(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
@@ -490,8 +876,8 @@ class IOAV3WorkflowTests(unittest.TestCase):
                     "latest_telemetry_cin_present": False,
                 },
                 "next_diagnostic_step": (
-                    "Compare adapter receive logs with CNT/CIN creation and "
-                    "subscription notification evidence."
+                    "Correlate latest telemetry CIN with backend SUBSCRIPTION "
+                    "notify logs, adapter receive logs, and backend delivery evidence."
                 ),
             },
             "get_company_onem2m_telemetry_flow",
@@ -500,7 +886,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
 
         self.assertIn("cnt_telemetry container: Present", answer)
         self.assertIn("Latest telemetry CIN: Missing", answer)
-        self.assertIn("Compare adapter receive logs", answer)
+        self.assertIn("backend SUBSCRIPTION notify logs", answer)
         self.assertIn("No Grafana/Loki workflow evidence", answer)
 
     def test_ioa_v3_filters_placeholder_planner_params(self):
@@ -690,24 +1076,20 @@ class IOAV3WorkflowTests(unittest.TestCase):
         agent = IOAV3LangGraphN8nAgent(model=model)
 
         with patch(
-            "agents.ioa_v3_agent.call_n8n_grafana_workflow",
+            "agents.ioa_v3_agent.query_iot_platform_metric_via_mcp",
             return_value={
-                "final_answer": "n8n summary",
-                "evidence": {
-                    "level": "good",
-                    "connected_clients": 10,
-                    "hit_rate": 91.2,
-                },
-                "steps": [{
-                    "thought": "Called Redis health endpoint.",
-                    "action": "GET /grafana/redis",
-                    "output": {"level": "good"},
-                }],
-                "token_usage": None,
-                "request_payload": {
-                    "workflow": {
-                        "workflow_id": "redis_health",
-                        "params": {},
+                "source": "mcp_server",
+                "mcp_tool": "grafana_query",
+                "tool": "grafana_redis_health",
+                "request": {},
+                "queries": {
+                    "connected_clients": {
+                        "data": {
+                            "result": [{
+                                "metric": {},
+                                "value": [1710000000, "10"],
+                            }]
+                        }
                     }
                 },
             },
@@ -727,7 +1109,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
             if event.get("type") == "observation"
         ]
         self.assertTrue(any(
-            execution.get("source") == "n8n_grafana_gateway"
+            execution.get("source") == "mcp_server"
             for event in observations
             for execution in event["observation"]["output"].get("executions", [])
         ))

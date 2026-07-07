@@ -244,6 +244,7 @@ let reasoningDrawerOpen = false;
 let activeReasoningViewId = null;
 let workflowPanelOpen = false;
 let workflowFinalized = false;
+let workflowMapExpanded = false;
 let currentAlerts = {
     critical_count: 0,
     warning_count: 0
@@ -294,6 +295,7 @@ function resetLiveReasoningRun() {
     displayedWorkflowSteps = [];
     workflowNodeStatusMemory = {};
     workflowFinalized = false;
+    workflowMapExpanded = false;
     pendingFinalAnswer = null;
     latestTokenUsage = null;
     reasoningTypingQueue = Promise.resolve();
@@ -534,6 +536,20 @@ function findPromptById(promptId) {
     return promptsData.find(prompt => String(prompt.id) === String(promptId));
 }
 
+function isDefaultPromptItem(prompt) {
+    const value = prompt?.is_default;
+
+    if (typeof value === "string") {
+        return ["1", "true", "yes"].includes(value.trim().toLowerCase());
+    }
+
+    return Boolean(value);
+}
+
+function promptShortcut(prompt) {
+    return isDefaultPromptItem(prompt) ? (prompt.shortcut || "") : "";
+}
+
 function setMode(mode) {
     currentMode = mode;
 }
@@ -674,6 +690,7 @@ function newChat() {
     displayedWorkflowSteps = [];
     workflowNodeStatusMemory = {};
     workflowFinalized = false;
+    workflowMapExpanded = false;
 
     document.getElementById("messageInput").value = "";
     autoResizeMessageInput();
@@ -807,7 +824,9 @@ function handlePromptSuggestions() {
         return;
     }
 
+    const lookupValue = value.split(/\s+/)[0] || value;
     const filtered = slashCommands.filter(item =>
+        promptShortcut(item).toLowerCase().includes(lookupValue.toLowerCase()) ||
         item.command.toLowerCase().includes(value.toLowerCase()) ||
         item.title.toLowerCase().includes(value.toLowerCase()) ||
         item.category.toLowerCase().includes(value.toLowerCase())
@@ -822,11 +841,13 @@ function handlePromptSuggestions() {
     palette.innerHTML = filtered.map(item => `
         <div class="slash-command" onclick="selectSlashCommandById('${escapeHtml(item.id)}')">
             <div>
-                <strong>${escapeHtml(item.title)}</strong>
+                <strong>
+                    ${escapeHtml(item.title)}
+                    ${promptShortcut(item) ? `<span class="slash-shortcut">${escapeHtml(promptShortcut(item))}</span>` : ""}
+                </strong>
                 <p>${escapeHtml(item.command)}</p>
             </div>
-
-            <span>${escapeHtml(item.category)}</span>
+            <span class="slash-category">${escapeHtml(item.category)}</span>
         </div>
     `).join("");
 
@@ -841,6 +862,42 @@ function selectSlashCommandById(promptId) {
     }
 
     selectSlashCommand(prompt.command);
+}
+
+function findPromptByShortcut(value) {
+    const normalized = String(value || "").trim().split(/\s+/)[0].toLowerCase();
+
+    if (!normalized.startsWith("/")) {
+        return null;
+    }
+
+    return slashCommands.find(item =>
+        promptShortcut(item).toLowerCase() === normalized ||
+        String(item.command || "").toLowerCase() === normalized
+    ) || null;
+}
+
+function expandSlashShortcutMessage(value) {
+    const rawValue = String(value || "").trim();
+    const prompt = findPromptByShortcut(rawValue);
+
+    if (!prompt) {
+        return rawValue;
+    }
+
+    const shortcut = String(promptShortcut(prompt) || prompt.command || "").trim();
+    const trailingInput = rawValue.slice(shortcut.length).trim();
+    let command = String(prompt.command || "");
+
+    if (trailingInput && command.includes("<device_id>")) {
+        command = command.replaceAll("<device_id>", trailingInput);
+    } else if (trailingInput) {
+        command = `${fillPromptDevicePlaceholder(command)} ${trailingInput}`;
+    } else {
+        command = fillPromptDevicePlaceholder(command);
+    }
+
+    return command;
 }
 
 function selectSlashCommand(command) {
@@ -889,12 +946,13 @@ function renderPromptCards() {
         const matchesSearch =
             prompt.title.toLowerCase().includes(searchValue) ||
             prompt.command.toLowerCase().includes(searchValue) ||
+            promptShortcut(prompt).toLowerCase().includes(searchValue) ||
             prompt.category.toLowerCase().includes(searchValue);
 
         const matchesType =
             typeFilter === "all" ||
-            (typeFilter === "default" && prompt.is_default) ||
-            (typeFilter === "custom" && !prompt.is_default);
+            (typeFilter === "default" && isDefaultPromptItem(prompt)) ||
+            (typeFilter === "custom" && !isDefaultPromptItem(prompt));
 
         return matchesCategory && matchesSearch && matchesType;
     });
@@ -905,8 +963,11 @@ function renderPromptCards() {
         grid.innerHTML += `
             <div class="prompt-card">
                 <div class="prompt-card-top">
-                    <span class="prompt-category">${escapeHtml(prompt.category)}</span>
-                    ${prompt.is_default
+                    <div class="prompt-card-badges">
+                        <span class="prompt-category">${escapeHtml(prompt.category)}</span>
+                        ${promptShortcut(prompt) ? `<span class="prompt-shortcut">${escapeHtml(promptShortcut(prompt))}</span>` : ""}
+                    </div>
+                    ${isDefaultPromptItem(prompt)
                         ? `<span class="prompt-default">Default</span>`
                         : `<span class="prompt-custom">Custom</span>`}
                 </div>
@@ -1071,7 +1132,8 @@ async function sendMessage() {
     const suggestions = document.getElementById("promptSuggestions");
     const runButton = document.querySelector(".run-button");
 
-    const message = input.value.trim();
+    const rawMessage = input.value.trim();
+    const message = expandSlashShortcutMessage(rawMessage);
 
     if (!message) {
         isAgentRunning = false;
@@ -1733,6 +1795,7 @@ async function changeDataSource(value) {
         selectedDataSource = data.selected_source || selectedDataSource;
         allowedDataSources = data.allowed_data_sources || allowedDataSources;
         currentAlertPolicy = data.selected_alert_policy || currentAlertPolicy;
+        await loadSlashCommands();
         await refreshDevices();
     } catch (error) {
         console.error("Failed to switch data source:", error);
@@ -2237,9 +2300,19 @@ function renderDebugCopyBlock(label, rawText) {
         <div class="db-debug-copy-block">
             <div class="db-debug-copy-header">
                 <label>${escapeHtml(label)}</label>
-                <button type="button" onclick="copyDebugBlock(this)">Copy</button>
             </div>
-            <pre>${escapeHtml(rawText)}</pre>
+            <div class="db-debug-copy-body">
+                <span
+                    class="db-debug-copy-action"
+                    role="button"
+                    tabindex="0"
+                    onclick="copyDebugBlock(this)"
+                    onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); copyDebugBlock(this); }"
+                >
+                    Copy
+                </span>
+                <pre>${escapeHtml(rawText)}</pre>
+            </div>
         </div>
     `;
 }
@@ -3156,6 +3229,10 @@ function renderJsonBlock(value, className = "") {
     return `<pre class="reasoning-json-block ${className}">${escapeHtml(prettyJson(value))}</pre>`;
 }
 
+function encodedJsonForCopy(value) {
+    return encodeURIComponent(prettyJson(value));
+}
+
 function formatMongoCommandFromAudit(event = {}) {
     const namespace = String(event.namespace || "");
     const [databaseName, collectionName] = namespace.split(".");
@@ -3239,6 +3316,10 @@ function copyQueryCommand(button, command) {
     setTimeout(() => {
         button.textContent = previousText || "Copy";
     }, 1200);
+}
+
+function copyJsonAction(button, encodedJson) {
+    copyQueryCommand(button, decodeURIComponent(encodedJson || ""));
 }
 
 function toggleQueryCommandDetails(button) {
@@ -3728,8 +3809,9 @@ function renderObservationOutput(output) {
         <section class="observation-section">
             <div class="observation-section-title">Observation</div>
             ${renderJsonBlock(summaryOutput, "observation-json")}
-            ${showFullEvidence ? `
-                <div class="observation-details">
+            <div class="observation-details">
+                <div class="observation-actions">
+                    ${showFullEvidence ? `
                     <button
                         class="observation-details-toggle"
                         type="button"
@@ -3737,11 +3819,34 @@ function renderObservationOutput(output) {
                     >
                         Show full evidence JSON
                     </button>
+                    ` : ""}
+                    <span
+                        class="observation-json-copy"
+                        role="button"
+                        tabindex="0"
+                        onclick="copyJsonAction(this, '${encodedJsonForCopy(summaryOutput)}')"
+                        onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); copyJsonAction(this, '${encodedJsonForCopy(summaryOutput)}'); }"
+                    >
+                        Copy summary JSON
+                    </span>
+                </div>
+                ${showFullEvidence ? `
                     <div class="observation-details-panel hidden">
                         ${renderJsonBlock(compactOutput, "observation-json")}
+                        <div class="observation-actions observation-actions-below">
+                            <span
+                                class="observation-json-copy"
+                                role="button"
+                                tabindex="0"
+                                onclick="copyJsonAction(this, '${encodedJsonForCopy(compactOutput)}')"
+                                onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); copyJsonAction(this, '${encodedJsonForCopy(compactOutput)}'); }"
+                            >
+                                Copy full evidence JSON
+                            </span>
+                        </div>
                     </div>
-                </div>
-            ` : ""}
+                ` : ""}
+            </div>
         </section>
     `;
 }
@@ -3755,6 +3860,8 @@ function observationText(output) {
 function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     const content = document.getElementById("reasoningDrawerContent");
     const safeSteps = Array.isArray(steps) ? steps : [];
+    const scrollContainer = content.querySelector(".reasoning-trace-list") || content;
+    const shouldPinScroll = shouldKeepTypingPinnedToBottom(scrollContainer);
 
     if (safeSteps.length === 0) {
         content.innerHTML = `
@@ -3763,6 +3870,7 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
                 No reasoning trace yet.
             </div>
         `;
+        restorePinnedScroll(content, shouldPinScroll);
         return;
     }
 
@@ -3797,6 +3905,7 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
             ${html}
         </div>
     `;
+    restorePinnedScroll(content.querySelector(".reasoning-trace-list") || content, shouldPinScroll);
 }
 
 function renderReasoningSteps(steps, shouldType = false) {
@@ -3872,17 +3981,21 @@ function renderReasoningSteps(steps, shouldType = false) {
 
 function createReasoningStepElement(step) {
     const content = document.getElementById("reasoningDrawerContent");
+    let traceList = content.querySelector(".reasoning-trace-list");
+    const shouldPinScroll = shouldKeepTypingPinnedToBottom(traceList || content);
 
-    if (!content.querySelector(".reasoning-trace-list")) {
+    if (!traceList) {
         content.innerHTML = `
             ${renderWorkflowMap(latestReasoningSteps, workflowFinalized)}
             <div class="reasoning-trace-list"></div>
         `;
+        traceList = content.querySelector(".reasoning-trace-list");
     }
 
     const existing = document.getElementById(`reasoning-step-${step.iteration}`);
 
     if (existing) {
+        restorePinnedScroll(traceList || content, shouldPinScroll);
         return existing;
     }
 
@@ -3908,8 +4021,8 @@ function createReasoningStepElement(step) {
         </div>
     `;
 
-    const traceList = content.querySelector(".reasoning-trace-list") || content;
-    traceList.appendChild(wrapper);
+    (traceList || content).appendChild(wrapper);
+    restorePinnedScroll(traceList || content, shouldPinScroll);
 
     return wrapper;
 }
@@ -4383,6 +4496,10 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
     const framework = inferWorkflowFramework(safeSteps);
     const visibleNodes = workflow.nodes
         .filter(node => !node.helper);
+    const completedCount = visibleNodes.filter(node =>
+        node.status === "completed"
+    ).length;
+    const activeNode = visibleNodes.find(node => node.status === "active");
 
     workflowNodeDetailStore = {};
 
@@ -4419,17 +4536,39 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
     `;
     }).join("");
 
+    const summary = activeNode
+        ? `${activeNode.shortLabel || activeNode.label} is running`
+        : `${completedCount}/${visibleNodes.length} steps complete`;
+
     return `
-        <section id="reasoningWorkflowMap" class="workflow-lane-map">
+        <section id="reasoningWorkflowMap" class="workflow-lane-map ${workflowMapExpanded ? "expanded" : "collapsed"}">
             <div class="workflow-map-header">
-                <span>Workflow</span>
-                <strong>${escapeHtml(workflow.title)}</strong>
+                <div>
+                    <span>Workflow</span>
+                    <strong>${escapeHtml(workflow.title)}</strong>
+                    <small>${escapeHtml(summary)}</small>
+                </div>
+                <button
+                    type="button"
+                    class="workflow-map-toggle"
+                    onclick="toggleReasoningWorkflowMap()"
+                >
+                    ${workflowMapExpanded ? "Hide" : "Show"}
+                </button>
             </div>
-            <div class="workflow-lane">
+            <div class="workflow-lane ${workflowMapExpanded ? "" : "hidden"}">
                 ${nodesHtml}
             </div>
         </section>
     `;
+}
+
+function toggleReasoningWorkflowMap() {
+    workflowMapExpanded = !workflowMapExpanded;
+    updateReasoningWorkflowMap(
+        displayedWorkflowSteps.length ? displayedWorkflowSteps : latestReasoningSteps,
+        workflowFinalized
+    );
 }
 
 function getWorkflowNodeSummary(node, matchingStep) {
@@ -4545,6 +4684,8 @@ function enqueueReasoningObservation(step) {
         const observationContainer = stepElement.querySelector(
             ".reasoning-observation-container"
         );
+        const scrollContainer = getTypingScrollContainer(stepElement);
+        const shouldPinScroll = shouldKeepTypingPinnedToBottom(scrollContainer);
 
         if (observationContainer) {
             observationContainer.innerHTML = renderObservationOutput(step.output);
@@ -4563,6 +4704,7 @@ function enqueueReasoningObservation(step) {
         }
 
         updateReasoningWorkflowMap(displayedWorkflowSteps, false);
+        restorePinnedScroll(scrollContainer, shouldPinScroll);
     });
 }
 
@@ -6498,7 +6640,8 @@ function typeReasoningStep(thoughtElement, thoughtText, actionElement, actionTex
 }
 
 function getTypingScrollContainer(element) {
-    return element.closest(".drawer-content") ||
+    return element.closest(".reasoning-trace-list") ||
+        element.closest(".drawer-content") ||
         element.closest(".chat-messages");
 }
 
@@ -6521,6 +6664,16 @@ function scrollTypingContainerIfPinned(element) {
     }
 
     container.scrollTop = container.scrollHeight;
+}
+
+function restorePinnedScroll(container, shouldPinScroll) {
+    if (!container || !shouldPinScroll) {
+        return;
+    }
+
+    requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+    });
 }
 
 function typeTextIntoElementPromise(element, text, speed = 8) {

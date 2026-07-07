@@ -3086,8 +3086,8 @@ def get_company_onem2m_telemetry_flow_context(
             "latest_telemetry_cin_present": bool(telemetry_records),
         },
         "next_diagnostic_step": (
-            "Compare adapter receive logs with CNT/CIN creation and subscription "
-            "notification evidence."
+            "Correlate latest telemetry CIN with backend SUBSCRIPTION notify "
+            "logs, adapter receive logs, and backend delivery evidence."
         ),
     })
     return context

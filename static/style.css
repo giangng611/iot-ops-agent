@@ -821,10 +821,15 @@ button:hover {
     background: #101010;
     border: 1px solid #333333;
     border-radius: 8px;
-    padding: 14px;
-    margin-bottom: 16px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
     overflow: visible;
     flex-shrink: 0;
+}
+
+.workflow-lane-map.expanded {
+    padding: 14px;
+    margin-bottom: 16px;
 }
 
 .workflow-lane {
@@ -954,10 +959,14 @@ button:hover {
     display: flex;
     justify-content: space-between;
     gap: 12px;
-    align-items: baseline;
+    align-items: center;
     color: #d4d4d8;
     font-size: 12px;
     margin-bottom: 14px;
+}
+
+.workflow-lane-map.collapsed .workflow-map-header {
+    margin-bottom: 0;
 }
 
 .workflow-map-header span {
@@ -967,8 +976,34 @@ button:hover {
 }
 
 .workflow-map-header strong {
+    display: block;
     color: #ffffff;
     font-size: 13px;
+}
+
+.workflow-map-header small {
+    display: block;
+    margin-top: 2px;
+    color: #a1a1aa;
+    font-size: 12px;
+}
+
+.workflow-map-toggle {
+    flex-shrink: 0;
+    min-width: 54px;
+    border: 1px solid #3f3f46;
+    border-radius: 8px;
+    background: #202020;
+    color: #f4f4f5;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.workflow-map-toggle:hover {
+    background: #2a2a2a;
+    border-color: #52525b;
 }
 
 .workflow-canvas {
@@ -1408,7 +1443,9 @@ pre {
 
 .query-command-copy,
 .query-command-details-toggle,
-.observation-details-toggle {
+.observation-details-toggle,
+.observation-json-copy,
+.db-debug-copy-action {
     background: transparent;
     border: 0;
     border-radius: 0;
@@ -1416,14 +1453,30 @@ pre {
     font-size: 12px;
     font-weight: 600;
     padding: 0;
+    cursor: pointer;
 }
 
 .query-command-copy:hover,
 .query-command-copy.copied,
 .query-command-details-toggle:hover,
-.observation-details-toggle:hover {
+.observation-details-toggle:hover,
+.observation-json-copy:hover,
+.observation-json-copy.copied,
+.db-debug-copy-action:hover {
     background: transparent;
     color: #ffffff;
+}
+
+.observation-actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 10px;
+}
+
+.observation-actions-below {
+    margin-top: 8px;
 }
 
 .query-command-actions {
@@ -2611,19 +2664,24 @@ th {
     margin: 0;
 }
 
-.db-debug-copy-header button {
-    background: #27272a;
-    border: 1px solid #3f3f46;
-    border-radius: 7px;
-    color: #f4f4f5;
+.db-debug-copy-action {
+    position: absolute;
+    right: 12px;
+    top: 10px;
     flex: 0 0 auto;
-    font-size: 12px;
-    font-weight: 750;
-    padding: 6px 10px;
+    z-index: 1;
 }
 
-.db-debug-copy-header button:hover {
-    background: #3f3f46;
+.db-debug-copy-action:hover {
+    background: transparent;
+}
+
+.db-debug-copy-body {
+    position: relative;
+}
+
+.db-debug-copy-body pre {
+    padding-right: 62px;
 }
 
 .db-debug-empty {
@@ -3575,7 +3633,9 @@ button:disabled {
 }
 
 .slash-command strong {
-    display: block;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     font-size: 14px;
 }
 
@@ -3585,7 +3645,9 @@ button:disabled {
     font-size: 13px;
 }
 
-.slash-command span {
+.slash-command .slash-category,
+.slash-command .slash-shortcut,
+.prompt-shortcut {
     flex-shrink: 0;
 
     color: #a1a1aa;
@@ -3598,6 +3660,15 @@ button:disabled {
 
     font-size: 12px;
     font-weight: 700;
+}
+
+.slash-command .slash-shortcut,
+.prompt-shortcut {
+    display: inline-flex;
+    width: fit-content;
+    color: #f4f4f5;
+    background: #1f2937;
+    border-color: #3b82f6;
 }
 
 .slash-palette::-webkit-scrollbar {
@@ -3683,14 +3754,23 @@ button:disabled {
 .prompt-card-top {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    gap: 12px;
 
     margin-bottom: 14px;
 }
 
+.prompt-card-badges {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
 .prompt-category,
 .prompt-default,
-.prompt-custom {
+.prompt-custom,
+.prompt-shortcut {
     display: inline-flex;
     align-items: center;
 
@@ -3719,6 +3799,13 @@ button:disabled {
     background: #052e16;
     color: #86efac;
     border: 1px solid #166534;
+}
+
+.prompt-shortcut {
+    color: #f4f4f5;
+    background: #1f2937;
+    border: 1px solid #3b82f6;
+    text-transform: none;
 }
 
 .prompt-textarea {

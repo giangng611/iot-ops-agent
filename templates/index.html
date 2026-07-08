@@ -173,7 +173,7 @@
 
             </section>
 
-            <section id="devicesTab" class="tab-page">
+            <section id="devicesTab" class="tab-page workspace-page">
                 <div class="page-header page-header-with-status">
                     <div>
                         <h1>Devices</h1>
@@ -190,13 +190,13 @@
                         id="deviceSearch"
                         type="text"
                         placeholder="Search device..."
-                        oninput="renderDeviceTable()"
+                        oninput="resetDeviceTablePage()"
                     >
 
                     <select
                         id="statusFilter"
                         class="simulator-only-control"
-                        onchange="renderDeviceTable()"
+                        onchange="resetDeviceTablePage()"
                     >
                         <option value="all">
                             All statuses
@@ -218,7 +218,7 @@
                     <select
                         id="sortSelect"
                         class="simulator-only-control"
-                        onchange="renderDeviceTable()"
+                        onchange="resetDeviceTablePage()"
                     >
                         <option value="priority">
                             Sort by priority
@@ -244,7 +244,7 @@
                     <select
                         id="companyConnectionFilter"
                         class="company-only-control hidden"
-                        onchange="renderDeviceTable()"
+                        onchange="resetDeviceTablePage()"
                     >
                         <option value="all">
                             All connections
@@ -266,7 +266,7 @@
                     <select
                         id="companySortSelect"
                         class="company-only-control hidden"
-                        onchange="renderDeviceTable()"
+                        onchange="resetDeviceTablePage()"
                     >
                         <option value="latest">
                             Latest observed
@@ -345,11 +345,13 @@
 
                     </div>
 
+                    <div id="deviceTablePagination" class="table-pagination hidden"></div>
+
                 </div>
 
             </section>
 
-            <section id="alertsTab" class="tab-page">
+            <section id="alertsTab" class="tab-page workspace-page">
                 <div class="page-header">
                     <h1>Alerts</h1>
                     <p>Active warning and critical conditions based on the selected data source</p>
@@ -362,7 +364,7 @@
                 <div id="alertList" class="alert-list"></div>
             </section>
 
-            <section id="promptsTab" class="tab-page">
+            <section id="promptsTab" class="tab-page workspace-page">
                 <div class="page-header">
                     <h1>Prompts</h1>
                     <p>Preset commands for common IoT operations workflows</p>
@@ -401,7 +403,7 @@
                 <div id="promptGrid" class="prompt-grid"></div>
             </section>
 
-            <section id="profileTab" class="tab-page">
+            <section id="profileTab" class="tab-page workspace-page">
                 <div class="page-header">
                     <h1>Profile</h1>
                     <p>Manage your account settings and workspace preferences</p>

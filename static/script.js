@@ -235,6 +235,8 @@ socket.on("telegram_chat_failed", (data) => {
 
 let currentMode = "ioa_v3_langgraph_n8n";
 let allDevices = [];
+let deviceTablePage = 1;
+const DEVICE_TABLE_PAGE_SIZE = 10;
 let chats = [];
 let currentChatId = null;
 let latestReasoningSteps = [];
@@ -2821,10 +2823,12 @@ function renderDeviceLoadingState(message = "Loading devices...") {
     const charts = document.getElementById("devicesCharts");
     const summary = document.getElementById("companyDataSummary");
     const tableCard = document.getElementById("devicesTableCard");
+    const pagination = document.getElementById("deviceTablePagination");
     const companyMode = isCompanyDataActive();
 
     charts?.classList.add("hidden");
     summary?.classList.add("hidden");
+    pagination?.classList.add("hidden");
     tableCard?.classList.toggle("company-table-card", companyMode);
 
     if (tableHeader) {
@@ -2842,6 +2846,26 @@ function renderDeviceLoadingState(message = "Loading devices...") {
     }
 }
 
+function resetDeviceTablePage() {
+    deviceTablePage = 1;
+    renderDeviceTable();
+}
+
+function setDeviceTablePage(page) {
+    const scrollContainer = document.querySelector(".content-scroll") ||
+        document.scrollingElement;
+    const previousScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+
+    deviceTablePage = Math.max(1, Number(page) || 1);
+    renderDeviceTable();
+
+    if (scrollContainer) {
+        requestAnimationFrame(() => {
+            scrollContainer.scrollTop = previousScrollTop;
+        });
+    }
+}
+
 function setDevicesLoadingState(isLoading) {
     devicesLoading = isLoading;
 
@@ -2853,6 +2877,7 @@ function setDevicesLoadingState(isLoading) {
 function renderDeviceTable() {
     const tableBody = document.getElementById("deviceTableBody");
     const tableHeader = document.getElementById("deviceTableHeader");
+    const pagination = document.getElementById("deviceTablePagination");
 
     if (!tableBody || !tableHeader) {
         return;
@@ -2888,6 +2913,7 @@ function renderDeviceTable() {
         `;
 
     if (!allDevices || allDevices.length === 0) {
+        pagination?.classList.add("hidden");
         tableBody.innerHTML = `
             <tr>
                 <td colspan="${companyMode ? 6 : 8}">
@@ -2960,9 +2986,27 @@ function renderDeviceTable() {
         });
     }
 
-    tableBody.innerHTML = "";
+    const totalDevices = devices.length;
+    const totalPages = Math.max(1, Math.ceil(totalDevices / DEVICE_TABLE_PAGE_SIZE));
+    deviceTablePage = Math.min(Math.max(1, deviceTablePage), totalPages);
+    const startIndex = (deviceTablePage - 1) * DEVICE_TABLE_PAGE_SIZE;
+    const pagedDevices = devices.slice(startIndex, startIndex + DEVICE_TABLE_PAGE_SIZE);
 
-    devices.forEach(device => {
+    tableBody.innerHTML = "";
+    renderDeviceTablePagination(totalDevices, startIndex, pagedDevices.length);
+
+    if (pagedDevices.length === 0) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="${companyMode ? 6 : 8}">
+                    No devices match the current filters.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    pagedDevices.forEach(device => {
         if (companyMode) {
             const view = getCompanyRecordView(device);
             const profile = companyProfileSummary(device);
@@ -3087,6 +3131,50 @@ function renderDeviceTable() {
             </tr>
         `;
     });
+}
+
+function renderDeviceTablePagination(totalDevices, startIndex, visibleCount) {
+    const pagination = document.getElementById("deviceTablePagination");
+
+    if (!pagination) {
+        return;
+    }
+
+    if (totalDevices <= DEVICE_TABLE_PAGE_SIZE) {
+        pagination.classList.add("hidden");
+        pagination.innerHTML = "";
+        return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(totalDevices / DEVICE_TABLE_PAGE_SIZE));
+    const from = totalDevices === 0 ? 0 : startIndex + 1;
+    const to = startIndex + visibleCount;
+
+    pagination.classList.remove("hidden");
+    pagination.innerHTML = `
+        <div class="table-pagination-status">
+            Showing ${escapeHtml(from)}-${escapeHtml(to)} of ${escapeHtml(totalDevices)} devices
+        </div>
+        <div class="table-pagination-actions">
+            <button
+                type="button"
+                class="secondary-btn"
+                ${deviceTablePage <= 1 ? "disabled" : ""}
+                onclick="setDeviceTablePage(${deviceTablePage - 1})"
+            >
+                Previous
+            </button>
+            <span>Page ${escapeHtml(deviceTablePage)} / ${escapeHtml(totalPages)}</span>
+            <button
+                type="button"
+                class="secondary-btn"
+                ${deviceTablePage >= totalPages ? "disabled" : ""}
+                onclick="setDeviceTablePage(${deviceTablePage + 1})"
+            >
+                Next
+            </button>
+        </div>
+    `;
 }
 
 function addUserMessage(message) {
@@ -3964,6 +4052,122 @@ function summarizeObservationOutput(output) {
     return summary;
 }
 
+function isEmptyPlainObject(value) {
+    return value &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        Object.keys(value).length === 0;
+}
+
+function observationSummaryItems(summary, output) {
+    if (!summary || summary === "Waiting for observation...") {
+        return ["Waiting for observation..."];
+    }
+
+    if (isEmptyPlainObject(summary)) {
+        return ["No structured observation payload was returned for this step."];
+    }
+
+    if (typeof summary !== "object" || Array.isArray(summary)) {
+        return [String(summary)];
+    }
+
+    const items = [];
+    const add = (label, value) => {
+        if (value === undefined || value === null || value === "") {
+            return;
+        }
+
+        if (typeof value === "object") {
+            if (isEmptyPlainObject(value)) {
+                return;
+            }
+
+            items.push(`${label}: ${JSON.stringify(value)}`);
+            return;
+        }
+
+        items.push(`${label}: ${value}`);
+    };
+
+    add("Source", summary.source || summary.data_source);
+    add("Tool", summary.tool || summary.selected_tool);
+    add("Status", summary.status || summary.classification_status || summary.db_audit_status);
+    add("Records", summary.record_count || summary.count || summary.distinct_device_count);
+    add("Type", summary.record_type || summary.classification);
+
+    if (summary.summary && typeof summary.summary === "object") {
+        Object.entries(summary.summary).forEach(([key, value]) => {
+            add(formatObservationLabel(key), value);
+        });
+    }
+
+    if (summary.alerts && typeof summary.alerts === "object") {
+        Object.entries(summary.alerts).forEach(([key, value]) => {
+            add(formatObservationLabel(key), value);
+        });
+    }
+
+    ["devices", "samples", "sample_records", "matches"].forEach(key => {
+        const value = summary[key];
+
+        if (value && typeof value === "object") {
+            add(formatObservationLabel(key), value.count !== undefined
+                ? `${value.count} item${Number(value.count) === 1 ? "" : "s"}`
+                : value);
+        }
+    });
+
+    if (items.length === 0 && output && typeof output === "object") {
+        const topLevelKeys = Object.keys(output).filter(key => ![
+            "query_commands",
+            "db_audit",
+            "db_read_plan_commands",
+            "db_read_plan"
+        ].includes(key));
+
+        if (topLevelKeys.length > 0) {
+            items.push(`Observation keys: ${topLevelKeys.slice(0, 6).join(", ")}`);
+        }
+    }
+
+    return items.length > 0
+        ? items.slice(0, 8)
+        : ["Observation completed. Open full evidence JSON for raw details."];
+}
+
+function formatObservationLabel(key) {
+    return String(key || "")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function renderObservationSummary(summary, output) {
+    const items = observationSummaryItems(summary, output);
+
+    return `
+        <div class="observation-summary">
+            ${items.map(item => `
+                <div class="observation-summary-row">
+                    ${escapeHtml(item)}
+                </div>
+            `).join("")}
+        </div>
+    `;
+}
+
+function hasMeaningfulObservationSummary(summary) {
+    if (!summary || summary === "Waiting for observation...") {
+        return false;
+    }
+
+    if (isEmptyPlainObject(summary)) {
+        return false;
+    }
+
+    return true;
+}
+
 function shouldShowFullEvidenceToggle(compact, summary) {
     if (!compact || typeof compact !== "object" || Array.isArray(compact)) {
         return false;
@@ -3983,6 +4187,8 @@ function renderObservationOutput(output) {
         compactOutput,
         summaryOutput
     );
+    const showSummaryJsonCopy = hasMeaningfulObservationSummary(summaryOutput);
+    const showObservationActions = showFullEvidence || showSummaryJsonCopy;
 
     return `
         ${renderToolCall(output)}
@@ -3991,7 +4197,8 @@ function renderObservationOutput(output) {
         ${renderQueryCommands(output)}
         <section class="observation-section">
             <div class="observation-section-title">Observation</div>
-            ${renderJsonBlock(summaryOutput, "observation-json")}
+            ${renderObservationSummary(summaryOutput, output)}
+            ${showObservationActions ? `
             <div class="observation-details">
                 <div class="observation-actions">
                     ${showFullEvidence ? `
@@ -4003,6 +4210,7 @@ function renderObservationOutput(output) {
                         Show full evidence JSON
                     </button>
                     ` : ""}
+                    ${showSummaryJsonCopy ? `
                     <span
                         class="observation-json-copy"
                         role="button"
@@ -4012,6 +4220,7 @@ function renderObservationOutput(output) {
                     >
                         Copy summary JSON
                     </span>
+                    ` : ""}
                 </div>
                 ${showFullEvidence ? `
                     <div class="observation-details-panel hidden">
@@ -4030,6 +4239,7 @@ function renderObservationOutput(output) {
                     </div>
                 ` : ""}
             </div>
+            ` : ""}
         </section>
     `;
 }
@@ -5052,6 +5262,9 @@ function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
     const critical = officialAlerts.critical_count || 0;
     const warning = officialAlerts.warning_count || 0;
     const total = alerts.length;
+    const alertRows = buildOfficialAlertRows(alerts);
+    const alertingDeviceCount = alertRows.filter(row => row.device_kind === "affected").length;
+    const unknownDeviceCount = alertRows.filter(row => row.device_kind === "unknown_status").length;
 
     if (badge) {
         if (total > 0) {
@@ -5073,23 +5286,63 @@ function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
     }
 
     summary.innerHTML = `
-        <div class="alert-summary-card critical-alert">
-            <h2>${critical}</h2>
-            <p>KPI critical</p>
-        </div>
-        <div class="alert-summary-card warning-alert">
-            <h2>${warning}</h2>
-            <p>KPI warning</p>
+        <div class="company-summary-stats alert-overview-stats">
+            <div>
+                <span>Devices to check</span>
+                <strong>${escapeHtml(alertRows.length)}</strong>
+            </div>
+            <div>
+                <span>Alerting devices</span>
+                <strong>${escapeHtml(alertingDeviceCount)}</strong>
+            </div>
+            <div>
+                <span>Unknown status</span>
+                <strong>${escapeHtml(unknownDeviceCount)}</strong>
+            </div>
+            <div>
+                <span>Critical</span>
+                <strong>${escapeHtml(critical)}</strong>
+            </div>
+            <div>
+                <span>Warning</span>
+                <strong>${escapeHtml(warning)}</strong>
+            </div>
         </div>
     `;
 
+    if (alertRows.length === 0) {
+        alertList.innerHTML = `
+            <div class="table-card alert-table-wrapper">
+                <p class="metric-empty">
+                    Active KPI evidence exists, but no device sample was returned for review.
+                </p>
+            </div>
+        `;
+        return;
+    }
+
     alertList.innerHTML = `
-        <div class="poc-alert-disclaimer">
-            Official view is using KPI workbook checks that are evaluable from
-            company DB evidence. Device-level datamgmt.RULE execution is still
-            read-only until enum/operator semantics are confirmed.
+        <div class="table-card alert-table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Device</th>
+                        <th>Status</th>
+                        <th>Reason</th>
+                        <th>Evidence</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${alertRows.map(row => renderOfficialAlertRow(row)).join("")}
+                </tbody>
+            </table>
         </div>
     `;
+}
+
+function buildOfficialAlertRows(alerts) {
+    const rows = [];
 
     alerts.forEach(kpi => {
         const severityValue = kpi.severity || kpi.status;
@@ -5097,111 +5350,169 @@ function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
             ? severityValue
             : "info";
         const evidence = kpi.evidence || {};
-        const value = kpi.value === null || kpi.value === undefined
-            ? "not evaluable"
-            : `${kpi.value}${kpi.unit || ""}`;
-        const thresholdText = formatKpiThresholds(kpi.thresholds || {});
         const affectedDevices = evidence.affected_devices || [];
         const unknownDevices = evidence.unknown_status_samples || [];
 
-        alertList.innerHTML += `
-            <div class="alert-item kpi-alert-item ${escapeHtml(severity)}">
-                <div class="kpi-alert-main">
-                    <div class="kpi-alert-topline">
-                        <div class="poc-alert-heading">
-                            <h3>${escapeHtml(kpi.title || kpi.kpi)}</h3>
-                            <span class="poc-alert-badge">KPI workbook</span>
-                        </div>
-                        <span class="kpi-status-pill ${escapeHtml(severity)}">
-                            ${escapeHtml(severity)}
-                        </span>
-                    </div>
-                    <div class="kpi-alert-evidence">
-                        <div>
-                            <span>Metric</span>
-                            <strong>${escapeHtml(kpi.metric)}</strong>
-                        </div>
-                        <div>
-                            <span>Value</span>
-                            <strong>${escapeHtml(value)}</strong>
-                        </div>
-                        <div>
-                            <span>Evidence</span>
-                            <strong>${escapeHtml(kpiEvidenceSummary(kpi))}</strong>
-                        </div>
-                    </div>
-                    <p class="kpi-threshold-line">
-                        ${escapeHtml(thresholdText || "No fixed threshold")} ·
-                        ${escapeHtml(evidence.source || kpi.source || "company DB")}
-                    </p>
-                    ${renderKpiDeviceSamples("Affected devices", affectedDevices)}
-                    ${renderKpiDeviceSamples("Unknown status samples", unknownDevices)}
-                </div>
-            </div>
-        `;
+        if (affectedDevices.length === 0 && unknownDevices.length === 0) {
+            rows.push({
+                kpi,
+                severity,
+                device_kind: "kpi_only",
+                device: null,
+            });
+        }
+
+        affectedDevices.forEach(device => {
+            rows.push({
+                kpi,
+                severity,
+                device,
+                device_kind: "affected",
+            });
+        });
+
+        unknownDevices.forEach(device => {
+            rows.push({
+                kpi,
+                severity: "unknown",
+                device,
+                device_kind: "unknown_status",
+            });
+        });
     });
+
+    return rows;
 }
 
-function formatKpiThresholds(thresholds) {
+function renderOfficialAlertRow(row) {
+    const device = row.device || {};
+    const deviceId = device.device_id || "";
+    const deviceName = row.device_kind === "kpi_only"
+        ? (row.kpi.title || row.kpi.kpi || "KPI alert")
+        : (device.device_name || deviceId || "Unknown device");
+    const deviceStatus = device.status || (
+        row.device_kind === "kpi_only" ? "no device sample" : "unknown"
+    );
+    const recordCount = Number(device.telemetry_record_count || 0);
+    const reason = formatOfficialAlertReason(row.kpi, row.severity, device, row.device_kind);
+    const evidence = formatOfficialAlertEvidence(row.kpi, row.device_kind);
+    const actions = deviceId
+        ? `
+            <div class="alert-row-actions">
+                <button onclick="diagnoseDevice('${escapeJsString(deviceId)}')">
+                    Diagnose
+                </button>
+                <button class="secondary-btn" onclick="showDeviceHistory('${escapeJsString(deviceId)}')">
+                    History
+                </button>
+            </div>
+        `
+        : `<span class="metric-empty">No device action</span>`;
+
+    return `
+        <tr>
+            <td class="alert-device-name-cell">
+                <div class="copyable-device">
+                    <div class="copyable-device-text">
+                        <strong>${escapeHtml(deviceName)}</strong>
+                        <small class="device-subtext">
+                            ${deviceId ? `${escapeHtml(deviceId)} · ` : ""}
+                            ${escapeHtml(deviceStatus)} · ${recordCount} records
+                        </small>
+                    </div>
+                    ${deviceId ? `
+                        <button
+                            class="device-copy-btn"
+                            type="button"
+                            title="Copy device ID"
+                            onclick="copyDeviceId('${escapeJsString(deviceId)}', this)"
+                        >
+                            Copy
+                        </button>
+                    ` : ""}
+                </div>
+            </td>
+            <td>
+                <span class="alert-status-badge ${escapeHtml(row.severity)}">
+                    ${escapeHtml(row.severity.replace("_", " "))}
+                </span>
+            </td>
+            <td class="alert-reason-cell">${escapeHtml(reason)}</td>
+            <td class="alert-evidence-cell">${escapeHtml(evidence)}</td>
+            <td class="alert-actions-cell">${actions}</td>
+        </tr>
+    `;
+}
+
+function formatKpiThresholdSentence(thresholds) {
     const labels = {
-        good_min: "good ≥",
-        warning_min: "warning ≥",
-        critical_below: "critical <",
-        good_below: "good <",
-        warning_max: "warning ≤",
-        critical_above: "critical >",
-        good_max: "good ≤"
+        good_min: "good at or above",
+        warning_min: "warning at or above",
+        critical_below: "critical below",
+        good_below: "good below",
+        warning_max: "warning at or below",
+        critical_above: "critical above",
+        good_max: "good at or below"
     };
 
     return Object.entries(thresholds)
-        .map(([key, threshold]) => `${labels[key] || key} ${threshold}`)
-        .join(" · ");
+        .map(([key, threshold]) => `${labels[key] || key.replaceAll("_", " ")} ${threshold}`)
+        .join("; ");
+}
+
+function formatOfficialAlertReason(kpi, severity, device, deviceKind) {
+    const title = kpi.title || kpi.kpi || "KPI alert";
+
+    if (deviceKind === "unknown_status") {
+        return `${title} needs review because this device has unknown connection status in the company evidence.`;
+    }
+
+    if (deviceKind === "kpi_only") {
+        return `${title} is active, but the current DB evidence did not return a device sample for direct action.`;
+    }
+
+    const status = device?.status || "matched the alert condition";
+    return `${title} is ${severity} because this device status is ${status}.`;
+}
+
+function formatOfficialAlertEvidence(kpi, deviceKind) {
+    const evidenceParts = [];
+    const value = kpi.value === null || kpi.value === undefined
+        ? "not evaluable"
+        : `${kpi.value}${kpi.unit || ""}`;
+    const metric = kpi.metric || "value";
+    const summary = kpiEvidenceSummary(kpi);
+    const thresholdText = formatKpiThresholdSentence(kpi.thresholds || {});
+
+    evidenceParts.push(`${metric} is ${value}.`);
+
+    if (summary) {
+        evidenceParts.push(`${summary}.`);
+    }
+
+    if (thresholdText) {
+        evidenceParts.push(`Thresholds: ${thresholdText}.`);
+    }
+
+    if (deviceKind === "unknown_status") {
+        evidenceParts.push("Included because unknown status devices can hide useful telemetry or mapping problems.");
+    }
+
+    return evidenceParts.join(" ");
 }
 
 function kpiEvidenceSummary(kpi) {
     const evidence = kpi.evidence || {};
 
     if (kpi.metric === "connected_devices_rate_percent") {
-        return `${evidence.connected_devices || 0} connected / ${evidence.status_evidence_devices || 0} status-known`;
+        return `Evidence shows ${evidence.connected_devices || 0} connected out of ${evidence.status_evidence_devices || 0} status-known devices`;
     }
 
     if (kpi.metric === "invalid_payload_rate_percent") {
-        return `${evidence.invalid_payloads || 0} invalid / ${evidence.content_instances_scanned || 0} payloads`;
+        return `Evidence shows ${evidence.invalid_payloads || 0} invalid payloads out of ${evidence.content_instances_scanned || 0} scanned payloads`;
     }
 
-    return evidence.source || kpi.source || "company DB";
-}
-
-function renderKpiDeviceSamples(title, devices) {
-    if (!Array.isArray(devices) || devices.length === 0) {
-        return "";
-    }
-
-    return `
-        <div class="kpi-device-samples">
-            <span>${escapeHtml(title)}</span>
-            ${devices.map(device => `
-                <div class="kpi-device-row">
-                    <div>
-                        <strong>${escapeHtml(device.device_name || device.device_id || "Unknown device")}</strong>
-                        <small class="device-subtext">
-                            ${escapeHtml(device.device_id || "")} ·
-                            ${escapeHtml(device.status || "unknown")} ·
-                            ${Number(device.telemetry_record_count || 0)} records
-                        </small>
-                    </div>
-                    <div class="kpi-device-actions">
-                        <button onclick="diagnoseDevice('${escapeJsString(device.device_id || "")}')">
-                            Diagnose
-                        </button>
-                        <button class="secondary-btn" onclick="showDeviceHistory('${escapeJsString(device.device_id || "")}')">
-                            History
-                        </button>
-                    </div>
-                </div>
-            `).join("")}
-        </div>
-    `;
+    return `Source is ${evidence.source || kpi.source || "company DB"}`;
 }
 
 function renderCompanyPocAlerts(badge, summary, alertList) {

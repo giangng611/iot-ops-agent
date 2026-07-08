@@ -98,20 +98,29 @@ with Telegram.
 Supported commands:
 
 ```text
-/overview
-/unhealthy
-/alarms
-/diagnose
-/heartbeat
-/ingestion
-/apihealth
-/infra
-/companyfleet
+/kpi
 /coverage
-/pocalerts
-/disconnected
-/ruleready
+/diagnose
+/ingestion
+/api-health or /apihealth
+/infra
+/alerts
+/threshold
+/company-fleet or /companyfleet
+/company-coverage or /companycoverage
+/company-alerts or /companyalerts
+/company-disconnected or /companydisconnected
+/company-rules or /companyrules
+/cmd
+/telemetry
+/resources
+/rabbitmq
+/queue-trend or /queuetrend
+/emqx-dropped or /emqxdropped
+/reconnect
+/k8s
 /link CODE
+/unlink
 /help
 ```
 
@@ -121,18 +130,37 @@ Supported commands:
 /diagnose gateway-001
 ```
 
+OneM2M runbook commands for scenarios 5, 6, and 7 require a device ID in the
+same Telegram message:
+
+```text
+/cmd SmartAsset_9b47fedc
+/telemetry SmartAsset_9b47fedc
+/resources SmartAsset_9b47fedc
+```
+
+If the device ID is omitted, Telegram replies with the required format instead
+of sending a prompt with the unresolved `<device_id>` placeholder to the agent.
+When Company DB is reachable, that reply includes a short list of recent
+candidate device IDs formatted as ready-to-send commands, for example
+`/cmd SmartAsset_9b47fedc`.
+
 Any other text is sent to the existing LangGraph runtime only after identity
 and data-source authorization pass. Telegram receives the formatted final
 answer. The platform stores the request, reasoning steps, final answer, and
 token metadata under the mapped IoT Ops Agent user.
 
 Telegram slash commands reuse the same default prompt catalog used by the web
-Prompts tab where possible. For example, `/overview`, `/ingestion`,
-`/apihealth`, `/infra`, `/companyfleet`, `/coverage`, `/pocalerts`,
-`/disconnected`, and `/ruleready` resolve to the corresponding default prompt
-commands from `services.prompt_service.DEFAULT_PROMPTS`. Free-form Telegram
-messages are still passed through as written, so web prompt text can be copied
-directly into Telegram when a command alias does not exist.
+Prompts tab. Platform shortcuts such as `/kpi`, `/api-health`,
+`/company-fleet`, `/cmd`, `/telemetry`, and `/resources` resolve to the
+corresponding default prompt commands from `services.prompt_service`.
+Telegram's native command menu cannot register hyphenated commands, so the
+runtime also accepts menu-safe aliases such as `/apihealth`,
+`/companyfleet`, and `/queuetrend`. Legacy aliases such as `/overview`,
+`/unhealthy`, `/alarms`, `/pocalerts`, `/disconnected`, and `/ruleready`
+remain accepted but now run the matching platform prompt text. Free-form
+Telegram messages are still passed through as written, so web prompt text can
+be copied directly into Telegram when a command alias does not exist.
 
 ## Test Company DB Through Localhost
 

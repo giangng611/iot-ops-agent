@@ -8,7 +8,12 @@ from collections import OrderedDict
 import requests
 
 from services.chat_service import save_chat_message
-from services.prompt_service import get_default_prompt_command
+from services.company_data_service import get_company_telemetry_coverage_context
+from services.prompt_service import (
+    PROMPT_SHORTCUTS,
+    get_default_prompt,
+    get_default_prompt_command,
+)
 from services.telegram_link_service import consume_link_code, unlink_telegram_identity
 from storage.relational_store import create_chat, get_telegram_identity
 
@@ -18,50 +23,171 @@ MAX_TELEGRAM_MESSAGE_CHARS = 3900
 _telegram_update_lock = threading.Lock()
 _telegram_updates_inflight = set()
 _telegram_updates_processed = OrderedDict()
-TELEGRAM_COMMANDS = [
-    {"command": "overview", "description": "Summarize system health"},
-    {"command": "unhealthy", "description": "List unhealthy devices"},
-    {"command": "alarms", "description": "Show devices with alarms"},
+TELEGRAM_STATIC_COMMANDS = [
     {"command": "diagnose", "description": "Diagnose the system or a device"},
-    {"command": "heartbeat", "description": "Check delayed heartbeats"},
-    {"command": "companyfleet", "description": "Company fleet snapshot"},
-    {"command": "coverage", "description": "Company telemetry coverage"},
-    {"command": "pocalerts", "description": "Provisional company PoC alerts"},
-    {"command": "disconnected", "description": "Disconnected company devices"},
-    {"command": "ruleready", "description": "Company rule integration readiness"},
     {"command": "link", "description": "Link Telegram to your IoT Ops Agent account"},
     {"command": "unlink", "description": "Unlink this Telegram account"},
     {"command": "help", "description": "Show available commands"},
 ]
 
-
-def default_prompt_command(prompt_id, fallback):
-    return get_default_prompt_command(prompt_id) or fallback
-
-
-TELEGRAM_COMMAND_PROMPTS = {
-    "overview": "overview system health",
-    "unhealthy": default_prompt_command("default-2", "check all unhealthy devices"),
-    "alarms": "show devices with alarms",
-    "heartbeat": "check devices with delayed heartbeat",
-    "companyfleet": default_prompt_command("company-1", "company fleet snapshot"),
-    "coverage": default_prompt_command(
-        "company-3",
-        "company telemetry coverage and unmapped records",
-    ),
-    "pocalerts": default_prompt_command(
-        "company-4",
-        "company provisional alerts with evidence",
-    ),
-    "disconnected": default_prompt_command(
-        "company-5",
-        "company disconnected devices",
-    ),
-    "ruleready": default_prompt_command(
-        "company-7",
-        "company rule readiness and Grafana gaps",
-    ),
+TELEGRAM_LEGACY_PROMPT_ALIASES = {
+    "overview": "default-1",
+    "unhealthy": "default-2",
+    "alarms": "default-6",
+    "companyfleet": "company-1",
+    "coverage": "company-3",
+    "pocalerts": "company-4",
+    "disconnected": "company-5",
+    "ruleready": "company-7",
 }
+
+TELEGRAM_PROMPT_COMMAND_ALIASES = {
+    "apihealth": "api-health",
+    "companyfleet": "company-fleet",
+    "companyinventory": "company-inventory",
+    "companycoverage": "company-coverage",
+    "companyalerts": "company-alerts",
+    "companydisconnected": "company-disconnected",
+    "companytemperature": "company-temperature",
+    "companyrules": "company-rules",
+    "companydevice": "company-device",
+    "companyredishttp": "company-redis-http",
+    "companyplatform": "company-platform",
+    "queuetrend": "queue-trend",
+    "emqxdropped": "emqx-dropped",
+    "simfleet": "sim-fleet",
+    "simdevice": "sim-device",
+    "simalarms": "sim-alarms",
+    "simstress": "sim-stress",
+    "simsmoke": "sim-smoke",
+}
+
+
+def telegram_command_name(shortcut):
+    return re.sub(r"[^a-z0-9_]", "", str(shortcut or "").lstrip("/").lower())
+
+
+def normalize_telegram_command_name(command):
+    normalized = str(command or "").strip().lower().lstrip("/")
+    alias = TELEGRAM_PROMPT_COMMAND_ALIASES.get(normalized)
+
+    if alias:
+        return alias
+
+    return normalized
+
+
+def build_telegram_command_prompt_map():
+    prompt_map = {}
+
+    for prompt_id, shortcut in PROMPT_SHORTCUTS.items():
+        prompt_command = get_default_prompt_command(prompt_id)
+
+        if not prompt_command:
+            continue
+
+        prompt_map[str(shortcut).lstrip("/").lower()] = prompt_command
+        prompt_map[telegram_command_name(shortcut)] = prompt_command
+
+    for alias, prompt_id in TELEGRAM_LEGACY_PROMPT_ALIASES.items():
+        prompt_command = get_default_prompt_command(prompt_id)
+
+        if prompt_command:
+            prompt_map.setdefault(alias, prompt_command)
+
+    return prompt_map
+
+
+def build_telegram_prompt_commands():
+    commands = []
+    seen = set()
+
+    for prompt_id, shortcut in PROMPT_SHORTCUTS.items():
+        command = telegram_command_name(shortcut)
+
+        if not command or command in seen:
+            continue
+
+        prompt = get_default_prompt(prompt_id) or {}
+        commands.append({
+            "command": command,
+            "description": str(prompt.get("title") or command)[:256],
+        })
+        seen.add(command)
+
+    return commands
+
+
+def get_telegram_commands():
+    return build_telegram_prompt_commands() + TELEGRAM_STATIC_COMMANDS
+
+
+def get_telegram_device_suggestions(limit=5):
+    try:
+        context = get_company_telemetry_coverage_context(limit=limit)
+    except Exception:
+        return []
+
+    if context.get("source") != "company_mongodb":
+        return []
+
+    suggestions = []
+
+    for device in context.get("sample_devices_with_telemetry") or []:
+        device_id = str(device.get("device_id") or "").strip()
+
+        if not device_id:
+            continue
+
+        suggestions.append({
+            "device_id": device_id,
+            "device_name": str(device.get("device_name") or "").strip(),
+            "status": str(device.get("status") or "").strip(),
+            "telemetry_record_count": device.get("telemetry_record_count"),
+        })
+
+        if len(suggestions) >= limit:
+            break
+
+    return suggestions
+
+
+def build_missing_device_id_text(command, device_suggestions=None):
+    command_label = f"/{command}" if command else "this command"
+    lines = [
+        f"{command_label} needs a device ID.",
+        "",
+        "Send it like one of these:",
+        f"{command_label} SmartAsset_9b47fedc",
+    ]
+
+    for device in device_suggestions or []:
+        device_id = device.get("device_id")
+
+        if not device_id:
+            continue
+
+        details = []
+
+        if device.get("device_name") and device["device_name"] != device_id:
+            details.append(device["device_name"])
+
+        if device.get("status"):
+            details.append(f"status={device['status']}")
+
+        if device.get("telemetry_record_count") is not None:
+            details.append(
+                f"telemetry={device['telemetry_record_count']}"
+            )
+
+        suffix = f" ({', '.join(details)})" if details else ""
+        lines.append(f"{command_label} {device_id}{suffix}")
+
+    return "\n".join(lines)
+
+
+def fill_prompt_device_id(prompt, device_id):
+    return str(prompt or "").replace("<device_id>", str(device_id or "").strip())
 
 
 def claim_telegram_update(update):
@@ -206,18 +332,23 @@ def data_source_is_allowed(identity, data_source):
 
 
 def build_help_text():
+    prompt_lines = []
+
+    for prompt_id, shortcut in PROMPT_SHORTCUTS.items():
+        prompt = get_default_prompt(prompt_id) or {}
+        title = prompt.get("title") or shortcut
+        telegram_alias = telegram_command_name(shortcut)
+        display_shortcut = str(shortcut)
+
+        if telegram_alias and f"/{telegram_alias}" != display_shortcut:
+            display_shortcut = f"{display_shortcut} or /{telegram_alias}"
+
+        prompt_lines.append(f"{display_shortcut} - {title}")
+
     return "\n".join([
         "What would you like to check?",
         "",
-        "/overview - System health summary",
-        "/unhealthy - Devices needing attention",
-        "/alarms - Current device alarms",
-        "/heartbeat - Delayed heartbeat check",
-        "/companyfleet - Company inventory and telemetry snapshot",
-        "/coverage - Company telemetry coverage",
-        "/pocalerts - Provisional PoC alerts with evidence",
-        "/disconnected - Company devices reporting disconnected",
-        "/ruleready - Company rule and Grafana integration gaps",
+        *prompt_lines,
         "/link CODE - Link Telegram to your IoT Ops Agent account",
         "/unlink - Revoke this Telegram account link",
         "/diagnose - Diagnose the whole system",
@@ -226,15 +357,32 @@ def build_help_text():
     ])
 
 
-def normalize_telegram_prompt(text):
+def normalize_telegram_prompt(text, include_device_suggestions=False):
     if text in {"/", "/start", "/help"}:
         return None, build_help_text()
 
     command_text, _, arguments = text.partition(" ")
-    command = command_text.split("@", 1)[0].lstrip("/").lower()
+    command = normalize_telegram_command_name(
+        command_text.split("@", 1)[0].lstrip("/").lower()
+    )
+    command_prompts = build_telegram_command_prompt_map()
 
-    if command in TELEGRAM_COMMAND_PROMPTS:
-        return TELEGRAM_COMMAND_PROMPTS[command], None
+    if command in command_prompts:
+        prompt = command_prompts[command]
+        target = arguments.strip()
+
+        if "<device_id>" in prompt:
+            if not target:
+                suggestions = (
+                    get_telegram_device_suggestions()
+                    if include_device_suggestions
+                    else []
+                )
+                return None, build_missing_device_id_text(command, suggestions)
+
+            return fill_prompt_device_id(prompt, target), None
+
+        return prompt, None
 
     if command == "diagnose":
         target = arguments.strip()
@@ -618,7 +766,10 @@ def process_telegram_update(
                     )
                     result = {"status": "forbidden", "reason": deny_reason}
                 else:
-                    prompt, help_text = normalize_telegram_prompt(message["text"])
+                    prompt, help_text = normalize_telegram_prompt(
+                        message["text"],
+                        include_device_suggestions=True,
+                    )
 
                     if help_text:
                         send_telegram_message(message["chat_id"], help_text)
@@ -830,5 +981,5 @@ def build_set_webhook_payload(public_base_url):
 
 def build_set_commands_payload():
     return {
-        "commands": json.dumps(TELEGRAM_COMMANDS),
+        "commands": json.dumps(get_telegram_commands()),
     }

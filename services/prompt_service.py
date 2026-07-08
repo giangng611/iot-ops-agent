@@ -483,12 +483,17 @@ def list_prompts(user_id, selected_source=None):
     ]
 
 
-def get_default_prompt_command(prompt_id):
-    for prompt in DEFAULT_PROMPTS:
+def get_default_prompt(prompt_id):
+    for prompt in DEFAULT_PROMPTS + SIMULATOR_PROMPTS:
         if prompt["id"] == prompt_id:
-            return prompt["command"]
+            return prompt
 
     return None
+
+
+def get_default_prompt_command(prompt_id):
+    prompt = get_default_prompt(prompt_id)
+    return prompt["command"] if prompt else None
 
 
 def create_user_prompt(user_id, title, command, category):

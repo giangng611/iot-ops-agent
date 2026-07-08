@@ -2220,7 +2220,9 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "answered")
                 self.assertTrue(payload["history_chat_id"])
                 mock_run_stream.assert_called_once_with(
-                    "overview system health",
+                    "Review core IoT platform KPIs: availability, connected "
+                    "devices rate, ingestion health, API success, and any "
+                    "data quality gaps.",
                     data_source="company",
                 )
 
@@ -2379,8 +2381,46 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
     def test_telegram_commands_map_to_agent_prompts(self):
         self.assertEqual(
+            telegram_service.normalize_telegram_prompt("/kpi"),
+            (
+                "Review core IoT platform KPIs: availability, connected "
+                "devices rate, ingestion health, API success, and any data "
+                "quality gaps.",
+                None,
+            ),
+        )
+        self.assertEqual(
+            telegram_service.normalize_telegram_prompt("/api-health"),
+            (
+                "Check HTTP API success, 5xx errors, and p95 latency against "
+                "the platform KPI guidance.",
+                None,
+            ),
+        )
+        self.assertEqual(
+            telegram_service.normalize_telegram_prompt("/apihealth"),
+            (
+                "Check HTTP API success, 5xx errors, and p95 latency against "
+                "the platform KPI guidance.",
+                None,
+            ),
+        )
+        self.assertEqual(
             telegram_service.normalize_telegram_prompt("/overview"),
-            ("overview system health", None),
+            (
+                "Review core IoT platform KPIs: availability, connected "
+                "devices rate, ingestion health, API success, and any data "
+                "quality gaps.",
+                None,
+            ),
+        )
+        self.assertEqual(
+            telegram_service.normalize_telegram_prompt("/coverage"),
+            (
+                "Check company device connectivity coverage, disconnected "
+                "devices, and telemetry coverage gaps.",
+                None,
+            ),
         )
         self.assertEqual(
             telegram_service.normalize_telegram_prompt(
@@ -2392,8 +2432,105 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             telegram_service.normalize_telegram_prompt(
                 "/alarms@iot_ops_agent_bot"
             ),
-            ("show devices with alarms", None),
+            (
+                "Review company rule readiness, provisional alert evidence, "
+                "and the remaining Grafana integration gaps.",
+                None,
+            ),
         )
+
+    def test_telegram_device_commands_require_device_id_argument(self):
+        prompt, help_text = telegram_service.normalize_telegram_prompt("/cmd")
+        self.assertIsNone(prompt)
+        self.assertIn("/cmd needs a device ID", help_text)
+        self.assertIn("/cmd SmartAsset_9b47fedc", help_text)
+
+        prompt, help_text = telegram_service.normalize_telegram_prompt(
+            "/cmd SmartAsset_9b47fedc"
+        )
+        self.assertIsNone(help_text)
+        self.assertIn("Debug why device SmartAsset_9b47fedc", prompt)
+        self.assertNotIn("<device_id>", prompt)
+
+        prompt, help_text = telegram_service.normalize_telegram_prompt(
+            "/telemetry SmartAsset_9b47fedc"
+        )
+        self.assertIsNone(help_text)
+        self.assertIn("telemetry from device SmartAsset_9b47fedc", prompt)
+        self.assertNotIn("<device_id>", prompt)
+
+        prompt, help_text = telegram_service.normalize_telegram_prompt(
+            "/resources@iot_ops_agent_bot SmartAsset_9b47fedc"
+        )
+        self.assertIsNone(help_text)
+        self.assertIn("device SmartAsset_9b47fedc is registered", prompt)
+        self.assertNotIn("<device_id>", prompt)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_missing_device_id_does_not_run_agent(self, mock_post):
+        user = self.create_user_once(
+            "telegram-missing-device-user",
+            "missing-device-pass",
+        )
+        self.map_telegram_user(
+            987654,
+            user,
+            allowed_data_sources=["simulator", "company"],
+        )
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        with patch.object(
+            app_module.langgraph_agent,
+            "run_stream",
+        ) as mock_run_stream, patch(
+            "services.telegram_service.get_telegram_device_suggestions",
+            return_value=[
+                {
+                    "device_id": "SmartAsset_9b47fedc",
+                    "device_name": "Pump A",
+                    "status": "ONLINE",
+                    "telemetry_record_count": 12,
+                },
+                {
+                    "device_id": "SmartAsset_7a12",
+                    "device_name": "Valve B",
+                    "status": "OFFLINE",
+                    "telemetry_record_count": 3,
+                },
+            ],
+        ) as mock_suggestions:
+            try:
+                payload = telegram_service.process_telegram_update(
+                    {
+                        "message": {
+                            "chat": {"id": 123},
+                            "from": {
+                                "id": 987654,
+                                "username": "ops_user",
+                            },
+                            "text": "/cmd",
+                        },
+                    },
+                    app_module.langgraph_agent,
+                    get_user_data_source=(
+                        app_module.get_user_selected_data_source
+                    ),
+                )
+
+                self.assertEqual(payload["status"], "help_sent")
+                mock_run_stream.assert_not_called()
+                mock_suggestions.assert_called_once()
+                sent_payload = mock_post.call_args.kwargs["json"]
+                self.assertIn("/cmd needs a device ID", sent_payload["text"])
+                self.assertIn(
+                    "/cmd SmartAsset_9b47fedc",
+                    sent_payload["text"],
+                )
+                self.assertIn("Pump A", sent_payload["text"])
+                self.assertIn("/cmd SmartAsset_7a12", sent_payload["text"])
+            finally:
+                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
 
     def test_assistant_markdown_is_formatted_as_conversational_text(self):
         formatted = telegram_service.format_conversational_text(
@@ -2415,23 +2552,20 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         commands = json.loads(payload["commands"])
         command_names = {item["command"] for item in commands}
 
-        self.assertEqual(
-            command_names,
+        self.assertTrue(
             {
-                "overview",
-                "unhealthy",
-                "alarms",
-                "diagnose",
-                "heartbeat",
+                "kpi",
+                "apihealth",
                 "companyfleet",
-                "coverage",
-                "pocalerts",
-                "disconnected",
-                "ruleready",
+                "cmd",
+                "telemetry",
+                "resources",
+                "simfleet",
+                "diagnose",
                 "link",
                 "unlink",
                 "help",
-            },
+            }.issubset(command_names),
         )
 
     @patch("services.telegram_service.requests.post")
@@ -2478,7 +2612,9 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                     "duplicate",
                 )
                 mock_run_stream.assert_called_once_with(
-                    "overview system health",
+                    "Review core IoT platform KPIs: availability, connected "
+                    "devices rate, ingestion health, API success, and any "
+                    "data quality gaps.",
                     data_source="simulator",
                 )
                 self.assertEqual(mock_post.call_count, 1)

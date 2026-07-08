@@ -1431,6 +1431,21 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("Infrastructure as diagnostic supporting evidence", prompt)
         self.assertIn("company DB evidence as preview/test data", prompt)
 
+    def test_ioa_v3_answer_prompt_preserves_user_language(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        state = {
+            "user_input": "kiểm tra thiết bị SmartAsset_9b47fedc",
+            "selected_tool": "get_company_onem2m_device_resources",
+            "tool_outputs": [],
+        }
+
+        prompt = agent.build_answer_prompt(state)
+
+        self.assertIn("Reply in the same primary language", prompt)
+        self.assertIn("Vietnamese", prompt)
+        self.assertIn("technical identifiers", prompt)
+        self.assertIn("SmartAsset_9b47fedc", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

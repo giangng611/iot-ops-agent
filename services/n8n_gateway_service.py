@@ -11,10 +11,10 @@ from services.grafana_tool_registry import (
     get_kpi_rules_for_tool,
 )
 
-DEFAULT_N8N_V3_WEBHOOK_URL = "http://localhost:5678/webhook/grafana-ops-gateway"
+DEFAULT_N8N_V3_WEBHOOK_URL = "http://localhost:5679/webhook/grafana-ops-gateway"
 STALE_LOCAL_TASK_BROKER_WEBHOOK_URLS = {
-    "http://localhost:5679/webhook/grafana-ops-gateway",
-    "http://127.0.0.1:5679/webhook/grafana-ops-gateway",
+    "http://localhost:5678/webhook/grafana-ops-gateway",
+    "http://127.0.0.1:5678/webhook/grafana-ops-gateway",
 }
 
 

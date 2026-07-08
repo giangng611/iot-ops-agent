@@ -15,14 +15,15 @@ evidence quality and pilot readiness over date-driven feature expansion.
 
 * Web workspace with authenticated chat, prompt workflows, profile controls,
   telemetry views, alert handling, and reasoning traces
-* Simulator/fallback telemetry path for public demonstrations
+* Simulator/fallback telemetry path for local verification and degraded-source
+  testing
 * Company DB source selection, visible fallback behavior, and bounded read-only
-  MongoDB access through typed backend tools
+  MongoDB access through MCP
 * Telegram PoC with account linking, allowlists, commands, and shared IOA v3
   policy/runtime behavior
 * IOA v3 Ops Graph with LangGraph policy gates, hybrid semantic/deterministic
-  workflow planning, n8n Grafana gateway execution, and evidence traces
-* Grafana tool registry and initial KPI rule mapping files
+  workflow planning, MCP tool execution, and evidence traces
+* Grafana/Prometheus metric mapping and initial KPI rule mapping files
 * Security tests and proof docs for app data, MongoDB guardrails, Supabase RLS,
   and Telegram webhook authentication
 
@@ -30,18 +31,16 @@ evidence quality and pilot readiness over date-driven feature expansion.
 
 * Final production Company DB schema/collections and allowed read scope
 * Official alert/KPI rule ownership and good/warning/critical semantics
-* Grafana Dashboard Client API or approved Grafana API/service-account access
-* Senior review of prioritized operational scenarios and expected answers
+* Senior review of the MCP-backed runbook outputs and expected answers
+* Official KPI/rule ownership and good/warning/critical semantics
 
 ### Near-term Focus
 
-1. Validate the public fallback/mock demo path end to end.
-2. Validate IOA v3 -> n8n -> Grafana Dashboard Client with mock data first,
-   then with the approved company Grafana API/adapter.
-3. Freeze 5-7 pilot scenarios for company incident triage.
-4. Map Company DB fields and official KPI rules once the company source is
-   handed over.
-5. Rerun benchmark and acceptance tests against frozen company-task snapshots.
+1. Review and freeze MCP-backed scenarios 5-12 with the lead.
+2. Add deeper log correlation where metric-only scenarios need service-specific
+   follow-up.
+3. Map official KPI rules once monitoring ownership confirms thresholds.
+4. Rerun benchmark and acceptance tests against frozen company-task snapshots.
 
 The current seed scenario backlog lives in
 `eval/company_pilot_scenarios.json`; use
@@ -69,10 +68,9 @@ and Grafana adapter tools before they should be treated as production-ready.
 
 * MongoDB telemetry storage path
 * Supabase/Postgres app-data migration path
-* SQLite legacy/fallback storage
+* SQLite legacy/fallback storage for degraded local cases
 * storage status and migration integrity checks
-* public fallback/mock demo path for portfolio-safe demonstrations
-* internal Company DB path for company-only pilot work
+* MCP-backed Company DB, Loki, Grafana, and Prometheus path
 
 ### Deployment Evolution
 
@@ -132,8 +130,8 @@ Completed local runtime evaluations:
 
 Current operational runtime:
 
-* IOA v3 · Ops Graph, using LangGraph policy/routing, backend Company DB tools,
-  and n8n for approved Grafana workflow execution
+* IOA v3 · Ops Graph, using LangGraph policy/routing and MCP-backed MongoDB,
+  Loki, and Grafana/Prometheus evidence
 
 The benchmark runner and blind AI-as-judge pipeline are implemented. The next
 evaluation milestone is to rerun candidates against frozen company-task
@@ -181,7 +179,7 @@ Future platform-level improvements:
 
 Planned observability improvements include:
 
-* approved Grafana Dashboard Client API integration
+* MCP-backed Grafana/Prometheus evidence integration
 * official KPI/rule calibration from company monitoring ownership
 * historical fleet-wide analytics
 * device comparison dashboards

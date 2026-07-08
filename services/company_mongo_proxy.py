@@ -1,10 +1,13 @@
 import os
 import threading
 import time
+from pathlib import Path
 from collections import defaultdict, deque
 from urllib.parse import parse_qs, urlparse
 
 from pymongo import MongoClient
+
+from services.mcp_client import McpClientError, SyncMcpToolSession, call_mcp_tool
 
 
 DEFAULT_RATE_LIMIT_REQUESTS = 120
@@ -12,14 +15,14 @@ DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 60
 MAX_QUERY_LIMIT = 1000
 DEFAULT_ALLOWED_NAMESPACES = frozenset({
     "authorization.IDENTITY",
+    "subNNotif.AE",
+    "subNNotif.SUB",
     "datamgmt.CIN",
     "datamgmt.CNT",
     "datamgmt.DEVICE_TELEMETRY",
     "datamgmt.RULE",
     "devicemgmt.NODE",
     "orchestration.URI_MAPPER",
-    "subNNotif.AE",
-    "subNNotif.SUB",
 })
 IDENTIFIER_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyz"
@@ -398,10 +401,210 @@ class CompanyMongoReadProxy:
         )
 
 
-def get_company_mongo_read_proxy(actor="company-data-service"):
+class MCPCompanyMongoReadProxy:
+    def __init__(self, actor="company-data-service", tool_caller=None):
+        self._actor = actor
+        self._tool_caller = tool_caller or call_mcp_tool
+        self._custom_tool_caller = tool_caller is not None
+        self._session = None
+        self._audit_events = []
+
+    def __enter__(self):
+        if not self._custom_tool_caller:
+            self._open_session()
+
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def close(self):
+        if self._session is not None:
+            self._session.__exit__(None, None, None)
+            self._session = None
+
+        return None
+
+    def _open_session(self):
+        self._session = SyncMcpToolSession()
+        self._session.__enter__()
+        self._tool_caller = self._session.call_tool
+
+    def _reopen_session(self):
+        self.close()
+        self._open_session()
+
+    def _is_retryable_mcp_error(self, exc):
+        if not isinstance(exc, McpClientError):
+            return False
+
+        message = str(exc).lower()
+        retryable_fragments = (
+            "failed before tool result",
+            "taskgroup",
+            "timed out",
+            "connection",
+        )
+        return any(fragment in message for fragment in retryable_fragments)
+
+    def _call_mcp_read_tool(self, tool_name, arguments):
+        attempts = 3
+
+        for attempt in range(attempts):
+            try:
+                return self._tool_caller(tool_name, arguments)
+            except Exception as exc:
+                if attempt >= attempts - 1 or not self._is_retryable_mcp_error(exc):
+                    raise
+
+                if not self._custom_tool_caller:
+                    self._reopen_session()
+
+                time.sleep(0.2 * (attempt + 1))
+
+    def get_audit_events(self):
+        return list(self._audit_events)
+
+    def _audit_mcp_call(
+        self,
+        *,
+        operation,
+        database_name=None,
+        collection_name=None,
+        query=None,
+        projection=None,
+        sort=None,
+        requested_limit=None,
+    ):
+        namespace = (
+            f"{database_name}.{collection_name}"
+            if database_name and collection_name
+            else database_name or "*"
+        )
+        self._audit_events.append({
+            "actor": self._actor,
+            "operation": operation,
+            "namespace": namespace,
+            "query": query or {},
+            "projection": projection or {},
+            "sort": sort,
+            "requested_limit": requested_limit,
+            "access_path": "mcp_server",
+            "credentials_redacted": True,
+            "mutating": False,
+        })
+
+    def list_database_names(self):
+        self._audit_mcp_call(operation="list_database_names")
+        return self._call_mcp_read_tool("mongo_list_databases", {})
+
+    def list_collections(self, database_name):
+        self._audit_mcp_call(
+            operation="list_collections",
+            database_name=database_name,
+        )
+        collections = self._call_mcp_read_tool(
+            "mongo_list_collections",
+            {"database": database_name},
+        )
+
+        return [
+            (
+                {"name": collection_name, "type": "collection"}
+                if isinstance(collection_name, str)
+                else collection_name
+            )
+            for collection_name in collections
+        ]
+
+    def collection_stats(self, database_name, collection_name):
+        self._audit_mcp_call(
+            operation="collStats",
+            database_name=database_name,
+            collection_name=collection_name,
+        )
+        return self._call_mcp_read_tool(
+            "mongo_collection_stats",
+            {
+                "database": database_name,
+                "collection": collection_name,
+            },
+        )
+
+    def find(
+        self,
+        database_name,
+        collection_name,
+        query=None,
+        projection=None,
+        sort=None,
+        limit=100,
+    ):
+        query = query or {}
+        projection = projection or None
+        sort_field = sort[0] if sort else None
+        sort_direction = sort[1] if sort else None
+        self._audit_mcp_call(
+            operation="find",
+            database_name=database_name,
+            collection_name=collection_name,
+            query=query,
+            projection=projection,
+            sort=sort,
+            requested_limit=limit,
+        )
+        return self._call_mcp_read_tool(
+            "mongo_find",
+            {
+                "database": database_name,
+                "collection": collection_name,
+                "query": query,
+                "projection": projection,
+                "sort_field": sort_field,
+                "sort_direction": sort_direction,
+                "limit": limit,
+            },
+        )
+
+
+def company_data_access_mode():
+    return os.getenv("COMPANY_DATA_ACCESS_MODE", "direct").strip().lower()
+
+
+def _read_env_file_value(path, key):
+    try:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+
+            name, value = stripped.split("=", 1)
+
+            if name.strip() == key:
+                return value.strip().strip('"').strip("'")
+    except OSError:
+        return ""
+
+    return ""
+
+
+def get_company_mongo_direct_uri(include_mcp_server_env=False):
     uri = (
         os.getenv("COMPANY_MONGODB_URI")
         or os.getenv("COMPANY_MONGO_URI")
         or os.getenv("IOT_PLATFORM_MONGODB_URI")
     )
+
+    if uri or not include_mcp_server_env:
+        return uri
+
+    return _read_env_file_value("mcp_server/.env", "COMPANY_MONGODB_URI")
+
+
+def get_company_mongo_read_proxy(actor="company-data-service", force_direct=False):
+    if company_data_access_mode() == "mcp" and not force_direct:
+        return MCPCompanyMongoReadProxy(actor=actor)
+
+    uri = get_company_mongo_direct_uri(include_mcp_server_env=force_direct)
     return CompanyMongoReadProxy(uri, actor=actor)

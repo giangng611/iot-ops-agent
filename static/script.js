@@ -17,7 +17,7 @@ socket.on("connect_error", () => {
 });
 
 socket.on("device_update", (data) => {
-    if (selectedDataSource !== "simulator") {
+    if (devicesLoading || selectedDataSource !== "simulator") {
         return;
     }
 
@@ -244,6 +244,7 @@ let reasoningDrawerOpen = false;
 let activeReasoningViewId = null;
 let workflowPanelOpen = false;
 let workflowFinalized = false;
+let workflowMapExpanded = false;
 let currentAlerts = {
     critical_count: 0,
     warning_count: 0
@@ -272,6 +273,8 @@ let userMessageActionStore = {};
 let workflowNodeDetailStore = {};
 let selectedDataSource = "simulator";
 let allowedDataSources = ["simulator"];
+let selectedPromptDeviceId = "";
+let devicesLoading = true;
 const LIVE_REASONING_VIEW_ID = "__live_reasoning_trace__";
 
 function isLiveReasoningDrawerOpen() {
@@ -292,6 +295,7 @@ function resetLiveReasoningRun() {
     displayedWorkflowSteps = [];
     workflowNodeStatusMemory = {};
     workflowFinalized = false;
+    workflowMapExpanded = false;
     pendingFinalAnswer = null;
     latestTokenUsage = null;
     reasoningTypingQueue = Promise.resolve();
@@ -304,7 +308,11 @@ function resetLiveReasoningRun() {
 let currentDataSourceState = {
     selected_source: "simulator",
     active_source: "simulator",
-    rules_status: "simulator"
+    rules_status: "simulator",
+    db_audit_status: "unknown",
+    db_audit: [],
+    db_read_plan: [],
+    db_debug_samples: {}
 };
 
 const prompts = [
@@ -368,6 +376,10 @@ function wait(ms) {
 }
 
 function formatTokenUsage(tokenUsage) {
+    if (tokenUsage?.deterministic || tokenUsage?.source === "deterministic_answer") {
+        return "rule-rendered, no model tokens";
+    }
+
     if (!tokenUsage || !tokenUsage.total_tokens) {
         return "";
     }
@@ -385,6 +397,42 @@ function formatModelUsage(tokenUsage) {
 
     const runtimeLabel = tokenUsage.runtime_label || tokenUsage.runtimeLabel || "";
     return runtimeLabel || "";
+}
+
+function formatCompactNumber(value) {
+    const number = Number(value || 0);
+
+    if (number >= 1000000) {
+        return `${(number / 1000000).toFixed(1)}M`;
+    }
+
+    if (number >= 1000) {
+        return `${(number / 1000).toFixed(1)}K`;
+    }
+
+    return String(number);
+}
+
+async function refreshTodayTokenMeter() {
+    const meter = document.getElementById("todayTokenMeter");
+
+    if (!meter) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/api/profile/usage-stats");
+
+        if (!response.ok) {
+            return;
+        }
+
+        const data = await response.json();
+        meter.textContent = `Today ${formatCompactNumber(data.today_token_total)} tokens`;
+        meter.title = `${Number(data.today_token_total || 0).toLocaleString()} tokens used today`;
+    } catch (error) {
+        console.error("Failed to refresh today token meter:", error);
+    }
 }
 
 function parseJsonField(value, fallback) {
@@ -486,6 +534,20 @@ function inferRuntimeMetadataFromReasoningSteps(reasoningSteps) {
 
 function findPromptById(promptId) {
     return promptsData.find(prompt => String(prompt.id) === String(promptId));
+}
+
+function isDefaultPromptItem(prompt) {
+    const value = prompt?.is_default;
+
+    if (typeof value === "string") {
+        return ["1", "true", "yes"].includes(value.trim().toLowerCase());
+    }
+
+    return Boolean(value);
+}
+
+function promptShortcut(prompt) {
+    return isDefaultPromptItem(prompt) ? (prompt.shortcut || "") : "";
 }
 
 function setMode(mode) {
@@ -599,6 +661,14 @@ function showTab(tabName, buttonElement) {
         buttonElement.classList.add("active");
     }
 
+    if (tabName === "prompts") {
+        renderPromptCards();
+    }
+
+    if (tabName === "devices") {
+        renderDeviceTable();
+    }
+
     if (tabName !== "home") {
         closeReasoningDrawer();
     }
@@ -620,8 +690,11 @@ function newChat() {
     displayedWorkflowSteps = [];
     workflowNodeStatusMemory = {};
     workflowFinalized = false;
+    workflowMapExpanded = false;
 
     document.getElementById("messageInput").value = "";
+    autoResizeMessageInput();
+    updateRunButtonState();
     document.getElementById("chatMessages").innerHTML = "";
 
     const hero = document.getElementById("homeHero");
@@ -673,7 +746,7 @@ function usePrompt(promptText) {
     const input = document.getElementById("messageInput");
     const suggestions = document.getElementById("promptSuggestions");
 
-    input.value = promptText;
+    input.value = fillPromptDevicePlaceholder(promptText);
 
     suggestions.classList.add("hidden");
     suggestions.innerHTML = "";
@@ -681,18 +754,62 @@ function usePrompt(promptText) {
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
 
+    scheduleMessageInputResize();
+    updateRunButtonState();
     input.focus();
 }
 
 function handleEnter(event) {
-    if (event.key === "Enter") {
-        if (isAgentRunning) {
+    if (event.key === "Enter" && !event.shiftKey) {
+        if (isAgentRunning || !getMessageInputValue()) {
             event.preventDefault();
             return;
         }
 
+        event.preventDefault();
         sendMessage();
     }
+}
+
+function autoResizeMessageInput() {
+    const input = document.getElementById("messageInput");
+
+    if (!input) {
+        return;
+    }
+
+    input.style.height = "auto";
+    const maxHeight = 220;
+    const nextHeight = Math.min(input.scrollHeight, maxHeight);
+    input.style.height = `${Math.max(nextHeight, 48)}px`;
+    input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
+}
+
+function scheduleMessageInputResize() {
+    requestAnimationFrame(() => {
+        autoResizeMessageInput();
+        requestAnimationFrame(autoResizeMessageInput);
+    });
+}
+
+function handleMessageInput() {
+    handlePromptSuggestions();
+    scheduleMessageInputResize();
+    updateRunButtonState();
+}
+
+function getMessageInputValue() {
+    return (document.getElementById("messageInput")?.value || "").trim();
+}
+
+function updateRunButtonState() {
+    const runButton = document.querySelector(".run-button");
+
+    if (!runButton) {
+        return;
+    }
+
+    runButton.disabled = isAgentRunning || !getMessageInputValue();
 }
 
 function handlePromptSuggestions() {
@@ -707,7 +824,9 @@ function handlePromptSuggestions() {
         return;
     }
 
+    const lookupValue = value.split(/\s+/)[0] || value;
     const filtered = slashCommands.filter(item =>
+        promptShortcut(item).toLowerCase().includes(lookupValue.toLowerCase()) ||
         item.command.toLowerCase().includes(value.toLowerCase()) ||
         item.title.toLowerCase().includes(value.toLowerCase()) ||
         item.category.toLowerCase().includes(value.toLowerCase())
@@ -722,11 +841,13 @@ function handlePromptSuggestions() {
     palette.innerHTML = filtered.map(item => `
         <div class="slash-command" onclick="selectSlashCommandById('${escapeHtml(item.id)}')">
             <div>
-                <strong>${escapeHtml(item.title)}</strong>
+                <strong>
+                    ${escapeHtml(item.title)}
+                    ${promptShortcut(item) ? `<span class="slash-shortcut">${escapeHtml(promptShortcut(item))}</span>` : ""}
+                </strong>
                 <p>${escapeHtml(item.command)}</p>
             </div>
-
-            <span>${escapeHtml(item.category)}</span>
+            <span class="slash-category">${escapeHtml(item.category)}</span>
         </div>
     `).join("");
 
@@ -743,11 +864,49 @@ function selectSlashCommandById(promptId) {
     selectSlashCommand(prompt.command);
 }
 
+function findPromptByShortcut(value) {
+    const normalized = String(value || "").trim().split(/\s+/)[0].toLowerCase();
+
+    if (!normalized.startsWith("/")) {
+        return null;
+    }
+
+    return slashCommands.find(item =>
+        promptShortcut(item).toLowerCase() === normalized ||
+        String(item.command || "").toLowerCase() === normalized
+    ) || null;
+}
+
+function expandSlashShortcutMessage(value) {
+    const rawValue = String(value || "").trim();
+    const prompt = findPromptByShortcut(rawValue);
+
+    if (!prompt) {
+        return rawValue;
+    }
+
+    const shortcut = String(promptShortcut(prompt) || prompt.command || "").trim();
+    const trailingInput = rawValue.slice(shortcut.length).trim();
+    let command = String(prompt.command || "");
+
+    if (trailingInput && command.includes("<device_id>")) {
+        command = command.replaceAll("<device_id>", trailingInput);
+    } else if (trailingInput) {
+        command = `${fillPromptDevicePlaceholder(command)} ${trailingInput}`;
+    } else {
+        command = fillPromptDevicePlaceholder(command);
+    }
+
+    return command;
+}
+
 function selectSlashCommand(command) {
     const input = document.getElementById("messageInput");
     const palette = document.getElementById("slashPalette");
 
-    input.value = command;
+    input.value = fillPromptDevicePlaceholder(command);
+    scheduleMessageInputResize();
+    updateRunButtonState();
 
     palette.classList.add("hidden");
     palette.innerHTML = "";
@@ -759,8 +918,8 @@ async function loadSlashCommands() {
     const response = await fetch("/api/prompts");
     const data = await response.json();
 
-    promptsData = data.prompts;
-    slashCommands = data.prompts;
+    promptsData = data.prompts || [];
+    slashCommands = promptsData;
 
     renderPromptCards();
 }
@@ -787,12 +946,13 @@ function renderPromptCards() {
         const matchesSearch =
             prompt.title.toLowerCase().includes(searchValue) ||
             prompt.command.toLowerCase().includes(searchValue) ||
+            promptShortcut(prompt).toLowerCase().includes(searchValue) ||
             prompt.category.toLowerCase().includes(searchValue);
 
         const matchesType =
             typeFilter === "all" ||
-            (typeFilter === "default" && prompt.is_default) ||
-            (typeFilter === "custom" && !prompt.is_default);
+            (typeFilter === "default" && isDefaultPromptItem(prompt)) ||
+            (typeFilter === "custom" && !isDefaultPromptItem(prompt));
 
         return matchesCategory && matchesSearch && matchesType;
     });
@@ -803,8 +963,13 @@ function renderPromptCards() {
         grid.innerHTML += `
             <div class="prompt-card">
                 <div class="prompt-card-top">
-                    <span class="prompt-category">${escapeHtml(prompt.category)}</span>
-                    ${prompt.is_default ? `<span class="prompt-default">Default</span>` : `<span class="prompt-custom">Custom</span>`}
+                    <div class="prompt-card-badges">
+                        <span class="prompt-category">${escapeHtml(prompt.category)}</span>
+                        ${promptShortcut(prompt) ? `<span class="prompt-shortcut">${escapeHtml(promptShortcut(prompt))}</span>` : ""}
+                    </div>
+                    ${isDefaultPromptItem(prompt)
+                        ? `<span class="prompt-default">Default</span>`
+                        : `<span class="prompt-custom">Custom</span>`}
                 </div>
 
                 <h3>${escapeHtml(prompt.title)}</h3>
@@ -967,10 +1132,12 @@ async function sendMessage() {
     const suggestions = document.getElementById("promptSuggestions");
     const runButton = document.querySelector(".run-button");
 
-    const message = input.value.trim();
+    const rawMessage = input.value.trim();
+    const message = expandSlashShortcutMessage(rawMessage);
 
     if (!message) {
         isAgentRunning = false;
+        updateRunButtonState();
         return;
     }
 
@@ -981,12 +1148,15 @@ async function sendMessage() {
         input.reportValidity();
         input.setCustomValidity("");
         isAgentRunning = false;
+        updateRunButtonState();
         return;
     }
 
     resetLiveReasoningRun();
 
     input.value = "";
+    autoResizeMessageInput();
+    updateRunButtonState();
     input.disabled = true;
     setAppBusyState(true);
 
@@ -1020,8 +1190,8 @@ async function sendMessage() {
 
     runButton.disabled = true;
     runButton.innerHTML = `
-        Running...
-        <span>Please wait</span>
+        <span>Running...</span>
+        <small>Please wait</small>
     `;
 
     addUserMessage(message);
@@ -1068,6 +1238,8 @@ async function sendMessage() {
             latestTokenUsage
         );
         input.value = "";
+        autoResizeMessageInput();
+        updateRunButtonState();
 
     } catch (error) {
         addAssistantMessage("Request failed: " + error, false);
@@ -1079,13 +1251,15 @@ async function sendMessage() {
 
         runButton.disabled = false;
         runButton.innerHTML = `
-            Run
-            <span>Enter ↵</span>
+            <span>Run</span>
+            <small>Enter ↵</small>
         `;
 
         input.disabled = false;
+        autoResizeMessageInput();
         isAgentRunning = false;
         setAppBusyState(false);
+        updateRunButtonState();
     }
 }
 
@@ -1228,13 +1402,85 @@ async function sendStreamMessage(message) {
 }
 
 function diagnoseDevice(deviceId) {
+    rememberPromptDeviceId(deviceId);
     const input = document.getElementById("messageInput");
     input.value = `/diagnose ${deviceId}`;
+    scheduleMessageInputResize();
+    updateRunButtonState();
 
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
 
     sendMessage();
+}
+
+async function copyDeviceId(deviceId, button = null) {
+    const value = String(deviceId || "").trim();
+
+    if (!value) {
+        return;
+    }
+
+    rememberPromptDeviceId(value);
+    replaceInputDevicePlaceholder(value);
+
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+        } else {
+            const tempInput = document.createElement("textarea");
+            tempInput.value = value;
+            tempInput.setAttribute("readonly", "");
+            tempInput.style.position = "fixed";
+            tempInput.style.left = "-9999px";
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand("copy");
+            tempInput.remove();
+        }
+    } catch (error) {
+        console.error("Failed to copy device ID:", error);
+        return;
+    }
+
+    if (!button) {
+        return;
+    }
+
+    const previousText = button.textContent;
+    button.textContent = "Copied";
+    button.classList.add("copied");
+
+    setTimeout(() => {
+        button.textContent = previousText || "Copy";
+        button.classList.remove("copied");
+    }, 1200);
+}
+
+function rememberPromptDeviceId(deviceId) {
+    selectedPromptDeviceId = String(deviceId || "").trim();
+}
+
+function fillPromptDevicePlaceholder(promptText) {
+    const text = String(promptText || "");
+
+    if (!selectedPromptDeviceId) {
+        return text;
+    }
+
+    return text.replace(/<device_id>/g, selectedPromptDeviceId);
+}
+
+function replaceInputDevicePlaceholder(deviceId) {
+    const input = document.getElementById("messageInput");
+
+    if (!input || !input.value.includes("<device_id>")) {
+        return;
+    }
+
+    input.value = input.value.replace(/<device_id>/g, deviceId);
+    scheduleMessageInputResize();
+    updateRunButtonState();
 }
 
 function renderChatHistory() {
@@ -1347,12 +1593,12 @@ async function loadChat(chatId) {
 
     let lastUserMessage = null;
 
-    chat.messages.forEach(message => {
+    for (const message of chat.messages) {
         if (message.role === "user") {
             lastUserMessage = message.content;
             renderUserMessage(message.content, message.createdAt);
         } else {
-            renderAssistantMessage(
+            await renderAssistantMessage(
                 message.content,
                 message.hasReasoning,
                 message.reasoningSteps || [],
@@ -1362,7 +1608,7 @@ async function loadChat(chatId) {
                 message.tokenUsage || null
             );
         }
-    });
+    }
 
     renderChatHistory();
 }
@@ -1466,6 +1712,8 @@ async function prefetchRecentChats(limit = PREFETCH_CHAT_LIMIT) {
 }
 
 async function refreshDevices() {
+    setDevicesLoadingState(true);
+
     try {
         const response = await fetch("/api/devices");
         const data = await response.json();
@@ -1484,13 +1732,19 @@ async function refreshDevices() {
             alerts: data.alerts || {},
             official_alerts: data.official_alerts || {},
             kpi_evaluations: data.kpi_evaluations || [],
-            company_rule_mappings: data.company_rule_mappings || []
+            company_rule_mappings: data.company_rule_mappings || [],
+            provenance: data.provenance || {},
+            db_audit_status: data.db_audit_status || data.provenance?.db_audit_status || "unknown",
+            db_audit: data.db_audit || data.provenance?.db_audit || [],
+            db_read_plan: data.db_read_plan || data.provenance?.db_read_plan || [],
+            db_debug_samples: data.db_debug_samples || {}
         };
         allDevices = data.devices || [];
         currentAlerts = data.alerts || {
             critical_count: 0,
             warning_count: 0
         };
+        devicesLoading = false;
         updateDataSourceControl();
         updateAlertPolicyControl();
         updateDataSourceDisplay();
@@ -1502,6 +1756,8 @@ async function refreshDevices() {
 
     } catch (error) {
         console.error("Failed to refresh devices:", error);
+        devicesLoading = false;
+        renderDeviceLoadingState("Unable to load devices. Please try again.");
     }
 }
 
@@ -1539,6 +1795,7 @@ async function changeDataSource(value) {
         selectedDataSource = data.selected_source || selectedDataSource;
         allowedDataSources = data.allowed_data_sources || allowedDataSources;
         currentAlertPolicy = data.selected_alert_policy || currentAlertPolicy;
+        await loadSlashCommands();
         await refreshDevices();
     } catch (error) {
         console.error("Failed to switch data source:", error);
@@ -1617,11 +1874,17 @@ function updateAlertPolicyControl() {
 function formatDataSourceLabel(value) {
     const labels = {
         simulator: "Simulator",
-        sqlite: "SQLite simulator",
-        mongodb: "MongoDB simulator",
-        company: "Company DB",
-        company_mongodb: "Company MongoDB",
-        simulator_fallback: "Simulator fallback"
+        sqlite: "SQLite (Local)",
+        mongodb: "MongoDB (Testbed)",
+        postgres: "Postgres",
+        company: "Company",
+        company_mongodb: "MongoDB (Prod)",
+        simulator_fallback: "Fallback",
+        official: "Official",
+        fallback: "Fallback",
+        provisional_poc: "PoC",
+        not_configured: "Not configured",
+        available_unmapped: "Unmapped"
     };
 
     return labels[value] || value || "Unknown";
@@ -1640,10 +1903,15 @@ function updateDataSourceDisplay() {
     const rulesStatus = currentDataSourceState.rules_status || "unknown";
 
     if (badge) {
-        badge.textContent = selectedDataSource === "simulator"
-            ? activeLabel
-            : `${selectedLabel} → ${activeLabel}`;
-        badge.className = `source-badge ${rulesStatus}`;
+        const activeSource = (
+            currentDataSourceState.active_source ||
+            currentDataSourceState.source ||
+            selectedDataSource ||
+            "unknown"
+        );
+        badge.textContent = activeLabel;
+        badge.title = `Selected: ${selectedLabel}; Active: ${activeLabel}`;
+        badge.className = `source-badge ${rulesStatus} ${activeSource}`;
     }
 
     if (!note) {
@@ -1689,7 +1957,7 @@ function updateDataSourceDisplay() {
 
     if (selectedDataSource === "simulator") {
         note.textContent = (
-            "Fallback simulator is selected. Demo telemetry and demo alert rules are active."
+            "Simulator telemetry is selected. Demo alert rules are active."
         );
         note.classList.remove("hidden");
         return;
@@ -1819,6 +2087,66 @@ function getCompanyRecordView(device) {
     };
 }
 
+function displayCompanyValue(value, fallback = "-") {
+    if (value === null || value === undefined) {
+        return fallback;
+    }
+
+    const text = String(value).trim();
+
+    if (!text || text.toLowerCase() === "null" || text.toLowerCase() === "none") {
+        return fallback;
+    }
+
+    return text;
+}
+
+function companyProfileSummary(device) {
+    const category = displayCompanyValue(device.category, "Unknown type");
+    const maker = displayCompanyValue(device.manufacturer, "");
+    const model = displayCompanyValue(device.model, "");
+    const protocol = displayCompanyValue(device.protocol, "");
+    const source = device.inventory_source === "devicemgmt.NODE"
+        ? "devicemgmt.NODE device registry"
+        : displayCompanyValue(device.inventory_source, "telemetry-only row");
+
+    return {
+        category,
+        details: [maker, model, protocol].filter(Boolean).join(" · ") || "No device profile metadata",
+        source,
+        node: displayCompanyValue(device.node_id, ""),
+    };
+}
+
+function companyRuleFieldSummary() {
+    const rules = currentDataSourceState.company_rule_mappings || [];
+    const fields = [];
+
+    rules.forEach(rule => {
+        (rule.filters || []).forEach(filter => {
+            if (filter.field && !fields.includes(filter.field)) {
+                fields.push(filter.field);
+            }
+        });
+    });
+
+    return fields;
+}
+
+function companyMetricFieldSummary() {
+    const fields = [];
+
+    (allDevices || []).forEach(device => {
+        (device.metrics || []).forEach(metric => {
+            if (metric.name && !fields.includes(metric.name)) {
+                fields.push(metric.name);
+            }
+        });
+    });
+
+    return fields;
+}
+
 function renderCompanyMetrics(metrics) {
     if (!Array.isArray(metrics) || metrics.length === 0) {
         return '<span class="metric-empty">No additional telemetry in this record</span>';
@@ -1854,7 +2182,7 @@ function companyMetricTooltip(metric) {
     if (metric.inferred_from) {
         parts.push(`mapped from ${metric.inferred_from}`);
     } else if (metric.name === "value") {
-        parts.push("The company payload did not include a metric name for this value.");
+        parts.push("CIN.con contains a generic JSON field named value, not a business metric name.");
     }
 
     if (metric.rule_operator || metric.rule_threshold) {
@@ -1887,6 +2215,9 @@ function renderCompanyDataSummary() {
     const telemetryDevices = allDevices.filter(
         device => Number(device.telemetry_record_count || 0) > 0
     ).length;
+    const ruleFields = companyRuleFieldSummary();
+    const metricFields = companyMetricFieldSummary();
+    const missingRuleFields = ruleFields.filter(field => !metricFields.includes(field));
     const connectedCount = Object.entries(statusCounts)
         .filter(([status]) => status.includes("connected") && !status.includes("disconnected"))
         .reduce((total, [, count]) => total + count, 0);
@@ -1897,7 +2228,7 @@ function renderCompanyDataSummary() {
     summary.innerHTML = `
         <div class="company-summary-stats">
             <div>
-                <span>Inventory devices</span>
+                <span>Device profiles</span>
                 <strong>${uniqueDevices}</strong>
             </div>
             <div>
@@ -1919,10 +2250,14 @@ function renderCompanyDataSummary() {
         </div>
         <p class="company-rules-notice">
             ${sourceSummary.telemetry_payload_count || 0} telemetry payloads scanned.
-            ${sourceSummary.unmapped_telemetry_count || 0} records could not be mapped
-            safely. Raw value chips mean the payload has no metric name in
-            datamgmt.CIN.con. ${tenantCount} tenant${tenantCount === 1 ? "" : "s"}
-            are represented.
+            ${sourceSummary.unmapped_telemetry_count || 0} records could not be mapped safely.
+            Raw value means datamgmt.CIN.con literally exposes {"value": "..."} instead
+            of a metric such as Toc_do_xe, PM2.5, temp, or humidity.
+            ${missingRuleFields.length ? `
+                Rule fields not found in current telemetry chips:
+                ${escapeHtml(missingRuleFields.slice(0, 5).join(", "))}.
+            ` : ""}
+            ${tenantCount} tenant${tenantCount === 1 ? "" : "s"} are represented.
         </p>
     `;
 }
@@ -1932,6 +2267,12 @@ function updateDeviceControlsForSource() {
     const charts = document.getElementById("devicesCharts");
     const summary = document.getElementById("companyDataSummary");
     const tableCard = document.getElementById("devicesTableCard");
+    const debugButton = document.getElementById("companyDbDebugButton");
+
+    document.querySelector(".device-controls")?.classList.toggle(
+        "company-device-controls",
+        companyMode,
+    );
 
     document.querySelectorAll(".simulator-only-control").forEach(control => {
         control.classList.toggle("hidden", companyMode);
@@ -1943,9 +2284,388 @@ function updateDeviceControlsForSource() {
     charts?.classList.toggle("hidden", companyMode);
     summary?.classList.toggle("hidden", !companyMode);
     tableCard?.classList.toggle("company-table-card", companyMode);
+    debugButton?.classList.toggle("hidden", !companyMode);
 
     if (companyMode) {
         renderCompanyDataSummary();
+    }
+}
+
+function formatDebugJson(value) {
+    return escapeHtml(JSON.stringify(value ?? null, null, 2));
+}
+
+function renderDebugCopyBlock(label, rawText) {
+    return `
+        <div class="db-debug-copy-block">
+            <div class="db-debug-copy-header">
+                <label>${escapeHtml(label)}</label>
+            </div>
+            <div class="db-debug-copy-body">
+                <span
+                    class="db-debug-copy-action"
+                    role="button"
+                    tabindex="0"
+                    onclick="copyDebugBlock(this)"
+                    onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); copyDebugBlock(this); }"
+                >
+                    Copy
+                </span>
+                <pre>${escapeHtml(rawText)}</pre>
+            </div>
+        </div>
+    `;
+}
+
+async function copyDebugBlock(button) {
+    const block = button.closest(".db-debug-copy-block");
+    const pre = block?.querySelector("pre");
+    const text = pre?.textContent || "";
+
+    if (!text) {
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied";
+        setTimeout(() => {
+            button.textContent = "Copy";
+        }, 1400);
+    } catch (error) {
+        console.error("Failed to copy debug block:", error);
+        button.textContent = "Failed";
+        setTimeout(() => {
+            button.textContent = "Copy";
+        }, 1400);
+    }
+}
+
+function mongoShellCommandFromPlan(plan) {
+    const namespace = String(plan.namespace || "");
+    const [database, collection] = namespace.split(".");
+
+    if (!database || !collection) {
+        return JSON.stringify(plan, null, 2);
+    }
+
+    const query = plan.query || {};
+    const projection = plan.projection || {};
+    const sort = plan.sort;
+    const limit = plan.effective_limit || plan.requested_limit || 100;
+    let command = `db.getSiblingDB(${JSON.stringify(database)}).getCollection(${JSON.stringify(collection)}).find(\n`;
+    command += `  ${JSON.stringify(query, null, 2).replace(/\n/g, "\n  ")},\n`;
+    command += `  ${JSON.stringify(projection, null, 2).replace(/\n/g, "\n  ")}\n`;
+    command += `)`;
+
+    if (Array.isArray(sort) && sort.length === 2) {
+        command += `.sort({ ${JSON.stringify(sort[0])}: ${sort[1]} })`;
+    }
+
+    command += `.limit(${limit});`;
+    return command;
+}
+
+function renderCompanyDbDebugSection(plan, index) {
+    const samples = currentDataSourceState.db_debug_samples || {};
+    const runtimeAudits = currentDataSourceState.db_audit || [];
+    const namespace = plan.namespace || `query-${index + 1}`;
+    const audit = runtimeAudits.find(item => item.namespace === namespace) || {};
+    const sampleRows = samples[namespace] || [];
+
+    return `
+        <section class="db-debug-section">
+            <div class="db-debug-section-header">
+                <div>
+                    <h3>${escapeHtml(namespace)}</h3>
+                    <p>
+                        ${escapeHtml(plan.operation || "find")}
+                        · requested ${escapeHtml(plan.requested_limit || "-")}
+                        · effective ${escapeHtml(plan.effective_limit || audit.effective_limit || "-")}
+                    </p>
+                </div>
+                <span>${sampleRows.length} sample${sampleRows.length === 1 ? "" : "s"}</span>
+            </div>
+            ${renderDebugCopyBlock("Mongo shell equivalent", mongoShellCommandFromPlan(plan))}
+            ${renderDebugCopyBlock("Runtime audit", JSON.stringify(audit || {}, null, 2))}
+            ${renderDebugCopyBlock("Sample result returned to backend", JSON.stringify(sampleRows, null, 2))}
+        </section>
+    `;
+}
+
+function companyConnectionState(device) {
+    const normalizedStatus = String(device.status || "unknown").toLowerCase();
+
+    if (normalizedStatus.includes("disconnected")) {
+        return "disconnected";
+    }
+
+    if (normalizedStatus.includes("connected")) {
+        return "connected";
+    }
+
+    return "unknown";
+}
+
+function companyDeviceSearchText(device) {
+    const searchableMetrics = Array.isArray(device.metrics)
+        ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
+        : "";
+
+    return [
+        device.device_id,
+        device.record_id,
+        device.parent_container,
+        device.device_name,
+        device.node_id,
+        device.category,
+        device.model,
+        device.manufacturer,
+        device.app_domain_name,
+        device.tenant_name,
+        searchableMetrics
+    ].join(" ").toLowerCase();
+}
+
+function getCompanyTableState() {
+    const searchValue = document.getElementById("deviceSearch")?.value.toLowerCase() || "";
+    const statusValue = document.getElementById("companyConnectionFilter")?.value || "all";
+    const sortValue = document.getElementById("companySortSelect")?.value || "latest";
+    let devices = [...(allDevices || [])];
+
+    devices = devices.filter(device => {
+        const matchesSearch = companyDeviceSearchText(device).includes(searchValue);
+        const matchesStatus = statusValue === "all" || companyConnectionState(device) === statusValue;
+        return matchesSearch && matchesStatus;
+    });
+
+    devices.sort((a, b) => {
+        if (sortValue === "name") {
+            return String(a.device_name || a.device_id || "").localeCompare(
+                String(b.device_name || b.device_id || "")
+            );
+        }
+
+        if (sortValue === "telemetry") {
+            return Number(b.telemetry_record_count || 0)
+                - Number(a.telemetry_record_count || 0);
+        }
+
+        if (sortValue === "rules") {
+            return Number(b.rule_count || 0) - Number(a.rule_count || 0);
+        }
+
+        return Number(b.timestamp || 0) - Number(a.timestamp || 0);
+    });
+
+    return {
+        searchValue,
+        statusValue,
+        sortValue,
+        devices,
+    };
+}
+
+function explainCompanyDeviceRow(device, visibleDevices) {
+    const visibleIds = new Set(visibleDevices.map(item => item.device_id));
+    const reasons = [];
+
+    if (!visibleIds.has(device.device_id)) {
+        reasons.push("Not visible with the current table search/filter/sort window.");
+    }
+
+    if (device.inventory_source === "devicemgmt.NODE") {
+        reasons.push("Device profile row from devicemgmt.NODE childDeviceInfoEntities.");
+    }
+
+    if (Number(device.telemetry_record_count || 0) === 0) {
+        reasons.push("No datamgmt.CIN payload was safely mapped to this device.");
+    } else {
+        reasons.push(`${device.telemetry_record_count} datamgmt.CIN payload records mapped through CNT/container ownership or payload identity.`);
+    }
+
+    if (!Array.isArray(device.metrics) || device.metrics.length === 0) {
+        reasons.push("No displayable metric name/value was extracted from the latest payload.");
+    } else if (device.metrics.some(metric => metric.name === "value")) {
+        reasons.push("Latest payload only exposed a generic value field, so the UI labels it raw value.");
+    } else {
+        reasons.push("Latest payload includes named metrics that can be displayed directly.");
+    }
+
+    if (device.connectivity) {
+        reasons.push(`connectivity=${device.connectivity} is inventory metadata from the DB, not the live connection status.`);
+    }
+
+    return reasons;
+}
+
+function renderCompanyDeviceDebugRows(rows, visibleDevices) {
+    if (!rows.length) {
+        return `
+            <div class="db-debug-empty">
+                <strong>No device rows matched the current table state.</strong>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="db-debug-device-list">
+            ${rows.map(device => `
+                <article class="db-debug-device-card">
+                    <div>
+                        <strong title="${escapeHtml(device.device_name || "")}">
+                            ${escapeHtml(device.device_name || "Unnamed device")}
+                        </strong>
+                        <small title="${escapeHtml(device.device_id || "")}">
+                            ${escapeHtml(device.device_id || "Unknown ID")}
+                        </small>
+                    </div>
+                    <dl>
+                        <div><dt>Device profile</dt><dd>${escapeHtml(device.inventory_source || "-")}</dd></div>
+                        <div><dt>Record</dt><dd title="${escapeHtml(device.record_id || "")}">${escapeHtml(device.record_id || "-")}</dd></div>
+                        <div><dt>Container</dt><dd title="${escapeHtml(device.parent_container || "")}">${escapeHtml(device.parent_container || "-")}</dd></div>
+                        <div><dt>Telemetry</dt><dd>${escapeHtml(device.telemetry_record_count || 0)} records</dd></div>
+                        <div><dt>Connectivity</dt><dd>${escapeHtml(device.connectivity || "-")}</dd></div>
+                        <div><dt>Protocol</dt><dd>${escapeHtml(device.protocol || "-")}</dd></div>
+                    </dl>
+                    <ul>
+                        ${explainCompanyDeviceRow(device, visibleDevices).map(reason => `
+                            <li>${escapeHtml(reason)}</li>
+                        `).join("")}
+                    </ul>
+                    ${renderDebugCopyBlock("Visible row payload", JSON.stringify({
+                        metrics: device.metrics || [],
+                        payload_summary: device.payload_summary || null,
+                        content_format: device.content_format || null,
+                    }, null, 2))}
+                </article>
+            `).join("")}
+        </div>
+    `;
+}
+
+function openCompanyDbDebug() {
+    const modal = document.getElementById("companyDbDebugModal");
+    const content = document.getElementById("companyDbDebugContent");
+
+    if (!modal || !content) {
+        return;
+    }
+
+    const plan = currentDataSourceState.db_read_plan || [];
+    const summary = currentDataSourceState.summary || {};
+    const provenance = currentDataSourceState.provenance || {};
+    const samples = currentDataSourceState.db_debug_samples || {};
+    const tableState = getCompanyTableState();
+    const sampleDeviceRows = tableState.devices.slice(0, 8);
+
+    if (!plan.length && !Object.keys(samples).length) {
+        content.innerHTML = `
+            <div class="db-debug-empty">
+                <strong>No MongoDB debug data is available for this page load.</strong>
+                <p>${escapeHtml(currentDataSourceState.reason || "Switch to Company data source and refresh Devices.")}</p>
+            </div>
+        `;
+        modal.classList.remove("hidden");
+        return;
+    }
+
+    content.innerHTML = `
+        <div class="db-debug-overview">
+            <div>
+                <span>Active source</span>
+                <strong>${escapeHtml(formatDataSourceLabel(currentDataSourceState.active_source))}</strong>
+            </div>
+            <div>
+                <span>Audit status</span>
+                <strong>${escapeHtml(currentDataSourceState.db_audit_status || provenance.db_audit_status || "unknown")}</strong>
+            </div>
+            <div>
+                <span>CIN scanned</span>
+                <strong>${escapeHtml(summary.content_instance_count || 0)}</strong>
+            </div>
+            <div>
+                <span>Unmapped telemetry</span>
+                <strong>${escapeHtml(summary.unmapped_telemetry_count || 0)}</strong>
+            </div>
+            <div>
+                <span>Rows after filter</span>
+                <strong>${escapeHtml(tableState.devices.length)} / ${escapeHtml((allDevices || []).length)}</strong>
+            </div>
+        </div>
+        <section class="db-debug-explainer">
+            <strong>How to read this</strong>
+            <p>
+                Device profile means the row came from devicemgmt.NODE. Telemetry records
+                come from datamgmt.CIN.con after the backend maps CIN through CNT/container
+                ownership or payload identity. The label "raw value" is UI wording for
+                a generic metric named "value"; the value itself, such as "abcd1", comes
+                from the database payload.
+                If datamgmt.RULE filters expect fields such as Toc_do_xe or ug/m3 but
+                CIN.con only contains {"value":"abcd1"}, the rule cannot be evaluated
+                against that telemetry without a confirmed field mapping.
+            </p>
+            <p>
+                Current table state: search="${escapeHtml(tableState.searchValue || "none")}",
+                connection="${escapeHtml(tableState.statusValue)}",
+                sort="${escapeHtml(tableState.sortValue)}".
+            </p>
+        </section>
+        <section class="db-debug-section">
+            <div class="db-debug-section-header">
+                <div>
+                    <h3>Visible joined device rows</h3>
+                    <p>Rows after the current Devices table search/filter/sort, with business interpretation.</p>
+                </div>
+                <span>${sampleDeviceRows.length} rows</span>
+            </div>
+            ${renderCompanyDeviceDebugRows(sampleDeviceRows, tableState.devices)}
+        </section>
+        ${plan.map(renderCompanyDbDebugSection).join("")}
+    `;
+    modal.classList.remove("hidden");
+}
+
+function closeCompanyDbDebug() {
+    const modal = document.getElementById("companyDbDebugModal");
+
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+}
+
+function renderDeviceLoadingState(message = "Loading devices...") {
+    const tableBody = document.getElementById("deviceTableBody");
+    const tableHeader = document.getElementById("deviceTableHeader");
+    const charts = document.getElementById("devicesCharts");
+    const summary = document.getElementById("companyDataSummary");
+    const tableCard = document.getElementById("devicesTableCard");
+    const companyMode = isCompanyDataActive();
+
+    charts?.classList.add("hidden");
+    summary?.classList.add("hidden");
+    tableCard?.classList.toggle("company-table-card", companyMode);
+
+    if (tableHeader) {
+        tableHeader.innerHTML = "";
+    }
+
+    if (tableBody) {
+        tableBody.innerHTML = `
+            <tr>
+                <td class="devices-loading-cell">
+                    ${escapeHtml(message)}
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function setDevicesLoadingState(isLoading) {
+    devicesLoading = isLoading;
+
+    if (isLoading) {
+        renderDeviceLoadingState();
     }
 }
 
@@ -1958,6 +2678,12 @@ function renderDeviceTable() {
     }
 
     const companyMode = isCompanyDataActive();
+
+    if (devicesLoading) {
+        renderDeviceLoadingState();
+        return;
+    }
+
     updateDeviceControlsForSource();
 
     tableHeader.innerHTML = companyMode
@@ -1965,7 +2691,7 @@ function renderDeviceTable() {
             <th class="company-device-column">Device</th>
             <th>Connection</th>
             <th>Latest telemetry</th>
-            <th>Inventory</th>
+            <th>Device profile</th>
             <th>Last observed</th>
             <th>Rules / History</th>
         `
@@ -2001,58 +2727,34 @@ function renderDeviceTable() {
 
     let devices = [...allDevices];
 
-    devices = devices.filter(device => {
-        const searchableMetrics = Array.isArray(device.metrics)
-            ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
-            : "";
-        const searchableText = [
-            device.device_id,
-            device.parent_container,
-            device.device_name,
-            device.node_id,
-            device.category,
-            device.model,
-            device.manufacturer,
-            device.app_domain_name,
-            device.tenant_name,
-            searchableMetrics
-        ].join(" ").toLowerCase();
-        const matchesSearch = searchableText.includes(searchValue);
-        const normalizedStatus = String(device.status || "unknown").toLowerCase();
-        const connectionState = normalizedStatus.includes("disconnected")
-            ? "disconnected"
-            : normalizedStatus.includes("connected")
-                ? "connected"
-                : "unknown";
-        const matchesStatus = statusValue === "all" || (
-            companyMode
-                ? connectionState === statusValue
-                : device.status === statusValue
-        );
+    if (companyMode) {
+        devices = getCompanyTableState().devices;
+    } else {
+        devices = devices.filter(device => {
+            const searchableMetrics = Array.isArray(device.metrics)
+                ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
+                : "";
+            const searchableText = [
+                device.device_id,
+                device.parent_container,
+                device.device_name,
+                device.node_id,
+                device.category,
+                device.model,
+                device.manufacturer,
+                device.app_domain_name,
+                device.tenant_name,
+                searchableMetrics
+            ].join(" ").toLowerCase();
+            const matchesSearch = searchableText.includes(searchValue);
+            const matchesStatus = statusValue === "all" || device.status === statusValue;
 
-        return matchesSearch && matchesStatus;
-    });
+            return matchesSearch && matchesStatus;
+        });
+    }
 
-    devices.sort((a, b) => {
-        if (companyMode) {
-            if (sortValue === "name") {
-                return String(a.device_name || a.device_id || "").localeCompare(
-                    String(b.device_name || b.device_id || "")
-                );
-            }
-
-            if (sortValue === "telemetry") {
-                return Number(b.telemetry_record_count || 0)
-                    - Number(a.telemetry_record_count || 0);
-            }
-
-            if (sortValue === "rules") {
-                return Number(b.rule_count || 0) - Number(a.rule_count || 0);
-            }
-
-            return Number(b.timestamp || 0) - Number(a.timestamp || 0);
-        }
-
+    if (!companyMode) {
+        devices.sort((a, b) => {
         if (sortValue === "priority") {
             return calculatePriority(b) - calculatePriority(a);
         }
@@ -2074,13 +2776,15 @@ function renderDeviceTable() {
         }
 
         return 0;
-    });
+        });
+    }
 
     tableBody.innerHTML = "";
 
     devices.forEach(device => {
         if (companyMode) {
             const view = getCompanyRecordView(device);
+            const profile = companyProfileSummary(device);
             const normalizedStatus = String(view.status || "unknown").toLowerCase();
             const connectionClass = normalizedStatus.includes("disconnected")
                 ? "disconnected"
@@ -2091,15 +2795,29 @@ function renderDeviceTable() {
             tableBody.innerHTML += `
                 <tr>
                     <td class="company-device-cell">
-                        <strong
-                            class="company-device-name"
-                            title="${escapeHtml(view.name)}"
-                        >
-                            ${escapeHtml(view.name)}
-                        </strong>
-                        <small class="device-subtext company-id" title="${escapeHtml(view.id)}">
-                            ${escapeHtml(view.id)}
-                        </small>
+                        <div class="copyable-device">
+                            <div class="copyable-device-text">
+                                <strong
+                                    class="company-device-name"
+                                    title="${escapeHtml(view.name)}"
+                                >
+                                    ${escapeHtml(view.name)}
+                                </strong>
+                                <small
+                                        class="device-subtext company-id"
+                                    >
+                                    ID: ${escapeHtml(view.id)}
+                                </small>
+                            </div>
+                            <button
+                                class="device-copy-btn"
+                                type="button"
+                                title="Copy device ID"
+                                onclick="copyDeviceId('${escapeJsString(view.id)}', this)"
+                            >
+                                Copy
+                            </button>
+                        </div>
                     </td>
                     <td>
                         <span class="connection-badge ${connectionClass}">
@@ -2108,16 +2826,17 @@ function renderDeviceTable() {
                     </td>
                     <td>${renderCompanyMetrics(view.telemetry)}</td>
                     <td class="company-context-cell">
-                        <span>${escapeHtml(device.category || "Unknown type")}</span>
+                        <span>
+                            <b class="company-profile-label">Type</b>
+                            ${escapeHtml(profile.category)}
+                        </span>
                         <small class="device-subtext">
-                            ${escapeHtml([
-                                device.manufacturer,
-                                device.model,
-                                device.protocol
-                            ].filter(Boolean).join(" · ") || "No model metadata")}
+                            <b class="company-profile-label">Meta</b>
+                            ${escapeHtml(profile.details)}
                         </small>
-                        <small class="device-subtext" title="${escapeHtml(device.node_id || "")}">
-                            ${escapeHtml(device.node_id || device.inventory_source || "Telemetry only")}
+                        <small class="device-subtext">
+                            <b class="company-profile-label">Source</b>
+                            ${escapeHtml([profile.source, profile.node].filter(Boolean).join(" · "))}
                         </small>
                     </td>
                     <td class="company-time-cell">
@@ -2130,7 +2849,7 @@ function renderDeviceTable() {
                         <span>
                             ${Number(device.rule_count || 0)} mapped rules
                         </span>
-                        <button onclick="showDeviceHistory('${escapeHtml(device.device_id)}')">
+                        <button onclick="showDeviceHistory('${escapeJsString(device.device_id)}')">
                             History
                         </button>
                     </td>
@@ -2142,12 +2861,25 @@ function renderDeviceTable() {
         const priority = calculatePriority(device);
         const payloadSummary = formatCompanyPayloadSummary(device);
         const deviceLabel = escapeHtml(device.device_id);
+        const rawDeviceId = escapeJsString(device.device_id);
 
         tableBody.innerHTML += `
             <tr>
                 <td>
-                    ${deviceLabel}
-                    ${payloadSummary ? `<small class="device-subtext">${escapeHtml(payloadSummary)}</small>` : ""}
+                    <div class="copyable-device">
+                        <div class="copyable-device-text">
+                            <span class="device-id-text">${deviceLabel}</span>
+                            ${payloadSummary ? `<small class="device-subtext">${escapeHtml(payloadSummary)}</small>` : ""}
+                        </div>
+                        <button
+                            class="device-copy-btn"
+                            type="button"
+                            title="Copy device ID"
+                            onclick="copyDeviceId('${rawDeviceId}', this)"
+                        >
+                            Copy
+                        </button>
+                    </div>
                 </td>
                 <td>${formatDeviceStatus(device)}</td>
                 <td>${formatMetricValue(device.cpu_usage, "%")}</td>
@@ -2155,7 +2887,7 @@ function renderDeviceTable() {
                 <td>${formatMetricValue(device.heartbeat_delay, "s ago")}</td>
                 <td>${priority}</td>
                 <td>
-                    <button onclick="diagnoseDevice('${deviceLabel}')">
+                    <button onclick="diagnoseDevice('${rawDeviceId}')">
                         Diagnose
                     </button>
                 </td>
@@ -2166,7 +2898,7 @@ function renderDeviceTable() {
                             Raw record
                         </button>
                     ` : `
-                        <button onclick="showDeviceHistory('${deviceLabel}')">
+                        <button onclick="showDeviceHistory('${rawDeviceId}')">
                             History
                         </button>
                     `}
@@ -2378,6 +3110,8 @@ function editUserMessage(messageId) {
     const input = document.getElementById("messageInput");
     input.value = storedMessage.content;
     input.disabled = false;
+    scheduleMessageInputResize();
+    updateRunButtonState();
     input.focus();
 }
 
@@ -2411,6 +3145,8 @@ function tryAssistantMessageAgain(messageId) {
 
     const input = document.getElementById("messageInput");
     input.value = storedMessage.retryPrompt;
+    scheduleMessageInputResize();
+    updateRunButtonState();
     sendMessage();
 }
 
@@ -2491,6 +3227,10 @@ function prettyJson(value) {
 
 function renderJsonBlock(value, className = "") {
     return `<pre class="reasoning-json-block ${className}">${escapeHtml(prettyJson(value))}</pre>`;
+}
+
+function encodedJsonForCopy(value) {
+    return encodeURIComponent(prettyJson(value));
 }
 
 function formatMongoCommandFromAudit(event = {}) {
@@ -2576,6 +3316,10 @@ function copyQueryCommand(button, command) {
     setTimeout(() => {
         button.textContent = previousText || "Copy";
     }, 1200);
+}
+
+function copyJsonAction(button, encodedJson) {
+    copyQueryCommand(button, decodeURIComponent(encodedJson || ""));
 }
 
 function toggleQueryCommandDetails(button) {
@@ -3065,8 +3809,9 @@ function renderObservationOutput(output) {
         <section class="observation-section">
             <div class="observation-section-title">Observation</div>
             ${renderJsonBlock(summaryOutput, "observation-json")}
-            ${showFullEvidence ? `
-                <div class="observation-details">
+            <div class="observation-details">
+                <div class="observation-actions">
+                    ${showFullEvidence ? `
                     <button
                         class="observation-details-toggle"
                         type="button"
@@ -3074,11 +3819,34 @@ function renderObservationOutput(output) {
                     >
                         Show full evidence JSON
                     </button>
+                    ` : ""}
+                    <span
+                        class="observation-json-copy"
+                        role="button"
+                        tabindex="0"
+                        onclick="copyJsonAction(this, '${encodedJsonForCopy(summaryOutput)}')"
+                        onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); copyJsonAction(this, '${encodedJsonForCopy(summaryOutput)}'); }"
+                    >
+                        Copy summary JSON
+                    </span>
+                </div>
+                ${showFullEvidence ? `
                     <div class="observation-details-panel hidden">
                         ${renderJsonBlock(compactOutput, "observation-json")}
+                        <div class="observation-actions observation-actions-below">
+                            <span
+                                class="observation-json-copy"
+                                role="button"
+                                tabindex="0"
+                                onclick="copyJsonAction(this, '${encodedJsonForCopy(compactOutput)}')"
+                                onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); copyJsonAction(this, '${encodedJsonForCopy(compactOutput)}'); }"
+                            >
+                                Copy full evidence JSON
+                            </span>
+                        </div>
                     </div>
-                </div>
-            ` : ""}
+                ` : ""}
+            </div>
         </section>
     `;
 }
@@ -3092,6 +3860,8 @@ function observationText(output) {
 function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     const content = document.getElementById("reasoningDrawerContent");
     const safeSteps = Array.isArray(steps) ? steps : [];
+    const scrollContainer = content.querySelector(".reasoning-trace-list") || content;
+    const shouldPinScroll = shouldKeepTypingPinnedToBottom(scrollContainer);
 
     if (safeSteps.length === 0) {
         content.innerHTML = `
@@ -3100,6 +3870,7 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
                 No reasoning trace yet.
             </div>
         `;
+        restorePinnedScroll(content, shouldPinScroll);
         return;
     }
 
@@ -3134,6 +3905,7 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
             ${html}
         </div>
     `;
+    restorePinnedScroll(content.querySelector(".reasoning-trace-list") || content, shouldPinScroll);
 }
 
 function renderReasoningSteps(steps, shouldType = false) {
@@ -3209,17 +3981,21 @@ function renderReasoningSteps(steps, shouldType = false) {
 
 function createReasoningStepElement(step) {
     const content = document.getElementById("reasoningDrawerContent");
+    let traceList = content.querySelector(".reasoning-trace-list");
+    const shouldPinScroll = shouldKeepTypingPinnedToBottom(traceList || content);
 
-    if (!content.querySelector(".reasoning-trace-list")) {
+    if (!traceList) {
         content.innerHTML = `
             ${renderWorkflowMap(latestReasoningSteps, workflowFinalized)}
             <div class="reasoning-trace-list"></div>
         `;
+        traceList = content.querySelector(".reasoning-trace-list");
     }
 
     const existing = document.getElementById(`reasoning-step-${step.iteration}`);
 
     if (existing) {
+        restorePinnedScroll(traceList || content, shouldPinScroll);
         return existing;
     }
 
@@ -3245,8 +4021,8 @@ function createReasoningStepElement(step) {
         </div>
     `;
 
-    const traceList = content.querySelector(".reasoning-trace-list") || content;
-    traceList.appendChild(wrapper);
+    (traceList || content).appendChild(wrapper);
+    restorePinnedScroll(traceList || content, shouldPinScroll);
 
     return wrapper;
 }
@@ -3720,6 +4496,10 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
     const framework = inferWorkflowFramework(safeSteps);
     const visibleNodes = workflow.nodes
         .filter(node => !node.helper);
+    const completedCount = visibleNodes.filter(node =>
+        node.status === "completed"
+    ).length;
+    const activeNode = visibleNodes.find(node => node.status === "active");
 
     workflowNodeDetailStore = {};
 
@@ -3756,17 +4536,39 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
     `;
     }).join("");
 
+    const summary = activeNode
+        ? `${activeNode.shortLabel || activeNode.label} is running`
+        : `${completedCount}/${visibleNodes.length} steps complete`;
+
     return `
-        <section id="reasoningWorkflowMap" class="workflow-lane-map">
+        <section id="reasoningWorkflowMap" class="workflow-lane-map ${workflowMapExpanded ? "expanded" : "collapsed"}">
             <div class="workflow-map-header">
-                <span>Workflow</span>
-                <strong>${escapeHtml(workflow.title)}</strong>
+                <div>
+                    <span>Workflow</span>
+                    <strong>${escapeHtml(workflow.title)}</strong>
+                    <small>${escapeHtml(summary)}</small>
+                </div>
+                <button
+                    type="button"
+                    class="workflow-map-toggle"
+                    onclick="toggleReasoningWorkflowMap()"
+                >
+                    ${workflowMapExpanded ? "Hide" : "Show"}
+                </button>
             </div>
-            <div class="workflow-lane">
+            <div class="workflow-lane ${workflowMapExpanded ? "" : "hidden"}">
                 ${nodesHtml}
             </div>
         </section>
     `;
+}
+
+function toggleReasoningWorkflowMap() {
+    workflowMapExpanded = !workflowMapExpanded;
+    updateReasoningWorkflowMap(
+        displayedWorkflowSteps.length ? displayedWorkflowSteps : latestReasoningSteps,
+        workflowFinalized
+    );
 }
 
 function getWorkflowNodeSummary(node, matchingStep) {
@@ -3882,6 +4684,8 @@ function enqueueReasoningObservation(step) {
         const observationContainer = stepElement.querySelector(
             ".reasoning-observation-container"
         );
+        const scrollContainer = getTypingScrollContainer(stepElement);
+        const shouldPinScroll = shouldKeepTypingPinnedToBottom(scrollContainer);
 
         if (observationContainer) {
             observationContainer.innerHTML = renderObservationOutput(step.output);
@@ -3900,6 +4704,7 @@ function enqueueReasoningObservation(step) {
         }
 
         updateReasoningWorkflowMap(displayedWorkflowSteps, false);
+        restorePinnedScroll(scrollContainer, shouldPinScroll);
     });
 }
 
@@ -4942,7 +5747,17 @@ async function loadChatsFromDatabase() {
 document.addEventListener("DOMContentLoaded", () => {
     loadChatsFromDatabase();
     loadSlashCommands();
+    setDevicesLoadingState(true);
     refreshDevices();
+    const messageInput = document.getElementById("messageInput");
+
+    if (messageInput) {
+        messageInput.addEventListener("paste", scheduleMessageInputResize);
+    }
+
+    scheduleMessageInputResize();
+    updateRunButtonState();
+    refreshTodayTokenMeter();
 });
 
 async function saveMessageToDatabase(
@@ -4981,7 +5796,10 @@ async function saveMessageToDatabase(
             "Failed to save chat message:",
             data.error || response.status
         );
+        return;
     }
+
+    refreshTodayTokenMeter();
 }
 
 function toggleHistoryMenu(chatId) {
@@ -5135,7 +5953,7 @@ async function openProfileDrawer(type) {
     if (type === "settings") {
         title.textContent = "Settings";
         subtitle.textContent =
-            "Manage account preferences and workspace actions.";
+            "Manage password, username, logout, and account actions.";
 
         content.innerHTML = `
             <div class="drawer-info-list">
@@ -5276,7 +6094,7 @@ async function openProfileDrawer(type) {
 
     if (type === "workspace") {
         title.textContent = "Workspace & Data";
-        subtitle.textContent = "Operational data source and runtime status for this session.";
+        subtitle.textContent = "Choose the operational data source and review runtime status.";
 
         const selectedMode =
         document.getElementById("modeSelect")?.dataset.value ||
@@ -5347,14 +6165,14 @@ async function openProfileDrawer(type) {
                             aria-pressed="${selectedDataSource === "simulator"}"
                             onclick="changeDataSource('simulator')"
                         >
-                            Fallback simulator
+                            Simulator
                         </button>
                     </div>
                     <p id="dataSourceNote" class="drawer-source-note"></p>
 
                     <div class="drawer-subsection">
                         <strong>Alert Policy</strong>
-                        <p>Choose whether the Alerts tab uses official Grafana/company alerts or the current safe fallback rules.</p>
+                        <p>Choose whether the Alerts tab uses official Grafana/company alerts or simulator rules.</p>
                     </div>
                     <div
                         id="alertPolicySegmented"
@@ -5445,7 +6263,7 @@ async function openProfileDrawer(type) {
         title.textContent = "Notifications";
 
         subtitle.textContent =
-            "Realtime alert behavior and workspace notification preferences.";
+            "Review realtime alert behavior.";
 
         const alertBadgeEnabled =
             !document
@@ -5514,7 +6332,7 @@ async function openProfileDrawer(type) {
 
     if (type === "telegram") {
         title.textContent = "Telegram";
-        subtitle.textContent = "Link your Telegram account with a one-time code.";
+        subtitle.textContent = "Link this account to the Telegram bot with a one-time code.";
 
         content.innerHTML = `
             <div class="drawer-info-list">
@@ -5822,7 +6640,8 @@ function typeReasoningStep(thoughtElement, thoughtText, actionElement, actionTex
 }
 
 function getTypingScrollContainer(element) {
-    return element.closest(".drawer-content") ||
+    return element.closest(".reasoning-trace-list") ||
+        element.closest(".drawer-content") ||
         element.closest(".chat-messages");
 }
 
@@ -5845,6 +6664,16 @@ function scrollTypingContainerIfPinned(element) {
     }
 
     container.scrollTop = container.scrollHeight;
+}
+
+function restorePinnedScroll(container, shouldPinScroll) {
+    if (!container || !shouldPinScroll) {
+        return;
+    }
+
+    requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+    });
 }
 
 function typeTextIntoElementPromise(element, text, speed = 8) {
@@ -5918,12 +6747,12 @@ function setTelegramRunState(isRunning) {
         runButton.disabled = isRunning;
         runButton.innerHTML = isRunning
             ? `
-                Running...
-                <span>Telegram</span>
+                <span>Running...</span>
+                <small>Please wait</small>
             `
             : `
-                Run
-                <span>Enter ↵</span>
+                <span>Run</span>
+                <small>Enter ↵</small>
             `;
     }
 
@@ -6116,9 +6945,21 @@ function getRealtimeStatusHtml() {
             : '<span class="status-offline">Fallback simulator disconnected</span>';
     }
 
+    if (currentDataSourceState.active_source === "mongodb") {
+        return realtimeSocketConnected
+            ? '<span class="status-online">MongoDB telemetry active</span>'
+            : '<span class="status-offline">MongoDB telemetry disconnected</span>';
+    }
+
+    if (currentDataSourceState.active_source === "sqlite") {
+        return realtimeSocketConnected
+            ? '<span class="status-fallback">SQLite telemetry active</span>'
+            : '<span class="status-offline">SQLite telemetry disconnected</span>';
+    }
+
     return realtimeSocketConnected
-        ? '<span class="status-fallback">Fallback simulator active</span>'
-        : '<span class="status-offline">Fallback simulator disconnected</span>';
+        ? '<span class="status-online">Realtime active</span>'
+        : '<span class="status-offline">Realtime disconnected</span>';
 }
 
 function updateRealtimeStatusDisplay() {

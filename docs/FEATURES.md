@@ -29,7 +29,7 @@ Features include:
 - pinned and searchable conversations
 - busy-state protection during agent execution
 - explicit source selection and visible simulator fallback
-- Company DB and public fallback/mock demo operating modes
+- Company DB mode with explicit simulator fallback when evidence is unavailable
 
 <p align="center">
   <img src="../screenshots/dashboard.png" width="1000">
@@ -46,24 +46,23 @@ Features include:
 
 - LangGraph policy gates before tool execution
 - hybrid semantic planner with deterministic taxonomy fallback
-- backend typed tools for Company DB evidence
-- n8n Grafana gateway for approved observability workflows
-- allowlisted Grafana tool paths and params
-- multi-workflow answers for mixed Company DB and Grafana requests
+- MCP tools for Company DB, Loki, Grafana, and Prometheus evidence
+- allowlisted operational tool families and params
+- multi-workflow answers for mixed Company DB, log, and metric requests
 - KPI rule attachment from `config/grafana_kpi_rules.json`
 - visible planner decisions, authorization decisions, tool calls, and bounded
   evidence in the reasoning trace
 
-The Grafana path expects a normalized API adapter or local mock client. Human
-Grafana dashboard URLs are used for mapping and review, not direct tool calls.
+The Grafana/Prometheus path runs through MCP. Human Grafana dashboard URLs are
+used for mapping and review, not direct tool calls.
 
 ---
 
 ## ReAct-Style Reasoning Trace
 
 IOA v2 streams intermediate reasoning steps using a ReAct-style workflow. IOA
-v3 extends the same trace surface with planner, authorization, n8n/Grafana, and
-KPI rule-attachment steps.
+v3 extends the same trace surface with planner, authorization, MCP tool
+execution, and KPI rule-attachment steps.
 
 The reasoning drawer displays:
 
@@ -278,31 +277,13 @@ app-level reasoning steps when the Chatflow returns them.
 
 ---
 
-## Public Fallback Demo
+## Deployment-Ready Architecture
 
-The project can run without company systems for safe public demos.
-
-Features include:
-
-- simulator telemetry
-- local app-data storage
-- mock Grafana Dashboard Client responses
-- generic n8n workflow execution
-- source-aware answers that identify fallback data
-- architecture and reasoning traces that match the internal pilot shape
-
-Company credentials, private Grafana links, real database exports, and
-company-specific KPI semantics are intentionally excluded from the public demo.
-
----
-
-## Deployment-Ready Demo Architecture
-
-The project is structured as a deployable full-stack demo application.
+The project is structured as a deployable full-stack application.
 
 Current deployment architecture includes Flask, Flask-SocketIO, OpenAI,
-optional MongoDB telemetry, optional Supabase/Postgres app data, SQLite local
-fallback, Render support, and environment-based secrets.
+Supabase/Postgres app data, MCP-backed operational evidence, optional MongoDB
+simulator telemetry, and environment-based secrets.
 
-Company MongoDB access is network-dependent and is normally exercised from a
-local or VPN-connected runtime rather than the public demo.
+Company MongoDB, Loki, Grafana, and Prometheus access is network-dependent and
+is exercised through the MCP server.

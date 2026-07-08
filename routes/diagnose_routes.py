@@ -14,6 +14,7 @@ from services.diagnose_service import (
     normalize_dify_steps,
     normalize_n8n_steps,
     resolve_agent_operational_context,
+    resolve_ioa_v3_operational_context,
 )
 
 
@@ -163,7 +164,11 @@ def create_diagnose_blueprint(runtime):
                 "selected_data_source",
                 "simulator",
             ))
-            source_resolution = resolve_agent_operational_context(data_source)
+            source_resolution = (
+                resolve_ioa_v3_operational_context(data_source)
+                if mode == "ioa_v3_langgraph_n8n"
+                else resolve_agent_operational_context(data_source)
+            )
             company_context = source_resolution.get("operational_context")
             effective_data_source = (
                 "company"
@@ -464,7 +469,11 @@ def create_diagnose_blueprint(runtime):
             "selected_data_source",
             "simulator",
         ))
-        source_resolution = resolve_agent_operational_context(data_source)
+        source_resolution = (
+            resolve_ioa_v3_operational_context(data_source)
+            if mode == "ioa_v3_langgraph_n8n"
+            else resolve_agent_operational_context(data_source)
+        )
         company_context = source_resolution.get("operational_context")
         effective_data_source = (
             "company"

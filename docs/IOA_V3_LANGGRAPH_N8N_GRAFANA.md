@@ -1,26 +1,48 @@
 # IOA v3 Ops Graph
 
-IOA v3 is a separate runtime for controlled operational workflows. The public
-product label is `IOA v3 · Ops Graph`; internally it keeps LangGraph as the
-policy and reasoning layer while n8n executes approved Grafana workflow steps
-and backend read tools provide controlled company DB evidence when needed.
+`IOA v3 · Ops Graph` is the controlled operational workflow runtime. It uses
+LangGraph for request validation, workflow planning, authorization, tool
+execution, KPI attachment, and deterministic final answers.
+
+The current production-oriented evidence path is MCP-first:
+
+```text
+Web UI / Telegram
+  -> Flask auth, source policy, request limits
+  -> IOA v3 LangGraph policy graph
+  -> authorized workflow route
+       -> MCP Mongo tools for OneM2M resources
+       -> MCP Loki tool for logs
+       -> MCP Grafana/Prometheus tools for metrics
+  -> bounded evidence
+  -> final answer + reasoning trace
+```
+
+The older n8n Grafana gateway remains available for IOA v2/runtime comparison,
+but company runbook scenarios 5-12 are implemented through MCP.
 
 ## Runtime Boundary
 
-```text
-Web UI
-  -> Flask auth, source policy, rate limit
-  -> IOA v3 LangGraph policy graph
-  -> approved tool route:
-       - n8n grafana_ops_gateway webhook -> Grafana Dashboard Client API
-       - backend company DB read tool -> company MongoDB read proxy
-  -> bounded evidence
-  -> IOA v3 KPI rule attachment and final answer
-```
+The Flask app is the agent surface. It owns:
 
-LangGraph decides which workflow is allowed. n8n does not receive arbitrary
-HTTP authority from the model. The payload sent to n8n contains one approved
-tool, one approved path, and only allowlisted params.
+- user authentication and sessions
+- chat/prompt persistence
+- source selection
+- OpenAI/LLM credentials
+- Telegram integration
+- MCP client configuration: `MCP_SERVER_URL`, `MCP_BEARER_KEY`
+
+The MCP server owns:
+
+- `COMPANY_MONGODB_URI`
+- Mongo namespace allowlist and read guardrails
+- `GRAFANA_URL`
+- `GRAFANA_USERNAME`/`GRAFANA_PASSWORD` or `GRAFANA_API_KEY`
+- Loki and Prometheus datasource access
+- MCP bearer-key auth, rate limits, and audit logs
+
+Do not put company MongoDB, Loki, Grafana, or Prometheus credentials in the
+Flask app `.env`.
 
 ## Planner & Routing
 
@@ -30,306 +52,170 @@ IOA v3 uses a hybrid planner:
   language request.
 - A deterministic taxonomy remains as a fallback when the semantic planner
   returns invalid JSON, unsupported tools, or low-confidence plans.
-- A policy verifier is always the final gate. It checks the allowlist, source
+- A policy verifier is always the final gate. It checks tool allowlists, source
   permissions, params, and execution budget before any workflow runs.
 
-This means LangGraph can run simple company DB read tools directly through the
-backend read proxy, such as disconnected-device or telemetry-evidence lookups.
-n8n is reserved for Grafana/API workflow execution and future multi-step
-automation such as calling tools, joining external evidence, and producing
-reports or sheets.
-
-Mixed requests can execute multiple approved workflows in one answer. Example:
+The graph emits streamed SSE events:
 
 ```text
-Investigate disconnected company devices, then check Redis and HTTP health for
-possible infrastructure pressure.
+thought
+observation
+final
+error
 ```
 
-The expected route is company DB evidence first, then Grafana/n8n evidence.
+These events power the UI reasoning trace and are also useful for report
+generation.
+
+## MCP Tool Families
+
+| IOA v3 workflow family | MCP tool family | Evidence |
+|---|---|---|
+| OneM2M resource/flow checks | `mongo_find` and related Mongo tools | `IDENTITY`, `AE`, `CNT`, `CIN`, `SUBSCRIPTION`, `URI_MAPPER` |
+| Log checks | `loki_query_range` | service/device/request filtered Loki logs |
+| RabbitMQ metrics | `grafana_query`, `grafana_query_range` | queue backlog and trend |
+| EMQX metrics | `grafana_query_range` | dropped-message and reconnect trends |
+| Kubernetes metrics | `grafana_query` | pod CPU/memory, restarts, phase, OOM/CrashLoop, node pressure |
+
+Grafana's `smartquery` response may use Grafana dataframe shape rather than the
+classic Prometheus API `data.result` shape. IOA v3 normalizes both formats
+before generating metric answers.
+
+## Implemented Runbook Scenarios
+
+See [OneM2M Operational Scenario Mapping](ONEM2M_OPERATIONAL_SCENARIOS.md) for
+full prompt and metric details.
+
+| Scenario | Title | Route |
+|---:|---|---|
+| 5 | Command Downlink Debug | MCP Mongo + MCP Loki |
+| 6 | Telemetry Uplink Debug | MCP Mongo + MCP Loki |
+| 7 | Device Resource Check | MCP Mongo + MCP Loki |
+| 8 | RabbitMQ Top Backlog | MCP Prometheus instant query |
+| 9 | RabbitMQ Linear Queue Growth | MCP Prometheus range query |
+| 10 | EMQX Dropped Messages | MCP Prometheus range query |
+| 11 | EMQX Reconnect Trend | MCP Prometheus range query |
+| 12 | Kubernetes Resource Check | MCP Prometheus instant queries |
 
 ## Environment
 
-```bash
-N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
-GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
+Flask app:
+
+```env
+COMPANY_DATA_ACCESS_MODE=mcp
+MCP_SERVER_URL=http://127.0.0.1:8000/mcp
+MCP_BEARER_KEY=replace_me
 IOA_V3_ENABLE_KPI_RULES=false
 IOA_V3_SEMANTIC_PLANNER_ENABLED=true
 ```
 
-`N8N_WEBHOOK_URL` remains available for the older `IOA v2 · n8n` runtime.
-Use a separate local n8n port for IOA v3 when the company still needs the
-existing n8n evaluation workflow:
+MCP server:
+
+```env
+COMPANY_MONGODB_URI=mongodb://readonly_user:[PASSWORD]@company-mongo-host:27017/?authSource=admin&directConnection=true
+COMPANY_MONGO_ALLOWED_NAMESPACES=authorization.IDENTITY,subNNotif.AE,subNNotif.SUB,datamgmt.CNT,datamgmt.CIN,datamgmt.DEVICE_TELEMETRY,datamgmt.RULE,devicemgmt.NODE,orchestration.URI_MAPPER
+MCP_API_KEYS_JSON={"caller-id":"sha256_hash_of_their_raw_key"}
+MCP_ENABLE_GRAFANA_TOOLS=true
+GRAFANA_URL=https://your-grafana-host
+GRAFANA_USERNAME=readonly_user
+GRAFANA_PASSWORD=replace_me
+PORT=8000
+```
+
+Use `GRAFANA_API_KEY` instead of username/password when the company provides a
+service token.
+
+## Local Setup
+
+1. Start MCP server.
+
+   ```bash
+   source .venv/bin/activate
+   python mcp_server/server.py
+   ```
+
+   Or run it on an explicit port:
+
+   ```bash
+   PORT=8000 MCP_SERVER_HOST=127.0.0.1 .venv/bin/python mcp_server/server.py
+   ```
+
+2. Start Flask app.
+
+   ```bash
+   COMPANY_DATA_ACCESS_MODE=mcp \
+   MCP_SERVER_URL=http://127.0.0.1:8000/mcp \
+   python app.py
+   ```
+
+3. Open the web UI and choose company data source.
+
+4. Run any default runbook prompt or alias:
+
+   ```text
+   /cmd
+   /telemetry
+   /resources
+   /rabbitmq
+   /queue-trend
+   /emqx-dropped
+   /reconnect
+   /k8s
+   ```
+
+## Legacy n8n Runtime Path
+
+The n8n Grafana gateway is retained for older workflow/runtime comparison. It
+is not the primary route for the company MCP runbooks.
+
+```env
+N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
+GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
+GRAFANA_TOOL_ACCESS_MODE=n8n
+```
+
+Use this path only when intentionally testing the older Grafana gateway shape
+or legacy n8n workflow import:
 
 ```bash
+python3 scripts/mock_grafana_dashboard_client.py --port 5050
 N8N_PORT=5679 n8n
+python3 scripts/check_ioa_v3_n8n_workflow.py --tool grafana_redis_health
 ```
-
-In production, using the same managed n8n instance is fine as long as IOA v3
-has a distinct webhook path, credentials, and workflow ownership boundary.
-
-## Grafana Integration Boundary
-
-IOA v3 does not call Grafana dashboard UI URLs directly. A dashboard URL such
-as `/d/.../kubernetes-compute-resources-cluster` is useful for human review and
-KPI mapping, but it is not the normalized API surface that n8n should call.
-
-The runtime expects one of these approved integration paths:
-
-* a Grafana Dashboard Client API that exposes stable JSON endpoints such as
-  `/grafana/k8s`, `/grafana/redis`, or `/platform/service-health`
-* a company-owned backend adapter that queries Grafana/Prometheus with approved
-  credentials and returns bounded JSON evidence
-* a local mock client for public fallback demos and workflow validation
-
-Do not put Grafana tokens, dashboard links, datasource internals, or company
-hostnames in public documentation. Keep those values in environment variables
-or company-only deployment notes.
-
-## Config Files
-
-`config/grafana_tools.json` defines the allowlisted Grafana tools:
-
-- tool name
-- workflow id
-- HTTP method
-- path
-- allowed params
-- description
-
-`config/grafana_kpi_rules.json` maps Grafana tools to KPI semantics from the
-monitoring KPI workbook:
-
-- KPI name
-- aspect
-- priority
-- good/warning/critical semantics
-- implementation status
-
-KPI rules are disabled by default because the workbook may contain internal
-company operating semantics. Enable them only after review:
-
-```bash
-export IOA_V3_ENABLE_KPI_RULES=true
-```
-
-## n8n Gateway Shape
-
-Create or import one local n8n workflow named `IOA v3 - Grafana Ops Gateway`.
-The importable workflow is stored in:
-
-```text
-workflows/n8n/ioa_v3_grafana_ops_gateway.json
-```
-
-The workflow shape is:
-
-```text
-Webhook /webhook/grafana-ops-gateway
-  -> Validate body.workflow.tool/path/params
-  -> Switch workflow.workflow_id
-  -> HTTP Request to Grafana Dashboard Client
-  -> Normalize evidence and return JSON from the last node
-```
-
-Start with these workflow branches because they match the current Grafana tool
-registry:
-
-- `grafana_platform_service_health`
-- `grafana_queue_backlog`
-- `grafana_throughput`
-- `grafana_http_health`
-- `grafana_java_errors`
-- `grafana_trace_metrics`
-- `grafana_logs`
-- `grafana_emqx_health`
-- `grafana_k8s_health`
-- `grafana_redis_health`
-- `grafana_mongodb_health`
-- `grafana_mysql_health`
-- `grafana_linux_health`
-
-The workflow should build its outbound URL from:
-
-- `body.grafana_client.base_url`
-- `body.workflow.path`
-- filtered query params from `body.workflow.params`
-
-Do not allow the workflow to accept arbitrary URLs from the model or user.
-
-The n8n response should be JSON:
-
-```json
-{
-  "response": "Short final answer or workflow summary",
-  "evidence": {
-    "level": "good",
-    "example_metric": 123
-  },
-  "steps": [
-    {
-      "thought": "Called approved Grafana endpoint.",
-      "action": "GET /grafana/redis",
-      "output": {
-        "level": "good"
-      }
-    }
-  ]
-}
-```
-
-## Security Notes
-
-- Do not put Grafana tokens or DB credentials in the workbook or repo.
-- Do not publish company Grafana dashboard URLs in the public fallback demo.
-- n8n should call only the path supplied by the backend payload.
-- The backend filters params before sending the request to n8n.
-- IOA v3 traces show the selected workflow, HTTP path, bounded evidence, and
-  KPI rules applied.
-- The Alerts tab still supports local fallback rules until the official
-  Grafana/company alert feed is mapped.
-
-## Local Setup From Scratch
-
-1. Start the Grafana Dashboard Client API.
-
-   The Postman collection supplied for this project points at port `5050`.
-   IOA v3 expects the same default:
-
-   ```bash
-   export GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
-   ```
-
-   This value is not the Grafana dashboard UI URL. It must be an API adapter
-   that exposes the allowlisted endpoints used by `config/grafana_tools.json`,
-   for example `/grafana/redis` and `/platform/service-health`. A normal
-   Grafana dashboard link usually points to pages like `/d/...` and should be
-   treated as a human reference for mapping, not as the tool-call target.
-
-   Verify the client is reachable:
-
-   ```bash
-   curl -s http://127.0.0.1:5050/health
-   ```
-
-   If the real Grafana Dashboard Client is not available yet, run the local mock
-   client to validate the n8n flow:
-
-   ```bash
-   python3 scripts/mock_grafana_dashboard_client.py --port 5050
-   ```
-
-2. Start a separate n8n instance for IOA v3.
-
-   Use port `5679` so the older `IOA v2 · n8n` evaluation workflow can keep
-   using port `5678`.
-
-   ```bash
-   N8N_PORT=5679 n8n
-   ```
-
-   Then open:
-
-   ```text
-   http://localhost:5679
-   ```
-
-3. Import the workflow.
-
-   In n8n:
-
-   ```text
-   Workflows -> Import from File -> workflows/n8n/ioa_v3_grafana_ops_gateway.json
-   ```
-
-   Save the workflow and activate it. The production webhook URL should be:
-
-   ```text
-   http://localhost:5679/webhook/grafana-ops-gateway
-   ```
-
-   If the workflow is not active, n8n may only expose a test webhook URL. IOA v3
-   should use the production `/webhook/...` URL after activation.
-
-   In the Webhook node, use:
-
-   ```text
-   Respond: When Last Node Finishes
-   ```
-
-   The last node must be `Normalize IOA v3 Response`, and it must return the
-   final JSON body containing `response`, `evidence`, and `steps`.
-
-4. Configure the Flask app environment.
-
-   ```bash
-   export N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
-   export GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
-   export IOA_V3_ENABLE_KPI_RULES=false
-   ```
-
-   Keep the older `N8N_WEBHOOK_URL` separate. IOA v3 intentionally does not
-   fall back to that legacy variable.
-
-5. Probe the n8n gateway directly.
-
-   ```bash
-   python3 scripts/check_ioa_v3_n8n_workflow.py \
-     --webhook-url http://localhost:5679/webhook/grafana-ops-gateway \
-     --tool grafana_redis_health
-   ```
-
-   To test against a non-local Grafana Dashboard Client API:
-
-   ```bash
-   python3 scripts/check_ioa_v3_n8n_workflow.py \
-     --webhook-url http://localhost:5679/webhook/grafana-ops-gateway \
-     --tool grafana_redis_health \
-     --grafana-base-url https://your-grafana-client-api.example.com
-   ```
-
-   Expected result: HTTP `200` and a JSON body containing `response`,
-   `evidence`, and `steps`.
-
-6. Start IoT Ops Agent.
-
-   ```bash
-   APP_DB_BACKEND=supabase \
-   APP_DB_FALLBACK_ENABLED=false \
-   N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway \
-   GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050 \
-   python3 app.py
-   ```
-
-7. Test from the UI.
-
-   The default chat runtime is now `IOA v3 · Ops Graph`.
-   Try prompts such as:
-
-   - `check redis health`
-   - `show platform service health`
-   - `show rabbitmq queue backlog`
-   - `show recent error logs for emqx`
-
-   The reasoning trace should show LangGraph policy gates, the approved n8n
-   workflow call, and KPI rule attachment before final answer generation.
 
 ## Troubleshooting
 
-- `N8N_V3_WEBHOOK_URL is not configured`: set the v3-specific env var. Do not
-  use `N8N_WEBHOOK_URL` for IOA v3.
-- n8n returns `404`: the workflow is probably not active, or the URL is using
-  `/webhook-test/...` instead of `/webhook/...`.
-- n8n returns an error about an unapproved path: the backend and workflow
-  allowlists are out of sync. Compare `config/grafana_tools.json` with the
-  `allowedPaths` list inside the imported workflow.
-- n8n returns connection refused for `127.0.0.1:5050`: start the Grafana
-  Dashboard Client API first, run the local mock client with
-  `python3 scripts/mock_grafana_dashboard_client.py --port 5050`, or set
-  `GRAFANA_DASHBOARD_CLIENT_URL` to the correct address reachable from n8n.
-- `scripts/check_ioa_v3_n8n_workflow.py` reports `empty_response_body=true`:
-  the webhook is registered, but n8n is responding immediately before the final
-  node returns JSON. Open the Webhook node and set `Respond` to
-  `When Last Node Finishes`, save, deactivate, and reactivate the workflow.
-- IOA v3 answers that official alerts are pending: that is expected until the
-  official Grafana/company alert feed is mapped into the Alerts tab.
+- `401 Unauthorized` on `/mcp`: `MCP_BEARER_KEY` does not match a hash in
+  `MCP_API_KEYS_JSON`.
+- `429 Too Many Requests`: MCP caller rate limit was hit. Wait for
+  `retry_after`, reduce batch size, or adjust `MCP_RATE_LIMIT_REQUESTS`.
+- `MCP client dependency is not installed`: run Flask with the project
+  virtualenv that includes `mcp`.
+- Metric answer says no samples: verify metric names, labels, scrape targets,
+  and datasource through MCP `grafana_list_datasources`.
+- Scenario 11 should not require a `device_id`. It starts from aggregate EMQX
+  reconnect metrics and only derives device candidates from logs when evidence
+  exists.
+- Scenario 12 top pod CPU/memory are evidence, not automatic root cause. The
+  answer should flag follow-up only when there is high restart count, abnormal
+  phase, `OOMKilled`, `CrashLoopBackOff`, or node pressure.
+
+## Verification
+
+Run focused workflow tests:
+
+```bash
+.venv/bin/python -m unittest tests.test_ioa_v3_workflow -v
+```
+
+Generate a report from platform stream output:
+
+```bash
+.venv/bin/python scripts/collect_mcp_runbook_report.py
+```
+
+The Excel report is written to:
+
+```text
+outputs/mcp_runbook_report/mcp_operational_runbook_report.xlsx
+```

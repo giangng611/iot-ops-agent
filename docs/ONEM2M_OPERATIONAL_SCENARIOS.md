@@ -1,161 +1,203 @@
 # OneM2M Operational Scenario Mapping
 
-This document maps the company-provided IoT Platform operational scenarios to
-the current IOA v3 architecture. The source file describes command delivery,
-telemetry ingestion, resource checks, RabbitMQ, EMQX, and Kubernetes debugging
-flows.
+This document maps the company IoT Platform operational runbooks to the current
+IOA v3 + MCP architecture.
 
-## Main Takeaway
+## Current Status
 
-The new scenarios are more specific than the earlier KPI pilot backlog. They
-require a typed incident-triage layer that can correlate:
-
-* adapter/core logs
-* OneM2M resource records
-* RabbitMQ and EMQX metrics
-* Kubernetes pod/resource evidence
-* user-provided identifiers such as device ID, AE ID, request ID, payload, and
-  time range
-
-The agent should not receive arbitrary shell, kubectl, Grafana, Prometheus, or
-MongoDB authority. Each step should be exposed through bounded read-only tools
-or approved API adapters.
-
-## Scenario Groups
-
-| Group | Company scenario | Current coverage | Needed next |
-|---|---|---|---|
-| Command downlink debug | Device does not receive command | Partial Company DB and logs coverage | Add typed OneM2M command-flow evidence tool |
-| Telemetry uplink debug | Telemetry not received by backend | Partial telemetry coverage and logs coverage | Add typed OneM2M telemetry-flow evidence tool |
-| Device/resource check | Check whether device X is on platform | Partial inventory/CNT/CIN coverage | Add resource existence summary across IDENTITY, AE, CNT, CIN, SUB, URI_MAPPER |
-| RabbitMQ backlog | Top queues with high message count | `grafana_queue_backlog` exists | Add top queue threshold and namespace/time params |
-| RabbitMQ trend | Queue grows linearly over time | Not covered | Add queue trend endpoint/tool |
-| EMQX dropped messages | Message dropped increases | `grafana_emqx_health` partial | Add explicit dropped-message endpoint/tool |
-| EMQX connect/disconnect | Reconnect loop or onboarding spike | `grafana_emqx_health` partial | Add explicit connected/disconnected trend endpoint/tool |
-| Kubernetes resources | CPU, memory, restart, pod status, logs | `grafana_k8s_health` and `grafana_logs` partial | Add pod/service scoped params and latest error-log evidence |
-
-## Safe Tool Plan
-
-### Company DB Resource Tool
-
-Add a backend read tool that accepts:
+Runbook scenarios 5-12 are integrated in `IOA v3 · Ops Graph` and execute
+through the MCP server for company operational evidence.
 
 ```text
-device_id
-ae_id
-request_id
-resource_name
-payload_hint
-time_range
-application_domain
+Operator prompt
+  -> Flask /api/diagnose-stream
+  -> IOA v3 LangGraph policy graph
+  -> MCP server
+       -> MongoDB resources and OneM2M evidence
+       -> Loki logs
+       -> Grafana/Prometheus metrics
+  -> deterministic final answer + reasoning trace
 ```
 
-It should return a normalized resource table:
+The Flask app is the agent/runtime surface. It must not hold direct company
+MongoDB, Loki, Grafana, or Prometheus credentials. Those credentials live only
+in `mcp_server/.env`.
+
+## Scenario Coverage
+
+| Scenario | Prompt title | Required operator input | Evidence route | Status |
+|---:|---|---|---|---|
+| 5 | Command Downlink Debug | `device_id` | MCP Mongo + MCP Loki | Implemented |
+| 6 | Telemetry Uplink Debug | `device_id` | MCP Mongo + MCP Loki | Implemented |
+| 7 | Device Resource Check | `device_id` | MCP Mongo + MCP Loki | Implemented |
+| 8 | RabbitMQ Top Backlog | none; defaults namespace `test` | MCP Prometheus instant query | Implemented |
+| 9 | RabbitMQ Linear Queue Growth | optional time range/queue | MCP Prometheus range query | Implemented |
+| 10 | EMQX Dropped Messages | optional time range | MCP Prometheus range query | Implemented |
+| 11 | EMQX Reconnect Trend | none; aggregate-first | MCP Prometheus range queries | Implemented |
+| 12 | Kubernetes Resource Check | optional namespace/service/pod | MCP Prometheus instant queries | Implemented |
+
+## Scenario Details
+
+### 5. Command Downlink Debug
+
+Checks why a device did not receive a command.
+
+Evidence:
+
+- `IDENTITY`
+- `AE`
+- `cnt_command`
+- `SUBSCRIPTION`
+- `URI_MAPPER`
+- latest command `CIN`
+- device-filtered Loki logs when available
+
+The final answer reports resource presence exactly from DB/log evidence and
+uses "Likely Failure Point" rather than claiming a root cause without log
+correlation.
+
+### 6. Telemetry Uplink Debug
+
+Checks why telemetry from a device did not reach the backend.
+
+Evidence:
+
+- `IDENTITY`
+- `AE`
+- `cnt_telemetry`
+- latest telemetry `CIN`
+- backend `SUBSCRIPTION`
+- notify/backend delivery evidence from logs when available
+
+When telemetry `CIN` is present, the next action is to correlate latest
+telemetry `CIN` with backend subscription notify logs, adapter receive logs,
+and backend delivery evidence.
+
+### 7. Device Resource Check
+
+Checks whether a device is registered and whether required OneM2M resources
+exist.
+
+Evidence table:
+
+- `IDENTITY`
+- `AE`
+- `CNT`
+- `CIN`
+- `SUBSCRIPTION`
+- `URI_MAPPER`
+
+The answer must list exactly which resources are present or missing and must
+not infer presence from naming similarity alone.
+
+### 8. RabbitMQ Top Backlog
+
+PromQL:
+
+```promql
+topk(10, sum by (queue) (rabbitmq_queue_messages{namespace="test",job="monitoring/rabbitmq"}))
+```
+
+The answer reports the highest queue, message count, threshold assessment, and
+consumer/service follow-up.
+
+### 9. RabbitMQ Linear Queue Growth
+
+PromQL:
+
+```promql
+sum by (queue) (rabbitmq_queue_messages{namespace="test",job="monitoring/rabbitmq"})
+```
+
+The agent uses range samples to compute queue start, end, delta, and whether
+the series is monotonically increasing enough to indicate linear growth.
+
+### 10. EMQX Dropped Messages
+
+PromQL:
+
+```promql
+sum(emqx_messages_dropped{namespace="emqx",job="emqx"})
+```
+
+The answer reports dropped delta and latest dropped value. A flat counter is
+not treated as active dropping.
+
+### 11. EMQX Reconnect Trend
+
+Scenario 11 is aggregate-first and does not require `device_id`.
+
+PromQL:
+
+```promql
+sum(rate(emqx_client_connected{namespace="emqx",job="emqx"}[1m]))
+sum(rate(emqx_client_disconnected{namespace="emqx",job="emqx"}[1m]))
+```
+
+If aggregate reconnect evidence suggests a spike, the next step is to identify
+device candidates from MQTT adapter or EMQX logs before checking device
+resources.
+
+### 12. Kubernetes Resource Check
+
+Checks namespace `one-iot` by default.
+
+Evidence:
+
+- top pod CPU
+- top pod memory
+- restart counts
+- pod phase
+- waiting reasons such as `CrashLoopBackOff`, `ImagePullBackOff`, `ErrImagePull`
+- last terminated reasons such as `OOMKilled` or `Error`
+- node CPU
+- node memory
+
+Pod CPU/memory is reported as top-consumer evidence. The answer only flags
+follow-up when there is a concrete abnormal signal such as high restart count,
+abnormal phase, `OOMKilled`, `CrashLoopBackOff`, or high node pressure.
+
+## Prompt Catalog
+
+Default runbook prompts appear first for company/MongoDB mode. They are shown
+by title, not as "scenario N", in the platform UI. Current shortcuts:
+
+| Shortcut | Prompt |
+|---|---|
+| `/cmd` | Command Downlink Debug |
+| `/telemetry` | Telemetry Uplink Debug |
+| `/resources` | Device Resource Check |
+| `/rabbitmq` | RabbitMQ Top Backlog |
+| `/queue-trend` | RabbitMQ Linear Queue Growth |
+| `/emqx-dropped` | EMQX Dropped Messages |
+| `/reconnect` | EMQX Reconnect Trend |
+| `/k8s` | Kubernetes Resource Check |
+
+Simulator mode uses a separate, simpler fallback prompt set. Custom prompts do
+not receive shortcut aliases.
+
+## Verification
+
+The workflow tests cover:
+
+- routing scenarios 5-12 to the expected tool
+- scenario 11 not treating `candidates` as a device id
+- MCP Prometheus execution for metric scenarios
+- Grafana dataframe parsing
+- deterministic answer formatting
+- prompt catalog ordering and aliases
+
+Run:
+
+```bash
+.venv/bin/python -m unittest tests.test_ioa_v3_workflow -v
+```
+
+The report workbook generated during integration lives under:
 
 ```text
-IDENTITY
-AE
-CNT_COMMAND
-CNT_TELEMETRY
-SUBSCRIPTION
-CIN
-URI_MAPPER
+outputs/mcp_runbook_report/mcp_operational_runbook_report.xlsx
 ```
 
-The current proxy allowlist already includes:
-
-```text
-authorization.IDENTITY
-datamgmt.CNT
-datamgmt.CIN
-```
-
-The new scenarios require these reviewed namespaces:
-
-```text
-subNNotif.AE
-subNNotif.SUB
-orchestration.URI_MAPPER
-```
-
-These namespaces are now part of the default Company MongoDB read proxy
-allowlist because they were confirmed in the company MongoDB schema. The next
-step is to confirm the exact fields and projections for each typed evidence
-tool.
-
-### Log Evidence Tool
-
-Expose logs through Grafana/Loki or a company-owned log adapter, not raw
-`kubectl logs`. The tool should allow:
-
-```text
-service
-device_id
-ae_id
-request_id
-payload_hint
-time_range
-limit
-```
-
-Initial service allowlist:
-
-```text
-iot-http-api
-iot-mqtt-client-adapter
-core services confirmed by lead
-emqx
-```
-
-### Grafana Metric Tools
-
-Existing tools:
-
-```text
-grafana_queue_backlog
-grafana_throughput
-grafana_emqx_health
-grafana_k8s_health
-grafana_logs
-```
-
-Add or extend approved adapter endpoints for:
-
-```text
-grafana_queue_trend
-grafana_emqx_dropped
-grafana_emqx_connection_trend
-grafana_k8s_pod_resources
-```
-
-The adapter should own PromQL details such as `topk`, `sum by(queue)`, and
-`rate(...)`. IOA v3 should choose an approved workflow, not generate arbitrary
-PromQL at runtime.
-
-## Recommended Implementation Order
-
-1. Update scenario backlog and prompts with the company-provided flows.
-2. Confirm DB namespaces and field names with the lead.
-3. Extend `COMPANY_MONGO_ALLOWED_NAMESPACES` only for approved collections.
-4. Build one typed resource summary tool for device/AE/container/subscription
-   evidence.
-5. Add Grafana adapter endpoints for queue trend and EMQX dropped/connection
-   trends.
-6. Add IOA v3 workflow routes and tests for the new tools.
-7. Run the pilot scenarios and collect pass/fail notes.
-
-The web Prompt catalog includes default `OneM2M Ops` prompt cards for these
-flows. They are placeholders until the typed DB/log/Grafana tools above are
-implemented and connected to the approved company sources.
-
-## Questions For Lead
-
-* Which database owns `AE`: `datamgmt`, `subNNotif`, or another namespace?
-* Are `subNNotif.SUB` and `orchestration.URI_MAPPER` readable by the agent
-  account?
-* Which log backend should the agent use: Loki/Grafana, Kubernetes API, or a
-  service-owned adapter?
-* What are the official service names for adapter and core pods?
-* What time range format should operators provide?
-* Which Grafana datasource/panel owns RabbitMQ, EMQX, and Kubernetes metrics?
-* Should the agent show query commands in traces, or only normalized evidence?
+This report contains final answers and reasoning traces collected through the
+Flask `/api/diagnose-stream` platform route.

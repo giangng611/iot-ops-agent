@@ -78,7 +78,7 @@
       "intent": "grafana_logs",
       "method": "GET",
       "path": "/grafana/logs",
-      "allowed_params": ["service", "level", "hours_back", "limit"],
+      "allowed_params": ["service", "level", "hours_back", "limit", "contains"],
       "description": "Recent Loki warning/error logs across services or a filtered service."
     },
     {

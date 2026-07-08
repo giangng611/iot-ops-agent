@@ -16,7 +16,7 @@ The web app and existing diagnosis endpoints remain unchanged.
 ## Environment
 
 ```env
-PUBLIC_BASE_URL=https://iot-ops-agent.onrender.com
+PUBLIC_BASE_URL=https://your-app-host
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret
 TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
@@ -88,7 +88,7 @@ python -m scripts.configure_telegram_webhook
 This registers the webhook and the Telegram `/` command menu:
 
 ```text
-https://iot-ops-agent.onrender.com/api/telegram/webhook
+https://your-app-host/api/telegram/webhook
 ```
 
 with Telegram.
@@ -170,8 +170,8 @@ command. The source choice is remembered in process for that mapped user. The
 Telegram identity must include `company` in `allowed_data_sources`; otherwise
 the request is rejected before LangGraph runs.
 
-For a demo that should start on company data before the UI is opened, launch
-grant the user Company DB access first:
+For a company-data test that should start before the UI is opened, grant the
+user Company DB access first:
 
 ```bash
 python -m scripts.upsert_telegram_identity \
@@ -190,16 +190,15 @@ After testing, restore the deployed webhook:
 
 ```bash
 python -m scripts.configure_telegram_webhook \
-  --base-url https://iot-ops-agent.onrender.com
+  --base-url https://your-app-host
 ```
 
 ## Notes
 
-The current Render deployment can run this PoC without Dify because Telegram
-calls Flask directly and Flask calls the in-process IOA v3 Ops Graph runtime.
-Company answers still require the Flask runtime to reach Company MongoDB. IOA v3
-may also call the configured n8n/Grafana workflow when the selected plan needs
-infrastructure evidence.
+Telegram can run without Dify because it calls Flask directly and Flask calls
+the in-process IOA v3 Ops Graph runtime. Company answers require the Flask
+runtime to reach the MCP server. IOA v3 then collects Company MongoDB, Loki,
+and Grafana/Prometheus evidence through MCP according to the selected plan.
 
 The local tunnel is intended for a controlled PoC only. The temporary URL
 changes whenever the quick tunnel restarts.

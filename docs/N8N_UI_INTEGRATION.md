@@ -23,7 +23,7 @@ The Flask backend sends:
   "source": "iot-ops-agent-ui",
   "runtime": "n8n",
   "selected_source": "simulator",
-  "active_source": "sqlite",
+  "active_source": "simulator",
   "system_prompt": "You are an IoT operations assistant...",
   "n8n_llm_prompt": "Full prompt already composed for an n8n LLM node...",
   "diagnosis_output_format": "Always format the final answer exactly as...",

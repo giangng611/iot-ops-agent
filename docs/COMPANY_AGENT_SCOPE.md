@@ -16,7 +16,7 @@ The target is not a generic chatbot with unrestricted database access. It is
 one source-aware operational agent that synchronizes approved company systems
 behind controlled tools and returns auditable answers.
 
-## Current Demo
+## Current Scope
 
 The current project demonstrates:
 
@@ -26,26 +26,13 @@ The current project demonstrates:
 * provisional alert-rule discovery
 * web and Telegram interaction channels
 * persisted chats and visible execution traces
-* IOA v3 policy-gated workflow routing with backend Company DB tools and n8n
-  Grafana workflow execution
-* fallback/mock operation suitable for public demos when company systems are
-  unavailable or not publishable
+* IOA v3 policy-gated workflow routing with MCP-backed Company DB, Loki, and
+  Grafana/Prometheus evidence
+* simulator fallback that is explicitly labeled when company systems are
+  unavailable
 
 This is a proof of concept. It does not yet prove production synchronization,
 authorization, official rule ownership, or safe operational actions.
-
-## Public Demo vs Company Pilot
-
-The project has two intended operating modes:
-
-* Public fallback demo: uses simulator telemetry, mock Grafana evidence, and
-  generic scenarios so the architecture can be shown without company data.
-* Internal company pilot: uses approved Company DB access, internal Grafana
-  adapters, official rule mapping, and company-only deployment configuration.
-
-The public demo must not retain company database credentials, private Grafana
-links, production hostnames, internal screenshots, or company-specific KPI
-semantics unless publication is explicitly approved.
 
 ## Target Capability
 

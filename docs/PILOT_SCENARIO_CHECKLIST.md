@@ -112,4 +112,4 @@ Ask these before treating a scenario as production-ready:
 * Which KPI/rule thresholds are official?
 * Which Grafana panels map to API/adapter endpoints?
 * What answer would count as a critical factual error?
-* What evidence can be shown in a demo or public portfolio version?
+* What evidence can be shown to operators, leads, and reviewers?

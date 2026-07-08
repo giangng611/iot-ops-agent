@@ -1,376 +1,182 @@
 # IoT Ops Agent
 
-AI-powered IoT operations PoC with simulator/fallback telemetry, bounded
-read-only Company MongoDB access, policy-gated AI diagnosis, Telegram support,
-and Grafana/n8n workflow integration.
+AI-powered IoT operations workspace for company IoT platform triage. The app
+keeps user/chat state in Supabase/Postgres, uses MCP as the gateway to
+company operational evidence, and supports simulator fallback for local
+resilience testing.
 
----
+## Overview
 
-<p align="center">
-  <img src="screenshots/demo.png" width="1000">
-</p>
+IoT Ops Agent combines:
 
-<p align="center">
-  <strong>Live Demo:</strong><br>
-  https://iot-ops-agent.onrender.com
-</p>
+- Flask + Socket.IO web workspace
+- authenticated users, chats, messages, prompts, and Telegram identities
+- Supabase/Postgres app-data storage
+- MCP-backed access to company MongoDB, Loki, Grafana, and Prometheus
+- IOA v3 Ops Graph runbooks for OneM2M, RabbitMQ, EMQX, and Kubernetes checks
+- optional simulator telemetry for fallback and local verification
 
----
-
-# Overview
-
-IoT Ops Agent is a full-stack IoT operations PoC that can use either a
-simulated fleet or a bounded read-only Company MongoDB source. It combines
-telemetry monitoring, provisional operational alerts, and LLM-assisted
-diagnosis behind one web workspace.
-
-The project is split into two practical operating modes:
-
-* **Public fallback demo** — simulator telemetry, mock Grafana evidence, and
-  generic scenarios for GitHub/portfolio demonstrations.
-* **Internal company pilot** — approved Company DB reads, internal Grafana
-  adapters, official KPI/rule mapping, and company-only deployment config.
-
-The platform combines:
-
-* realtime telemetry simulation
-* operational alert monitoring
-* AI-assisted diagnostics
-* persistent chat workflows
-* user authentication
-* prompt workflow management
-* telemetry visualization
-* orchestration runtime benchmarking
-* policy-gated IOA v3 workflow routing
-* optional Telegram interaction
-* optional Grafana/n8n observability workflows
-
-The project currently supports multiple orchestration runtimes and one
-operational pilot runtime:
-
-* **IOA v1 · Custom Python** — single-step tool-calling assistant
-* **IOA v2 · Custom Python** — multi-step ReAct-style reasoning runtime
-* **IOA v2 · LangChain** — framework-managed orchestration runtime
-* **IOA v2 · LangGraph** — graph-based orchestration runtime
-* **IOA v2 · n8n** — local webhook-driven workflow runtime
-* **IOA v2 · Dify** — self-hosted app API-driven chatflow runtime
-* **IOA v3 · Ops Graph** — LangGraph policy and routing layer with backend
-  Company DB tools and approved n8n/Grafana workflow execution
-
----
-
-# Core Features
-
-* multi-step AI diagnostics
-* realtime telemetry monitoring
-* operational alert workflows
-* telemetry history visualization
-* persistent chat history
-* prompt workflow management
-* access-controlled authentication
-* realtime SocketIO updates
-* profile and workspace management
-* orchestration runtime benchmarking
-* streamed reasoning traces
-* benchmark execution logging
-* explicit Simulator / Company DB source selection and fallback
-* read-only Company MongoDB proxy with bounded queries and rate limiting
-* IOA v3 hybrid semantic/deterministic workflow planner
-* n8n Grafana gateway with allowlisted tool paths
-* public fallback/mock demo path that avoids company data and credentials
-
----
-
-# Architecture
+The intended production boundary is:
 
 ```text
-Simulator telemetry ─┐
-                     ├─> Flask + Socket.IO -> AI runtimes -> Web UI / Telegram
-Company MongoDB ─────┘
+Web UI / Telegram
+  -> Flask app / IOA runtimes
+  -> MCP server
+  -> Company MongoDB / Loki / Grafana / Prometheus
 
-Grafana Client API -> n8n gateway -> IOA v3 Ops Graph
+App data
+  -> Supabase/Postgres
 
-App data: Supabase/Postgres, fail-closed by default
-Simulator telemetry: MongoDB or SQLite, selected by environment
+Simulator telemetry
+  -> MongoDB when enabled
+  -> SQLite only as last-resort fallback/debug storage
 ```
 
----
+Flask must not hold company MongoDB, Loki, Grafana, or Prometheus credentials.
+Those credentials belong in `mcp_server/.env`. Flask only receives
+`MCP_SERVER_URL` and `MCP_BEARER_KEY`.
 
-# Tech Stack
+## Core Features
 
-## Backend
+- AI-assisted operations diagnosis
+- streamed reasoning traces
+- source-aware company/simulator execution
+- persistent chats and prompt workflows
+- authenticated web workspace
+- Telegram webhook integration
+- Supabase/Postgres app-data persistence
+- MCP-gated read-only operational evidence
+- OneM2M command, telemetry, and resource checks
+- RabbitMQ backlog and queue-growth checks
+- EMQX dropped-message and reconnect checks
+- Kubernetes resource checks
+- runtime benchmarking across the supported agent modes
 
-* Python
-* Flask
-* Flask-SocketIO
-* MongoDB
-* Supabase/Postgres
-* SQLite legacy/fallback
-* OpenAI API
+## Runtime Modes
 
-## Frontend
+- `IOA v1 · Custom Python`
+- `IOA v2 · Custom Python`
+- `IOA v2 · LangChain`
+- `IOA v2 · LangGraph`
+- `IOA v2 · n8n`
+- `IOA v2 · Dify`
+- `IOA v3 · Ops Graph`
 
-* HTML
-* CSS
-* Vanilla JavaScript
-* Chart.js
+`IOA v3 · Ops Graph` is the controlled operational runtime for company
+runbooks. It uses LangGraph policy/routing and MCP tools for bounded MongoDB,
+Loki, Grafana, and Prometheus evidence.
 
-## AI & Orchestration Systems
-
-* custom ReAct-style reasoning loops
-* LangChain orchestration runtime
-* LangGraph orchestration runtime
-* n8n local workflow runtime
-* Dify self-hosted chatflow runtime
-* IOA v3 Ops Graph runtime
-* n8n Grafana gateway
-* streamed reasoning traces
-* tool-calling agents
-* context-aware diagnostics
-* operational prompt workflows
-* runtime benchmarking pipeline
-
----
-
-# IOA v3 Grafana Workflow
-
-IOA v3 is the current controlled operational workflow runtime. It uses
-LangGraph for policy gates and workflow planning, backend typed tools for
-Company DB evidence, and n8n for approved Grafana workflow execution.
-
-For local fallback testing:
+## Quick Start
 
 ```bash
-python3 scripts/mock_grafana_dashboard_client.py --port 5050
-```
-
-```bash
-N8N_PORT=5679 n8n
-```
-
-```env
-N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
-GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
-IOA_V3_ENABLE_KPI_RULES=false
-```
-
-See [IOA v3 Ops Graph](docs/IOA_V3_LANGGRAPH_N8N_GRAFANA.md) and
-[Public Fallback Demo](docs/PUBLIC_DEMO.md).
-
----
-
-# Runtime Benchmarking
-
-The platform includes a benchmarking system for comparing orchestration
-runtimes inside the same operational environment.
-
-Current benchmark dimensions include:
-
-* blind AI-judged answer quality against frozen operational context
-* factual correctness and telemetry grounding
-* task completion, actionability, and source discipline
-* measured latency, execution success, and trace visibility
-* separately documented engineering and ecosystem tradeoffs
-
-Raw executions and AI-judged results are stored separately so provisional or
-manually assigned scores are not presented as measured evidence.
-
-The benchmark runner compares Custom Python, LangChain, LangGraph, n8n, and
-Dify across the versioned prompt set in `eval/prompts_phase1.json`.
-
-See the [Benchmarking Guide](docs/BENCHMARKING.md) for details.
-
----
-
-# Quick Start
-
-## 1. Clone Repository
-
-```bash
-git clone https://github.com/giangng611/iot-ops-agent.git
+git clone <repo-url>
 cd iot-ops-agent
-```
-
----
-
-## 2. Create a Python Environment
-
-Windows PowerShell:
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
-
-macOS or Linux:
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Python 3.11 or 3.12 is recommended. After the environment is activated, use
-`python` for the remaining commands on every operating system.
-
----
-
-## 3. Configure Environment Variables
-
-Create a `.env` file:
+Create `.env` from [.env.example](.env.example), then configure at minimum:
 
 ```env
-OPENAI_API_KEY=your_openai_api_key
-FLASK_SECRET_KEY=your_secret_key
-SOCKETIO_CORS_ORIGINS=
-MAX_DIAGNOSE_MESSAGE_CHARS=2000
-DIAGNOSE_RATE_LIMIT_REQUESTS=10
-DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS=60
-LOGIN_RATE_LIMIT_ATTEMPTS=10
-LOGIN_RATE_LIMIT_WINDOW_SECONDS=300
-ENABLE_EMBEDDED_TELEMETRY=true
-TELEMETRY_BROADCAST_INTERVAL_SECONDS=300
-MONGODB_URI=mongodb://iot_ops_runtime:[PASSWORD]@localhost:27017/iot_ops_agent?authSource=iot_ops_agent
-MONGODB_ADMIN_URI=mongodb://iot_ops_admin:[PASSWORD]@localhost:27017/admin?authSource=admin
-MONGO_READ_RATE_LIMIT_REQUESTS=60
-MONGO_READ_RATE_LIMIT_WINDOW_SECONDS=60
-ACCESS_CODE=please_contact_project_owner
-N8N_WEBHOOK_URL=http://localhost:5678/webhook/iot-ops-eval
-N8N_V3_WEBHOOK_URL=http://localhost:5679/webhook/grafana-ops-gateway
-GRAFANA_DASHBOARD_CLIENT_URL=http://127.0.0.1:5050
-IOA_V3_ENABLE_KPI_RULES=false
-IOA_V3_SEMANTIC_PLANNER_ENABLED=true
-DIFY_API_URL=http://localhost/v1/chat-messages
-DIFY_API_KEY=your_dify_app_api_key
-DIFY_USER=iot-ops-agent-ui
-PUBLIC_BASE_URL=https://iot-ops-agent.onrender.com
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_WEBHOOK_SECRET=your_random_webhook_secret
-TELEGRAM_ALLOWED_USER_IDS=
-TELEGRAM_LINK_CODE_TTL_MINUTES=15
-COMPANY_MONGODB_URI=
-COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
-COMPANY_DB_STATEMENT_TIMEOUT_MS=5000
-COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS=120
-COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS=60
+FLASK_SECRET_KEY=replace_me
+OPENAI_API_KEY=replace_me
+ACCESS_CODE=replace_me
+
+APP_DB_BACKEND=supabase
+APP_DB_FALLBACK_ENABLED=false
+SUPABASE_DB_URL=replace_me
+
+COMPANY_DATA_ACCESS_MODE=mcp
+MCP_SERVER_URL=http://127.0.0.1:8000/mcp
+MCP_BEARER_KEY=replace_me
 ```
 
----
-
-## 4. Initialize Database
+Start MCP server in one terminal:
 
 ```bash
-python init_db.py
+PORT=8000 MCP_SERVER_HOST=127.0.0.1 .venv/bin/python mcp_server/server.py
 ```
 
----
-
-## 5. Start Telemetry
-
-With `ENABLE_EMBEDDED_TELEMETRY=true`, Flask generates simulator telemetry
-itself. To use the standalone simulator instead, set
-`ENABLE_EMBEDDED_TELEMETRY=false` and run `python simulator.py` in another
-terminal.
-
----
-
-## 6. Start Flask Application
+Start Flask in another terminal:
 
 ```bash
-python app.py
+.venv/bin/python app.py
 ```
 
-Open the application:
+Open:
 
 ```text
 http://127.0.0.1:5001
 ```
 
----
+See [Setup](docs/SETUP.md) for the full environment contract.
 
-# Deployment Notes
+## Operational Runbooks
 
-The public demo is structured for Render deployment. Company MongoDB access
-usually requires a local/VPN-connected runtime or a deployment with network
-access to the company database.
+Implemented MCP-backed runbooks:
 
-Environment variables should be configured through the deployment provider instead of committing secrets directly into the repository.
+- Command Downlink Debug
+- Telemetry Uplink Debug
+- Device Resource Check
+- RabbitMQ Top Backlog
+- RabbitMQ Queue Trend
+- EMQX Dropped Messages
+- EMQX Connect/Disconnect
+- Kubernetes Resource Check
 
-`N8N_WEBHOOK_URL` is optional and only required when testing the `IOA v2 · n8n` runtime mode in the UI.
+Prompt aliases are available in the chat input:
 
-`N8N_V3_WEBHOOK_URL` and `GRAFANA_DASHBOARD_CLIENT_URL` are optional for the
-public fallback demo, but required when testing `IOA v3 · Ops Graph` Grafana
-workflow calls through n8n. `GRAFANA_DASHBOARD_CLIENT_URL` must point at an API
-adapter or mock client, not a Grafana dashboard UI URL.
-
-`DIFY_API_URL`, `DIFY_API_KEY`, and `DIFY_USER` are optional and only required when testing the `IOA v2 · Dify` runtime mode in the UI. For the local self-hosted Dify setup, `DIFY_API_URL` is usually `http://localhost/v1/chat-messages`.
-
----
-
-# Documentation
-
-* [Setup Guide](docs/SETUP.md)
-* [Architecture](docs/ARCHITECTURE.md)
-* [Features](docs/FEATURES.md)
-* [Public Fallback Demo](docs/PUBLIC_DEMO.md)
-* [IOA v3 Ops Graph](docs/IOA_V3_LANGGRAPH_N8N_GRAFANA.md)
-* [Benchmarking](docs/BENCHMARKING.md)
-* [Company Agent Scope](docs/COMPANY_AGENT_SCOPE.md)
-* [Deployment](docs/DEPLOYMENT.md)
-* [n8n UI Integration](docs/N8N_UI_INTEGRATION.md)
-* [Dify UI Integration](docs/DIFY_UI_INTEGRATION.md)
-* [Telegram PoC](docs/TELEGRAM_POC.md)
-* [Company DB Discovery](docs/COMPANY_DB_DISCOVERY.md)
-* [Company DB Security Assessment](docs/COMPANY_DB_SECURITY_ASSESSMENT.md)
-* [LangGraph Governance](docs/LANGGRAPH_GOVERNANCE.md)
-* [Roadmap](docs/ROADMAP.md)
-
----
-
-# Tests
-
-Run the focused backend safety checks:
-
-```bash
-python -m unittest tests/test_security_and_realtime.py
+```text
+/cmd
+/telemetry
+/resources
+/rabbitmq
+/queue-trend
+/emqx-dropped
+/reconnect
+/k8s
 ```
 
-Run the full suite:
+See [OneM2M Operational Scenarios](docs/ONEM2M_OPERATIONAL_SCENARIOS.md).
+
+## Documentation
+
+- [Setup](docs/SETUP.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Features](docs/FEATURES.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [IOA v3 Ops Graph](docs/IOA_V3_LANGGRAPH_N8N_GRAFANA.md)
+- [OneM2M Operational Scenarios](docs/ONEM2M_OPERATIONAL_SCENARIOS.md)
+- [MCP Server Integration](docs/MCP_SERVER_INTEGRATION.md)
+- [MCP Server Usage](docs/MCP_SERVER_USAGE.md)
+- [MCP Server Deployment](docs/MCP_SERVER_DEPLOYMENT.md)
+- [Benchmarking](docs/BENCHMARKING.md)
+- [Telegram PoC](docs/TELEGRAM_POC.md)
+- [LangGraph Governance](docs/LANGGRAPH_GOVERNANCE.md)
+
+## Verification
+
+Run focused IOA v3 workflow tests:
 
 ```bash
-python -m unittest discover -s tests
+.venv/bin/python -m unittest tests.test_ioa_v3_workflow -v
 ```
 
-Storage checks:
+Run the full backend suite:
 
 ```bash
-python -m scripts.check_app_storage_status
-python -m scripts.verify_supabase_app_data_migration
+.venv/bin/python -m unittest discover -s tests
 ```
 
----
+Check app storage health:
 
-# Future Improvements
+```bash
+.venv/bin/python -m scripts.check_app_storage_status
+```
 
-* Row Level Security policy design for any future browser-side Supabase access
-* RBAC and admin dashboards
-* external notification integrations
-* production-grade authentication
-* local model runtime support
-* advanced orchestration evaluation
-* workflow automation runtimes
+## License
 
----
-
-# License
-
-MIT License © 2026 Giang Nguyen Do
-
----
-
-# Author
-
+MIT License © 2026 
 Giang Nguyen Do
-
-Computer Science @ University of Georgia

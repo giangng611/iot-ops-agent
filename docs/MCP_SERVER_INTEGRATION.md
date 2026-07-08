@@ -1,15 +1,15 @@
 # MCP Server — Integration Reference
 
-Tài liệu này dành cho **agent/hệ thống bên ngoài** muốn tích hợp với
-`mcp_server/` qua giao thức MCP (Model Context Protocol). Nếu bạn muốn tự
-chạy/test server trên máy mình, xem [MCP_SERVER_USAGE.md](MCP_SERVER_USAGE.md).
+Tài liệu này dành cho **Flask app, agent, hoặc hệ thống bên ngoài** muốn tích
+hợp với `mcp_server/` qua giao thức MCP (Model Context Protocol). Nếu bạn muốn
+tự chạy/test server trên máy mình, xem [MCP_SERVER_USAGE.md](MCP_SERVER_USAGE.md).
 Nếu bạn deploy server lên hạ tầng, xem [MCP_SERVER_DEPLOYMENT.md](MCP_SERVER_DEPLOYMENT.md).
 Để build Docker image, xem [mcp_server/Dockerfile](../mcp_server/Dockerfile).
 
 ## 1. Tổng quan kiến trúc
 
 ```
-Agent/hệ thống ngoài  --Bearer key MCP-->  MCP Server (HTTPS public)
+Flask app / agent ngoài --Bearer key MCP--> MCP Server (HTTPS public/local)
                                               ├─ mongo_tools    -> CompanyMongoReadProxy -> MongoDB công ty
                                               ├─ loki_tools     -> grafana-client          -> Grafana Loki (log)
                                               └─ grafana_tools  -> grafana-client          -> Grafana/Prometheus (metric)
@@ -17,8 +17,8 @@ Agent/hệ thống ngoài  --Bearer key MCP-->  MCP Server (HTTPS public)
 
 - Credential thật (`COMPANY_MONGODB_URI`, `GRAFANA_URL`/`GRAFANA_USERNAME`/`GRAFANA_PASSWORD`
   hoặc `GRAFANA_API_KEY`) **chỉ tồn tại trong env của MCP server**, không bao
-  giờ đi qua giao thức MCP. Agent ngoài chỉ cần biết `MCP_SERVER_URL` + 1
-  bearer key riêng.
+  giờ đi qua giao thức MCP. Flask app/agent ngoài chỉ cần biết
+  `MCP_SERVER_URL` + 1 bearer key riêng.
 - **Guardrail tự build (allowlist namespace, chặn operator nguy hiểm, rate
   limit riêng) chỉ áp dụng cho nhóm tool Mongo.** Nhóm Loki/Grafana/Prometheus
   gọi trực tiếp qua thư viện [`grafana-client`](https://github.com/grafana-toolbox/grafana-client),
@@ -80,8 +80,8 @@ Một client CLI tham khảo, không cần SDK riêng để tự viết từ đ�
 | Tool lỗi (namespace Mongo ngoài allowlist, Mongo/Grafana không reachable, operator bị chặn, v.v.) | 200 (MCP-level) | `CallToolResult.isError = true`, nội dung lỗi nằm trong `result.content` |
 
 `caller_id` được map 1-1 với bearer key qua `MCP_API_KEYS_JSON` (server chỉ
-lưu SHA-256 hash, không lưu raw key) — mỗi caller/agent ngoài nên có 1 key
-riêng để rate-limit và audit log tách biệt theo từng bên.
+lưu SHA-256 hash, không lưu raw key) — Flask app và mỗi caller/agent ngoài nên
+có 1 key riêng để rate-limit và audit log tách biệt theo từng bên.
 
 ## 4. Đọc kết quả tool (quan trọng)
 
@@ -175,9 +175,10 @@ Cả 4 tool Loki/Grafana ở trên đều đã khai báo kiểu trả về gener
 
 ## 6. Ví dụ kịch bản tích hợp thực tế
 
-Repo này có sẵn các script tự động hoá theo runbook vận hành công ty (đọc
-[`resources/kich_ban_van_hanh_iot_platform_cho_ai_agent.md`](../resources/kich_ban_van_hanh_iot_platform_cho_ai_agent.md)),
-toàn bộ chỉ gọi qua MCP tool ở trên — dùng làm ví dụ end-to-end:
+Repo này có sẵn các script tự động hoá theo runbook vận hành công ty. Tài liệu
+runbook gốc là tài liệu nội bộ do team cung cấp, không được commit public vào
+repo. Toàn bộ script bên dưới chỉ gọi qua MCP tool ở trên — dùng làm ví dụ
+end-to-end:
 
 - [`mcp_server/scripts/debug_device_command_flow.py`](../mcp_server/scripts/debug_device_command_flow.py) — debug luồng gửi lệnh xuống thiết bị.
 - [`mcp_server/scripts/debug_telemetry_flow.py`](../mcp_server/scripts/debug_telemetry_flow.py) — debug luồng telemetry từ thiết bị gửi lên.

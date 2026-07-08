@@ -1,8 +1,9 @@
 # MCP Server — Usage Guide (chạy thử local)
 
 Hướng dẫn này dành cho việc **tự chạy và test `mcp_server/` trên máy của bạn**.
-Xem thiết kế tổng thể tại [docs/MCP_SERVER_PLAN.md](MCP_SERVER_PLAN.md), và
-hướng dẫn deploy public tại [docs/MCP_SERVER_DEPLOYMENT.md](MCP_SERVER_DEPLOYMENT.md).
+Xem kiến trúc tổng thể tại [ARCHITECTURE.md](ARCHITECTURE.md), hướng dẫn
+tích hợp client tại [MCP_SERVER_INTEGRATION.md](MCP_SERVER_INTEGRATION.md), và
+hướng dẫn deploy public tại [MCP_SERVER_DEPLOYMENT.md](MCP_SERVER_DEPLOYMENT.md).
 
 ## 1. Cài dependency (1 lần)
 
@@ -26,7 +27,7 @@ RAW_KEY=PqTUmPNKxrVn2g3EJslOdeUorNcntST5
 HASH=b210b4660de91484074f62370a43766b8669bab7ab21814fe3c2e8bf1638cc78
 ```
 
-- `RAW_KEY` → đưa cho client (MCP Inspector, script test, agent ngoài...).
+- `RAW_KEY` → đưa cho client (Flask app, MCP Inspector, script test, agent ngoài...).
 - `HASH` → đưa vào `MCP_API_KEYS_JSON` của server, không bao giờ gửi đi.
 
 ## 3. Set biến môi trường và chạy server

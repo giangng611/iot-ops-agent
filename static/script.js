@@ -854,14 +854,170 @@ function handlePromptSuggestions() {
     palette.classList.remove("hidden");
 }
 
-function selectSlashCommandById(promptId) {
-    const prompt = findPromptById(promptId);
+// ── Command parameter modal ────────────────────────────────────────────────
+// No schema definitions needed here.  The modal is driven entirely by
+// <placeholder> tokens in each prompt's command string:
+//   <key>   → required field
+//   <key?>  → optional field (shown in modal; appended as "Label: value" if filled)
+//
+// To add a parameterized prompt: just put <placeholders> in its command string.
 
-    if (!prompt) {
-        return;
+const PARAM_LABEL_OVERRIDES = {
+    device_id:     "Device ID",
+    request_id:    "Request ID",
+    time_range:    "Time range",
+    resource_name: "Resource",
+    error_message: "Error message",
+};
+
+const PARAM_PLACEHOLDER_OVERRIDES = {
+    device_id:     "e.g. S3e1c21c3-7aad-...",
+    time_range:    "e.g. last 6 hours",
+    resource_name: "e.g. CNT, CIN",
+};
+
+function paramLabel(key) {
+    return PARAM_LABEL_OVERRIDES[key] ||
+        key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function paramPlaceholder(key, required) {
+    return PARAM_PLACEHOLDER_OVERRIDES[key] || (required ? "" : "optional");
+}
+
+// Parse <key> (required) and <key?> (optional) tokens from a command string.
+// Returns [{key, required}] in order of first appearance, deduped.
+function parseCommandFields(command) {
+    const seen   = new Set();
+    const fields = [];
+    for (const m of (command || "").matchAll(/<([a-z][a-z0-9_]*)(\?)?>/g)) {
+        const key = m[1];
+        if (seen.has(key)) continue;
+        seen.add(key);
+        fields.push({ key, required: !m[2] });
+    }
+    return fields;
+}
+
+let _pendingCommandPrompt = null;
+
+function openCommandParamModal(prompt) {
+    const fields = parseCommandFields(prompt.command || "");
+    _pendingCommandPrompt = prompt;
+
+    document.getElementById("commandParamTitle").textContent = prompt.title;
+
+    const fieldsEl = document.getElementById("commandParamFields");
+    fieldsEl.innerHTML = fields.map(f => `
+        <div class="param-field">
+            <label class="param-label" for="param-${f.key}">
+                ${escapeHtml(paramLabel(f.key))}
+                ${f.required ? '<span class="param-required">*</span>' : ""}
+            </label>
+            <input
+                id="param-${f.key}"
+                class="param-input${f.required ? " param-input-required" : ""}"
+                type="text"
+                placeholder="${escapeHtml(paramPlaceholder(f.key, f.required))}"
+                autocomplete="off"
+                ${f.key === "device_id" && selectedPromptDeviceId
+                    ? `value="${escapeHtml(selectedPromptDeviceId)}"`
+                    : ""}
+            />
+        </div>
+    `).join("");
+
+    document.getElementById("commandParamModal").classList.remove("hidden");
+
+    // Focus first empty required field, else first field
+    const firstFocus = fields.find(f => {
+        const el = document.getElementById(`param-${f.key}`);
+        return el && !el.value.trim();
+    }) || fields[0];
+    document.getElementById(`param-${firstFocus?.key}`)?.focus();
+}
+
+function closeCommandParamModal() {
+    document.getElementById("commandParamModal").classList.add("hidden");
+    _pendingCommandPrompt = null;
+}
+
+function handleCommandParamBackdrop(event) {
+    if (event.target === document.getElementById("commandParamModal")) {
+        closeCommandParamModal();
+    }
+}
+
+function submitCommandParams() {
+    if (!_pendingCommandPrompt) return;
+    const fields = parseCommandFields(_pendingCommandPrompt.command || "");
+
+    // Validate required fields first
+    for (const f of fields) {
+        if (!f.required) continue;
+        const el = document.getElementById(`param-${f.key}`);
+        if (!el?.value?.trim()) {
+            el?.classList.add("param-input-error");
+            el?.focus();
+            return;
+        }
+        el.classList.remove("param-input-error");
     }
 
-    selectSlashCommand(prompt.command);
+    let command = String(_pendingCommandPrompt.command || "");
+    const extras = [];
+
+    for (const f of fields) {
+        const val = document.getElementById(`param-${f.key}`)?.value?.trim() || "";
+        if (f.required) {
+            // Replace <key> inline with the value
+            command = command.replaceAll(`<${f.key}>`, val);
+        } else {
+            // Strip <key?> token from the template
+            command = command.replaceAll(`<${f.key}?>`, "");
+            // Append as "Label: value" if the user filled it in
+            if (val) extras.push(`${paramLabel(f.key)}: ${val}`);
+        }
+    }
+
+    // Clean up any whitespace gaps left by stripped optional tokens
+    command = command.replace(/\s{2,}/g, " ").trimEnd();
+    if (extras.length) command += " " + extras.join(". ") + ".";
+
+    closeCommandParamModal();
+
+    const input = document.getElementById("messageInput");
+    input.value = command;
+    scheduleMessageInputResize();
+    updateRunButtonState();
+    input.focus();
+}
+
+// Close modal on Escape / submit on Enter
+document.addEventListener("keydown", e => {
+    if (e.key === "Escape") closeCommandParamModal();
+    if (e.key === "Enter" && !document.getElementById("commandParamModal").classList.contains("hidden")) {
+        e.preventDefault();
+        submitCommandParams();
+    }
+});
+
+// ── End command parameter modal ────────────────────────────────────────────
+
+function selectSlashCommandById(promptId) {
+    const prompt = findPromptById(promptId);
+    if (!prompt) return;
+
+    const shortcut = promptShortcut(prompt);
+    const palette  = document.getElementById("slashPalette");
+    palette.classList.add("hidden");
+    palette.innerHTML = "";
+
+    if (parseCommandFields(prompt.command || "").length > 0) {
+        openCommandParamModal(prompt);
+    } else {
+        selectSlashCommand(prompt.command);
+    }
 }
 
 function findPromptByShortcut(value) {
@@ -2997,15 +3153,15 @@ async function renderAssistantMessage(
     retryPrompt = null,
     tokenUsage = null
 ) {
-    const displayMessage = formatConversationalText(message);
     const chatMessages = document.getElementById("chatMessages");
     const reasoningId = `reasoning-${Date.now()}-${Math.random()}`;
     const messageId = `assistant-message-${Date.now()}-${Math.random()}`;
+    const contentId = `${messageId}-content`;
     const shouldPinScroll = shouldKeepTypingPinnedToBottom(chatMessages);
 
     window[reasoningId] = reasoningSteps;
     assistantMessageActionStore[messageId] = {
-        answer: displayMessage,
+        answer: message,
         retryPrompt: retryPrompt
     };
     const tokenUsageLabel = formatTokenUsage(tokenUsage);
@@ -3019,7 +3175,7 @@ async function renderAssistantMessage(
                 </div>
 
                 <div class="message-bubble assistant-bubble">
-                    <pre class="typing-output">${shouldType ? "" : escapeHtml(displayMessage)}</pre>
+                    <div class="markdown-output" id="${contentId}"></div>
                 </div>
 
                 <div class="assistant-actions">
@@ -3057,11 +3213,13 @@ async function renderAssistantMessage(
         </div>
     `;
 
-    const outputs = chatMessages.querySelectorAll(".typing-output");
-    const latestOutput = outputs[outputs.length - 1];
-
-    if (shouldType) {
-        await typeTextIntoElementPromise(latestOutput, displayMessage, 8);
+    const contentEl = document.getElementById(contentId);
+    if (contentEl) {
+        if (typeof marked !== "undefined") {
+            contentEl.innerHTML = marked.parse(message || "");
+        } else {
+            contentEl.textContent = message || "";
+        }
     }
 
     if (shouldPinScroll) {

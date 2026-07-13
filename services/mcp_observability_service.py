@@ -324,6 +324,28 @@ def query_iot_platform_metric_via_mcp(tool_name, params=None):
             },
         }
 
+    if tool_name == "grafana_emqx_health":
+        queries = _query_prometheus_instant_map({
+            "connections":       'sum(emqx_connections_count{job="emqx"})',
+            "live_connections":  'sum(emqx_live_connections_count{job="emqx"})',
+            "messages_dropped":  'sum(emqx_messages_dropped{job="emqx"})',
+            "delivery_dropped":  'sum(emqx_delivery_dropped{job="emqx"})',
+            "auth_failure":      'sum(emqx_authentication_failure{job="emqx"})',
+            "auth_deny":         'sum(emqx_authorization_deny{job="emqx"})',
+            "subscriptions":     'sum(emqx_subscriptions_count{job="emqx"})',
+            "cpu_use":           'avg(emqx_vm_cpu_use{job="emqx"})',
+            "memory_used":       'sum(emqx_vm_used_memory{job="emqx"})',
+            "nodes_running":     'sum(emqx_cluster_nodes_running{job="emqx"})',
+            "nodes_stopped":     'sum(emqx_cluster_nodes_stopped{job="emqx"})',
+        })
+        return {
+            "source": "mcp_server",
+            "mcp_tool": "grafana_query",
+            "scenario": "10a",
+            "tool": tool_name,
+            "queries": queries,
+        }
+
     if tool_name == "grafana_k8s_resources":
         namespace = params.get("namespace") or DEFAULT_K8S_NAMESPACE
         service = params.get("service")

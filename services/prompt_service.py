@@ -291,6 +291,7 @@ DEFAULT_PROMPTS = [
             "SUBSCRIPTION, URI_MAPPER, and latest command CIN evidence. Summarize "
             "the most likely failure point, supporting evidence, evidence gaps, "
             "and the next action."
+            "<time_range?><request_id?><payload?><domain?>"
         ),
         "category": "OneM2M Ops",
         "tags": ["onem2m", "runbook"],
@@ -309,6 +310,7 @@ DEFAULT_PROMPTS = [
             "EMQX/RabbitMQ evidence. Do not mark any resource as present unless it "
             "is found in DB or log evidence. Summarize the most likely failure point, "
             "supporting evidence, evidence gaps, and the next action."
+            "<time_range?><request_id?><content?>"
         ),
         "category": "OneM2M Ops",
         "tags": ["onem2m", "runbook"],
@@ -326,6 +328,7 @@ DEFAULT_PROMPTS = [
             "SUBSCRIPTION, and URI_MAPPER evidence. List exactly which resources "
             "exist, which are missing, what evidence supports each status, and the "
             "next action."
+            "<time_range?><resource_name?><error_message?><domain?>"
         ),
         "category": "OneM2M Ops",
         "tags": ["onem2m", "runbook"],

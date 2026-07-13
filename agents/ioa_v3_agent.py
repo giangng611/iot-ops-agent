@@ -140,6 +140,7 @@ MAX_ANSWER_EVIDENCE_DEPTH = 8
 MCP_PROMETHEUS_TOOLS = {
     "grafana_queue_backlog",
     "grafana_queue_trend",
+    "grafana_emqx_health",
     "grafana_emqx_dropped_trend",
     "grafana_emqx_connection_trend",
     "grafana_k8s_health",
@@ -155,6 +156,15 @@ INFRASTRUCTURE_OVERVIEW_TOOLS = {
     "grafana_redis_health",
     "grafana_mongodb_health",
     "grafana_mysql_health",
+}
+
+# Registry for per-tool deterministic answer builders.
+# Each value is a method name on IoaV3Agent with signature (self, result, state) -> str | None.
+# To add a new scenario: write the builder method, then add one entry here.
+DETERMINISTIC_BUILDER_REGISTRY: dict = {
+    "get_company_onem2m_command_flow":     "_dispatch_onem2m_flow",
+    "get_company_onem2m_telemetry_flow":   "_dispatch_onem2m_flow",
+    "get_company_onem2m_device_resources": "_dispatch_onem2m_resource",
 }
 
 
@@ -825,56 +835,52 @@ class IOAV3LangGraphN8nAgent:
 
     def build_deterministic_answer(self, state):
         selected_tool = state.get("selected_tool")
+        tool_outputs  = state.get("tool_outputs") or []
+        user_input    = state.get("user_input")   or ""
 
-        deterministic_tools = {
-            "get_company_onem2m_device_resources",
-            "get_company_onem2m_command_flow",
-            "get_company_onem2m_telemetry_flow",
-            *MCP_PROMETHEUS_TOOLS,
-        }
-
-        if selected_tool not in deterministic_tools:
+        # Prometheus / MCP metric tool family
+        if selected_tool in MCP_PROMETHEUS_TOOLS:
+            for output in tool_outputs:
+                if output.get("tool") != selected_tool:
+                    continue
+                result = output.get("result")
+                if not isinstance(result, dict):
+                    return None
+                if selected_tool in INFRASTRUCTURE_OVERVIEW_TOOLS:
+                    return self.build_infrastructure_overview_answer(tool_outputs)
+                if selected_tool == "grafana_k8s_resources":
+                    return self.build_k8s_resource_answer(result, user_input, tool_outputs)
+                return self.build_metric_runbook_answer(result, selected_tool, user_input)
             return None
 
-        for output in state.get("tool_outputs") or []:
+        # Per-tool registry — add new tools to DETERMINISTIC_BUILDER_REGISTRY
+        builder_name = DETERMINISTIC_BUILDER_REGISTRY.get(selected_tool)
+        if not builder_name:
+            return None
+
+        for output in tool_outputs:
             if output.get("tool") != selected_tool:
                 continue
-
             result = output.get("result")
-
             if not isinstance(result, dict):
                 return None
-
-            if selected_tool in MCP_PROMETHEUS_TOOLS:
-                if selected_tool in INFRASTRUCTURE_OVERVIEW_TOOLS:
-                    return self.build_infrastructure_overview_answer(
-                        state.get("tool_outputs") or [],
-                    )
-
-                return self.build_metric_runbook_answer(
-                    result,
-                    selected_tool,
-                    state.get("user_input") or "",
-                )
-
-            resource_summary = result.get("resource_summary")
-
-            if not isinstance(resource_summary, dict):
-                return None
-
-            if selected_tool in {
-                "get_company_onem2m_command_flow",
-                "get_company_onem2m_telemetry_flow",
-            }:
-                return self.build_onem2m_flow_answer(
-                    result,
-                    selected_tool,
-                    state.get("tool_outputs") or [],
-                )
-
-            return self.build_onem2m_resource_answer(result)
+            return getattr(self, builder_name)(result, state)
 
         return None
+
+    def _dispatch_onem2m_flow(self, result, state):
+        if not isinstance(result.get("resource_summary"), dict):
+            return None
+        return self.build_onem2m_flow_answer(
+            result,
+            state.get("selected_tool"),
+            state.get("tool_outputs") or [],
+        )
+
+    def _dispatch_onem2m_resource(self, result, state):
+        if not isinstance(result.get("resource_summary"), dict):
+            return None
+        return self.build_onem2m_resource_answer(result)
 
     def first_prometheus_value(self, result):
         items = self.prometheus_result_items(result)
@@ -1204,6 +1210,7 @@ class IOAV3LangGraphN8nAgent:
         builders = {
             "grafana_queue_backlog": self.build_queue_backlog_answer,
             "grafana_queue_trend": self.build_queue_trend_answer,
+            "grafana_emqx_health": self.build_emqx_health_answer,
             "grafana_emqx_dropped_trend": self.build_emqx_dropped_answer,
             "grafana_emqx_connection_trend": self.build_emqx_connection_answer,
             "grafana_k8s_resources": self.build_k8s_resource_answer,
@@ -1219,25 +1226,32 @@ class IOAV3LangGraphN8nAgent:
         top_value = top_queue.get("value")
         has_evidence = bool(queues)
         abnormal = top_value is not None and top_value > threshold
+
         status = "abnormal" if abnormal else ("normal" if has_evidence else "insufficient evidence")
-        queue_lines = [
-            f"- {row['name']}: {row['value']:.0f} messages"
-            for row in queues
-        ] or ["- No queues were returned in the evidence."]
+
+        if queues:
+            queue_table = [
+                "| Queue | Messages |",
+                "|---|---|",
+                *[f"| `{row['name']}` | {row['value']:.0f} |" for row in queues],
+            ]
+        else:
+            queue_table = ["_No queues returned in evidence._"]
+
+        top_name = top_queue.get("name", "unavailable")
+        top_val_str = f"{top_value:.0f}" if top_value is not None else "unavailable"
 
         return "\n".join([
             "# RabbitMQ Queue Backlog Check Result",
             "",
             "## 1. Summary",
-            f"Highest backlog queue: {top_queue.get('name', 'unavailable')}.",
-            f"Message backlog: {top_value if top_value is not None else 'unavailable'}.",
-            f"Assessment: {status}.",
+            f"**Status:** {status}",
+            f"**Highest backlog queue:** `{top_name}` — {top_val_str} messages | **Threshold:** {threshold:.0f}",
             "",
             "## 2. Input",
-            f"- Namespace: {request.get('namespace', 'test')}",
-            f"- TopK: {request.get('topk', 10)}",
-            f"- Threshold: {threshold:.0f} messages",
-            "- Issue type: rabbitmq_queue_backlog",
+            f"- **Namespace:** `{request.get('namespace', 'test')}`",
+            f"- **TopK:** {request.get('topk', 10)}",
+            f"- **Issue type:** rabbitmq_queue_backlog",
             "",
             "## 3. Logs Checked",
             "- Service logs were not checked; this workflow checks queue backlog metrics first.",
@@ -1246,17 +1260,18 @@ class IOAV3LangGraphN8nAgent:
             "- Not applicable for the RabbitMQ backlog workflow.",
             "",
             "## 5. System Metrics",
-            f"- PromQL: `{result.get('promql_query')}`",
-            *queue_lines,
+            f"- **PromQL:** `{result.get('promql_query')}`",
+            "",
+            *queue_table,
             "",
             "## 6. Conclusion",
             (
-                "Queue backlog is above threshold; a consumer or queue-processing service may be stuck or under-capacity."
+                f"Queue `{top_name}` has {top_val_str} messages — above the {threshold:.0f} threshold. A consumer or queue-processing service may be stuck or under-capacity."
                 if abnormal
                 else (
-                    "No queue backlog above the 10,000-message threshold was found in the current evidence."
+                    "No queue backlog above the threshold was found in the current evidence."
                     if has_evidence
-                    else "Prometheus returned no RabbitMQ queue series for the requested namespace, so backlog health cannot be concluded from this evidence."
+                    else "Prometheus returned no RabbitMQ queue series for the requested namespace."
                 )
             ),
             "",
@@ -1274,34 +1289,41 @@ class IOAV3LangGraphN8nAgent:
         primary = trends[0] if trends else {}
         has_evidence = bool(trends)
         linear = bool(primary.get("linear_increase"))
-        trend_lines = [
-            (
-                f"- {row['name']}: start={row['start']:.0f}, end={row['end']:.0f}, "
-                f"delta={row['delta']:.0f}, linear_increase={str(row['linear_increase']).lower()}"
-            )
-            for row in trends[:5]
-        ] or ["- No range samples were returned in the evidence."]
+
+        if trends:
+            trend_table = [
+                "| Queue | Start | End | Delta | Linear Growth |",
+                "|---|---|---|---|---|",
+                *[
+                    f"| `{row['name']}` | {row['start']:.0f} | {row['end']:.0f} | {row['delta']:.0f} | {'yes' if row['linear_increase'] else 'no'} |"
+                    for row in trends[:5]
+                ],
+            ]
+        else:
+            trend_table = ["_No range samples returned in evidence._"]
+
+        primary_name = primary.get("name", "unavailable")
 
         return "\n".join([
             "# RabbitMQ Queue Trend Check Result",
             "",
             "## 1. Summary",
             (
-                f"Queue {primary.get('name', 'unavailable')} is increasing linearly."
+                f"Queue `{primary_name}` is growing linearly (delta={primary.get('delta', 0):.0f})."
                 if linear
                 else (
-                    "No continuously linear queue growth was found in the current evidence."
+                    "No continuously linear queue growth found in the current evidence."
                     if has_evidence
                     else "Prometheus returned no RabbitMQ queue range samples for the requested namespace."
                 )
             ),
             "",
             "## 2. Input",
-            f"- Namespace: {request.get('namespace', 'test')}",
-            f"- Queue: {request.get('queue') or 'all'}",
-            f"- Time range: {request.get('start')} -> {request.get('end')}",
-            f"- Step: {request.get('step')}",
-            "- Issue type: rabbitmq_queue_linear_growth",
+            f"- **Namespace:** `{request.get('namespace', 'test')}`",
+            f"- **Queue:** {request.get('queue') or 'all'}",
+            f"- **Time range:** {request.get('start')} → {request.get('end')}",
+            f"- **Step:** {request.get('step')}",
+            "- **Issue type:** rabbitmq_queue_linear_growth",
             "",
             "## 3. Logs Checked",
             "- Consumer logs were not checked; the metric trend is the first congestion signal.",
@@ -1310,12 +1332,13 @@ class IOAV3LangGraphN8nAgent:
             "- Not applicable for the queue trend workflow.",
             "",
             "## 5. System Metrics",
-            f"- PromQL: `{result.get('promql_query')}`",
-            *trend_lines,
+            f"- **PromQL:** `{result.get('promql_query')}`",
+            "",
+            *trend_table,
             "",
             "## 6. Conclusion",
             (
-                "A consumer may not be processing fast enough, or a queue-processing service may be failing."
+                f"Queue `{primary_name}` grew from {primary.get('start', 0):.0f} to {primary.get('end', 0):.0f} (delta={primary.get('delta', 0):.0f}). A consumer may not be processing fast enough, or a queue-processing service may be failing."
                 if linear
                 else (
                     "There is not enough evidence to conclude continuous consumer congestion."
@@ -1332,31 +1355,148 @@ class IOAV3LangGraphN8nAgent:
             ),
         ])
 
+    def build_emqx_health_answer(self, result, _user_input):
+        queries = result.get("queries") or {}
+
+        def scalar(key):
+            q = queries.get(key) or {}
+            items = self.prometheus_result_items(q)
+            return self.prometheus_scalar_value(items[0]) if items else None
+
+        connections     = scalar("connections")
+        live_conns      = scalar("live_connections")
+        msg_dropped     = scalar("messages_dropped")
+        dlv_dropped     = scalar("delivery_dropped")
+        auth_failure    = scalar("auth_failure")
+        auth_deny       = scalar("auth_deny")
+        subscriptions   = scalar("subscriptions")
+        cpu_use         = scalar("cpu_use")
+        memory_used     = scalar("memory_used")
+        nodes_running   = scalar("nodes_running")
+        nodes_stopped   = scalar("nodes_stopped")
+
+        has_evidence = any(v is not None for v in [connections, msg_dropped, nodes_running])
+
+        issues = []
+        if msg_dropped and msg_dropped > 0:
+            issues.append(f"message drop detected ({msg_dropped:.0f})")
+        if dlv_dropped and dlv_dropped > 0:
+            issues.append(f"delivery drop detected ({dlv_dropped:.0f})")
+        if auth_failure and auth_failure > 500:
+            issues.append(f"high auth failure count ({auth_failure:.0f})")
+        if auth_deny and auth_deny > 0:
+            issues.append(f"authorization denials ({auth_deny:.0f})")
+        if cpu_use and cpu_use > 80:
+            issues.append(f"high CPU ({cpu_use:.1f}%)")
+        if nodes_stopped and nodes_stopped > 0:
+            issues.append(f"stopped cluster nodes ({nodes_stopped:.0f})")
+
+        status = "abnormal" if issues else ("healthy" if has_evidence else "no data")
+        memory_str = (
+            f"{memory_used / 1e9:.2f} GB" if memory_used is not None else "—"
+        )
+
+        def _fmt(v, suffix=""):
+            if v is None:
+                return "—"
+            return f"{v:.1f}{suffix}" if isinstance(v, float) else str(v)
+
+        metrics_table = [
+            "| Metric | Value |",
+            "|---|---|",
+            f"| Connections (total) | {_fmt(connections)} |",
+            f"| Live connections | {_fmt(live_conns)} |",
+            f"| Messages dropped (cumulative) | {_fmt(msg_dropped)} |",
+            f"| Delivery dropped | {_fmt(dlv_dropped)} |",
+            f"| Auth failures (cumulative) | {_fmt(auth_failure)} |",
+            f"| Authorization denials | {_fmt(auth_deny)} |",
+            f"| Active subscriptions | {_fmt(subscriptions)} |",
+            f"| CPU use avg | {_fmt(cpu_use, '%')} |",
+            f"| Memory used | {memory_str} |",
+            f"| Cluster nodes running | {_fmt(nodes_running)} |",
+            f"| Cluster nodes stopped | {_fmt(nodes_stopped)} |",
+        ]
+
+        return "\n".join([
+            "# EMQX Broker Health Check Result",
+            "",
+            "## 1. Summary",
+            f"**Broker status:** {status}",
+            (
+                f"**Issues detected:** {'; '.join(issues)}"
+                if issues
+                else "No anomalies detected in current snapshot metrics."
+            ),
+            "",
+            "## 2. Input",
+            "- **Scope:** cluster-wide instant snapshot",
+            "- **Issue type:** emqx_broker_health",
+            "",
+            "## 3. Logs Checked",
+            "- EMQX and MQTT adapter logs were not checked in this metric-only workflow.",
+            "",
+            "## 4. Database Resources",
+            "- Not applicable for the EMQX health workflow.",
+            "",
+            "## 5. System Metrics",
+            "",
+            *metrics_table,
+            "",
+            "## 6. Conclusion",
+            (
+                f"Broker is showing signs of stress: {'; '.join(issues)}. Root cause investigation required."
+                if issues
+                else (
+                    "Broker metrics are within normal range. No immediate action required from broker-side evidence."
+                    if has_evidence
+                    else "Prometheus returned no EMQX health metrics. Verify the job label and scrape target."
+                )
+            ),
+            "",
+            "## 7. Recommended Next Action",
+            (
+                "- Check EMQX logs, MQTT adapter logs, broker CPU/memory, connection count, queue backlog, and core service error logs."
+                if has_evidence
+                else "- Verify the EMQX metric job label, scrape target, and Prometheus datasource configuration."
+            ),
+        ])
+
     def build_emqx_dropped_answer(self, result, _user_input):
         request = result.get("request") or {}
         trends = self.range_trend_summary(result, "instance")
         primary = trends[0] if trends else {}
         has_evidence = bool(trends)
-        increased = bool(primary.get("delta", 0) > 0)
+        delta = primary.get("delta")
+        latest = primary.get("end")
+        increased = bool((delta or 0) > 0)
+        delta_str = f"{delta:.0f}" if delta is not None else "—"
+        latest_str = f"{latest:.0f}" if latest is not None else "—"
+
+        metrics_table = [
+            "| Metric | Value |",
+            "|---|---|",
+            f"| Dropped delta (new in window) | {delta_str} |",
+            f"| Latest dropped value (cumulative) | {latest_str} |",
+        ]
 
         return "\n".join([
             "# EMQX Dropped Messages Check Result",
             "",
             "## 1. Summary",
             (
-                "EMQX dropped messages increased during the checked window."
+                f"EMQX dropped messages increased by **{delta_str}** in the checked window."
                 if increased
                 else (
-                    "No EMQX dropped-message increase was found in the current evidence."
+                    "No EMQX dropped-message increase was found in the current evidence (delta=0)."
                     if has_evidence
                     else "Prometheus returned no EMQX dropped-message range samples for the checked window."
                 )
             ),
             "",
             "## 2. Input",
-            f"- Time range: {request.get('start')} -> {request.get('end')}",
-            f"- Step: {request.get('step')}",
-            "- Issue type: emqx_message_dropped",
+            f"- **Time range:** {request.get('start')} → {request.get('end')}",
+            f"- **Step:** {request.get('step')}",
+            "- **Issue type:** emqx_message_dropped",
             "",
             "## 3. Logs Checked",
             "- EMQX and MQTT adapter logs were not checked in this metric workflow.",
@@ -1365,16 +1505,16 @@ class IOAV3LangGraphN8nAgent:
             "- Not directly applicable; check DB resources only when correlating with a concrete device.",
             "",
             "## 5. System Metrics",
-            f"- PromQL: `{result.get('promql_query')}`",
-            self.metric_line("Dropped delta", primary.get("delta")),
-            self.metric_line("Latest dropped value", primary.get("end")),
+            f"- **PromQL:** `{result.get('promql_query')}`",
+            "",
+            *metrics_table,
             "",
             "## 6. Conclusion",
             (
-                "The broker or core path may be dropping messages."
+                f"Delta={delta_str} confirms new drops in this window. The broker or core path may be dropping messages."
                 if increased
                 else (
-                    "Metric evidence is not enough to conclude that broker/core is dropping messages."
+                    f"Delta=0 — no new drops in this window. The cumulative counter ({latest_str}) reflects historical drops only."
                     if has_evidence
                     else "There is insufficient metric evidence to determine whether EMQX dropped messages increased."
                 )
@@ -1412,45 +1552,55 @@ class IOAV3LangGraphN8nAgent:
         )
 
         if not has_evidence:
-            conclusion = "Prometheus returned no EMQX connected/disconnected range samples for the checked window."
+            summary = "Prometheus returned no EMQX connected/disconnected range samples for the checked window."
+            conclusion = "There is insufficient metric evidence to determine reconnect behavior."
         elif reconnect_loop:
-            conclusion = "Many devices may be reconnecting continuously."
+            summary = "Both connected and disconnected rates are elevated — possible reconnect loop."
+            conclusion = "Many devices may be reconnecting continuously. Investigate device-side keep-alive settings and broker connection limits."
         elif onboarding:
-            conclusion = "There may be a new-device onboarding spike."
+            summary = "Connected rate elevated, disconnected rate near zero — possible new-device onboarding spike."
+            conclusion = "There may be a new-device onboarding burst. Verify provisioning pipeline and device registration flow."
         else:
-            conclusion = "Connected and disconnected rates are near zero or only slightly elevated."
+            summary = "Connected and disconnected rates are near zero or only slightly elevated — normal."
+            conclusion = "No reconnect loop or onboarding spike detected in current metric evidence."
+
+        conn_str = f"{connected_latest:.3f}" if connected_latest is not None else "—"
+        disc_str = f"{disconnected_latest:.3f}" if disconnected_latest is not None else "—"
+
+        metrics_table = [
+            "| Metric | Latest Rate |",
+            "|---|---|",
+            f"| Connected rate | {conn_str} |",
+            f"| Disconnected rate | {disc_str} |",
+        ]
 
         return "\n".join([
             "# EMQX Connect/Disconnect Check Result",
             "",
             "## 1. Summary",
-            conclusion,
+            summary,
             "",
             "## 2. Input",
-            f"- Device scope: {request.get('device_scope') or 'all'}",
-            f"- Time range: {request.get('start')} -> {request.get('end')}",
-            f"- Step: {request.get('step')}",
-            "- Issue type: reconnect",
+            f"- **Device scope:** {request.get('device_scope') or 'all'}",
+            f"- **Time range:** {request.get('start')} → {request.get('end')}",
+            f"- **Step:** {request.get('step')}",
+            "- **Issue type:** reconnect",
             "",
             "## 3. Logs Checked",
             "- MQTT adapter and EMQX logs were not checked in this metric-only workflow.",
             "",
             "## 4. Database Resources",
-            "- No device-specific DB resources were checked because scenario 11 starts from aggregate reconnect metrics.",
+            "- No device-specific DB resources were checked; scenario starts from aggregate reconnect metrics.",
             "- Detected device candidates: unavailable from aggregate connected/disconnected metric evidence.",
             "",
             "## 5. System Metrics",
-            f"- Connected PromQL: `{(queries.get('connected') or {}).get('promql_query')}`",
-            f"- Disconnected PromQL: `{(queries.get('disconnected') or {}).get('promql_query')}`",
-            self.metric_line("Connected latest rate", connected_latest),
-            self.metric_line("Disconnected latest rate", disconnected_latest),
+            f"- **Connected PromQL:** `{(queries.get('connected') or {}).get('promql_query')}`",
+            f"- **Disconnected PromQL:** `{(queries.get('disconnected') or {}).get('promql_query')}`",
+            "",
+            *metrics_table,
             "",
             "## 6. Conclusion",
-            (
-                conclusion
-                if has_evidence
-                else "There is insufficient metric evidence to determine reconnect behavior."
-            ),
+            conclusion,
             "",
             "## 7. Recommended Next Action",
             (
@@ -1460,117 +1610,177 @@ class IOAV3LangGraphN8nAgent:
             ),
         ])
 
-    def build_k8s_resource_answer(self, result, _user_input):
+    def build_k8s_resource_answer(self, result, _user_input, tool_outputs=None):
         request = result.get("request") or {}
         queries = result.get("queries") or {}
-        cpu = self.top_prometheus_series(queries.get("pod_cpu") or {}, "pod", limit=3)
-        memory = self.top_prometheus_series(
-            queries.get("pod_memory") or {},
-            "pod",
-            limit=3,
-        )
-        restarts = self.top_prometheus_series(
-            queries.get("pod_restarts") or {},
-            "pod",
-            limit=3,
-        )
-        status = self.top_prometheus_series(
-            queries.get("pod_status") or {},
-            "pod",
-            limit=20,
-        )
-        node_cpu = self.top_prometheus_series(
-            queries.get("node_cpu") or {},
-            "instance",
-            limit=3,
-        )
-        node_memory = self.top_prometheus_series(
-            queries.get("node_memory") or {},
-            "instance",
-            limit=3,
-        )
+        cpu = self.top_prometheus_series(queries.get("pod_cpu") or {}, "pod", limit=5)
+        memory = self.top_prometheus_series(queries.get("pod_memory") or {}, "pod", limit=5)
+        restarts = self.top_prometheus_series(queries.get("pod_restarts") or {}, "pod", limit=5)
+        node_cpu = self.top_prometheus_series(queries.get("node_cpu") or {}, "instance", limit=3)
+        node_memory = self.top_prometheus_series(queries.get("node_memory") or {}, "instance", limit=3)
         waiting_reasons = self.k8s_reason_rows(queries.get("pod_waiting_reasons") or {})
-        terminated_reasons = self.k8s_reason_rows(
-            queries.get("pod_last_terminated_reasons") or {},
-        )
-        has_evidence = bool(
-            cpu
-            or memory
-            or restarts
-            or status
-            or node_cpu
-            or node_memory
-            or waiting_reasons
-            or terminated_reasons
-        )
+        terminated_reasons = self.k8s_reason_rows(queries.get("pod_last_terminated_reasons") or {})
+
+        has_evidence = bool(cpu or memory or restarts or node_cpu or node_memory or waiting_reasons or terminated_reasons)
         abnormal_restart = any(row.get("value", 0) > 2 for row in restarts)
         high_node_cpu = any(row.get("value", 0) > 80 for row in node_cpu)
         high_node_memory = any(row.get("value", 0) > 85 for row in node_memory)
         abnormal_phases = self.k8s_abnormal_phase_rows(queries.get("pod_status") or {})
-        abnormal = bool(
-            abnormal_restart
-            or high_node_cpu
-            or high_node_memory
-            or abnormal_phases
-            or waiting_reasons
-            or terminated_reasons
-        )
-        summary = (
+        abnormal = bool(abnormal_restart or high_node_cpu or high_node_memory
+                        or abnormal_phases or waiting_reasons or terminated_reasons)
+
+        # Build critical findings for summary table
+        critical_rows = []
+        for row in terminated_reasons:
+            pod = row.get("pod", "unknown")
+            reason = row.get("reason", "unknown")
+            critical_rows.append(f"| `{pod}` | **{reason}** | Last terminated |")
+        for row in waiting_reasons:
+            pod = row.get("pod", "unknown")
+            reason = row.get("reason", "unknown")
+            critical_rows.append(f"| `{pod}` | **{reason}** | Waiting |")
+        for row in restarts:
+            if row.get("value", 0) > 2:
+                critical_rows.append(f"| `{row['name']}` | Restart count = {row['value']:.0f} | High restart |")
+        for row in node_cpu:
+            if row.get("value", 0) > 80:
+                critical_rows.append(f"| `{row['name']}` | CPU = {row['value']:.1f}% | High node CPU |")
+        for row in node_memory:
+            if row.get("value", 0) > 85:
+                critical_rows.append(f"| `{row['name']}` | Memory = {row['value']:.1f}% | High node memory |")
+
+        summary_line = (
             "One or more Kubernetes resource signals need follow-up."
             if abnormal
             else (
-                "No high restart count, abnormal pod phase, or high node pressure was found in the current evidence."
+                "No high restart count, abnormal pod phase, or node pressure found."
                 if has_evidence
                 else "Prometheus returned no Kubernetes resource samples for the requested namespace."
             )
         )
 
-        def rows(title, values, unit="", scale=1):
-            if not values:
-                return [f"- {title}: unavailable"]
-            return [
-                f"- {title} {row['name']}: {row['value'] / scale:.3f}{unit}".rstrip("0").rstrip(".")
-                for row in values
-            ]
+        # Pod CPU table
+        cpu_table = (
+            ["| Pod | CPU (cores) |", "|---|---|",
+             *[f"| `{r['name']}` | {r['value']:.4f} |" for r in cpu]]
+            if cpu else ["_No CPU data returned._"]
+        )
+        # Pod memory table
+        mem_table = (
+            ["| Pod | Memory |", "|---|---|",
+             *[f"| `{r['name']}` | {r['value'] / (1024*1024):.1f} MiB |" for r in memory]]
+            if memory else ["_No memory data returned._"]
+        )
+        # Restart table
+        restart_table = (
+            ["| Pod | Restarts |", "|---|---|",
+             *[f"| `{r['name']}` | {r['value']:.0f} |" for r in restarts]]
+            if restarts else ["_No restart data returned._"]
+        )
+        # Node resources table
+        node_rows = []
+        node_names = {r["name"] for r in node_cpu + node_memory}
+        cpu_by_node = {r["name"]: r["value"] for r in node_cpu}
+        mem_by_node = {r["name"]: r["value"] for r in node_memory}
+        for node in sorted(node_names):
+            c = f"{cpu_by_node[node]:.1f}%" if node in cpu_by_node else "-"
+            m = f"{mem_by_node[node]:.1f}%" if node in mem_by_node else "-"
+            node_rows.append(f"| `{node}` | {c} | {m} |")
+        node_table = (
+            ["| Node | CPU | Memory |", "|---|---|---|", *node_rows]
+            if node_rows else ["_No node data returned._"]
+        )
 
-        return "\n".join([
+        # Phase / reason lines
+        phase_lines = self.k8s_phase_lines(queries.get("pod_status") or {})
+        phase_section = phase_lines if phase_lines else ["_All sampled pods are Running/Succeeded._"]
+
+        # Logs
+        log_lines = (
+            self.summarize_onem2m_log_workflows(tool_outputs)
+            if tool_outputs
+            else ["_Logs not queried in this run._"]
+        )
+
+        # Conclusion detail
+        if abnormal and critical_rows:
+            conclusion = "Issues detected — see Critical Findings in Section 1 above for the affected pods and types."
+        elif has_evidence:
+            conclusion = "All sampled metrics are within normal thresholds. No immediate action required."
+        else:
+            conclusion = "Insufficient metric evidence. Verify scrape targets and datasource configuration."
+
+        next_action = (
+            "- Investigate pods listed in Critical Findings above.\n"
+            "- For OOMKilled pods: increase memory limit or profile memory usage.\n"
+            "- For CrashLoopBackOff: check pod logs for startup errors.\n"
+            "- For high node pressure: check if workloads need rescheduling.\n"
+            "- Correlate with error logs in Section 3."
+            if abnormal else
+            "- Verify Kubernetes metric scrape targets and namespace label if no data was returned."
+        )
+
+        lines = [
             "# Kubernetes Resource Check Result",
             "",
             "## 1. Summary",
-            summary,
+            summary_line,
+        ]
+
+        if critical_rows:
+            lines += [
+                "",
+                "**Critical Findings**",
+                "",
+                "| Resource | Issue | Type |",
+                "|---|---|---|",
+                *critical_rows,
+            ]
+
+        lines += [
             "",
             "## 2. Input",
-            f"- Namespace: {request.get('namespace') or 'one-iot'}",
-            f"- Service: {request.get('service') or 'all'}",
-            f"- Pod: {request.get('pod') or 'all'}",
-            "- Issue type: kubernetes_resource",
+            f"- **Namespace:** `{request.get('namespace') or 'one-iot'}`",
+            f"- **Service:** {request.get('service') or 'all'}",
+            f"- **Pod:** {request.get('pod') or 'all'}",
+            "- **Issue type:** kubernetes_resource",
             "",
             "## 3. Logs Checked",
-            "- Pod logs were not read directly; this workflow checks resource metrics first.",
+            *log_lines,
             "",
             "## 4. Database Resources",
-            "- Not applicable for the Kubernetes resource workflow.",
+            "_Not applicable for the Kubernetes resource workflow._",
             "",
             "## 5. System Metrics",
-            *rows("Pod CPU cores", cpu),
-            *rows("Pod memory", memory, " MiB", 1024 * 1024),
-            *rows("Restart count", restarts),
-            *(self.k8s_phase_lines(queries.get("pod_status") or {}) or ["- Pod phase: unavailable"]),
-            *(self.k8s_reason_lines("Pod waiting reason", waiting_reasons)),
-            *(self.k8s_reason_lines("Pod last terminated reason", terminated_reasons)),
-            *rows("Node CPU", node_cpu, "%"),
-            *rows("Node memory", node_memory, "%"),
+            "",
+            "**Pod CPU (top 5)**",
+            *cpu_table,
+            "",
+            "**Pod Memory (top 5)**",
+            *mem_table,
+            "",
+            "**Restart Count**",
+            *restart_table,
+            "",
+            "**Pod Phase / Termination Reasons**",
+            *phase_section,
+            *self.k8s_reason_lines("Waiting reason", waiting_reasons),
+            *self.k8s_reason_lines("Last terminated reason", terminated_reasons),
+            "",
+            "**Node Resources**",
+            *node_table,
             "",
             "## 6. Conclusion",
-            summary,
+            conclusion,
+        ]
+
+        lines += [
             "",
             "## 7. Recommended Next Action",
-            (
-                "- Check pods with high restarts, high CPU/memory, OOMKilled/CrashLoopBackOff, node resources, and recent error logs."
-                if has_evidence
-                else "- Verify Kubernetes metric names, namespace label, scrape targets, and datasource before assigning pod or node root cause."
-            ),
-        ])
+            next_action,
+        ]
+
+        return "\n".join(lines)
 
     def k8s_phase_lines(self, result):
         rows = []
@@ -1637,7 +1847,7 @@ class IOAV3LangGraphN8nAgent:
         if not rows:
             return [f"- {title}: no matching sample returned."]
         return [
-            f"- {title} {row['pod']} {row['reason']}: {row['value']:.0f}"
+            f"- {title}: `{row['pod']}` — {row['reason']} (count: {row['value']:.0f})"
             for row in rows[:10]
         ]
 
@@ -1664,38 +1874,29 @@ class IOAV3LangGraphN8nAgent:
             ]
 
         return [
-            f"- {label}: {self.onem2m_status_text(flow_checks.get(key))} "
-            f"(flow_checks.{key}={str(bool(flow_checks.get(key))).lower()})"
+            f"| {label} | {self.onem2m_status_text(flow_checks.get(key))} |"
             for key, label in labels
         ]
 
     def onem2m_resource_count_lines(self, resource_summary):
-        lines = []
+        rows = []
         for name in ["IDENTITY", "AE", "CNT", "CIN", "SUBSCRIPTION", "URI_MAPPER"]:
             resource = resource_summary.get(name) or {}
             if not resource:
                 continue
-
-            extra_counts = []
+            matched = int(resource.get("matched_count") or 0)
+            direct = int(resource.get("direct_match_count") or 0)
+            related = int(resource.get("related_match_count") or 0)
+            extra_parts = []
             if resource.get("command_count") is not None:
-                extra_counts.append(f"command_count={resource.get('command_count')}")
+                extra_parts.append(f"cmd={resource.get('command_count')}")
             if resource.get("telemetry_count") is not None:
-                extra_counts.append(
-                    f"telemetry_count={resource.get('telemetry_count')}"
-                )
-            count_suffix = (
-                f"; {', '.join(extra_counts)}"
-                if extra_counts
-                else ""
+                extra_parts.append(f"tel={resource.get('telemetry_count')}")
+            extra = f" ({', '.join(extra_parts)})" if extra_parts else ""
+            rows.append(
+                f"| `{name}` | {self.onem2m_status_text(resource.get('present'))} | {matched} | {direct} | {related}{extra} |"
             )
-            lines.append(
-                f"- {name}: {self.onem2m_status_text(resource.get('present'))} "
-                f"(matched_count={int(resource.get('matched_count') or 0)}, "
-                f"direct_match_count={int(resource.get('direct_match_count') or 0)}, "
-                f"related_match_count={int(resource.get('related_match_count') or 0)}"
-                f"{count_suffix})"
-            )
-        return lines
+        return rows
 
     def summarize_onem2m_log_workflows(self, tool_outputs):
         lines = []
@@ -1813,45 +2014,46 @@ class IOAV3LangGraphN8nAgent:
             )
         )
 
+        flow_label = "Command Downlink" if is_command else "Telemetry Uplink"
+
         return "\n".join([
-            "Summary",
+            f"# OneM2M {flow_label} Flow Check Result",
+            "",
+            "## 1. Summary",
+            f"Device `{device_id}` has {'incomplete' if failed_checks else 'complete'} {flow_name} evidence. **Device status:** {device_status}.",
             (
-                f"Device {device_id} has incomplete {flow_name} evidence. "
-                f"Device status is {device_status}."
+                f"**Failed checks:** {', '.join(failed_checks)}"
+                if failed_checks
+                else "All required flow checks passed in bounded DB evidence."
             ),
             "",
-            "Supporting Evidence",
-            f"- Affected device: {device_id}",
-            f"- Required operator input complete: "
-            f"{str(bool(flow_checks.get('required_input_complete'))).lower()}",
-            f"- {record_count_line}",
-            *self.onem2m_flow_check_lines(flow_checks, selected_tool),
+            "## 2. Input",
+            f"- **Device ID:** `{device_id}`",
+            f"- **Required operator input complete:** {str(bool(flow_checks.get('required_input_complete'))).lower()}",
+            f"- **{record_count_line}**",
+            f"- **Derived identifiers:** `{json.dumps(input_evidence.get('derived_identifiers') or {}, ensure_ascii=False)}`",
             "",
-            "Resource Evidence",
-            *self.onem2m_resource_count_lines(resource_summary),
-            "",
-            "Log / Grafana Evidence",
+            "## 3. Logs / Grafana Evidence",
             *self.summarize_onem2m_log_workflows(tool_outputs),
             "",
-            "Evidence Gaps",
-            *[f"- {gap}" for gap in evidence_gaps],
+            "## 4. Database Resources",
+            "| Resource | Status | Matched | Direct | Related |",
+            "|---|---|---|---|---|",
+            *self.onem2m_resource_count_lines(resource_summary),
             "",
-            "Likely Failure Point",
+            "## 5. Flow Checks",
+            "| Check | Status |",
+            "|---|---|",
+            *self.onem2m_flow_check_lines(flow_checks, selected_tool),
+            "",
+            "## 6. Likely Failure Point",
             likely_cause,
             "",
-            "Suggested Next Action",
+            "## 7. Suggested Next Action",
             next_action,
             "",
-            "Input Handling",
-            (
-                "- Device ID is treated as the minimum required operator input. "
-                "AE ID and request/correlation IDs are optional correlation "
-                "fields derived from MongoDB/log evidence when available."
-            ),
-            (
-                f"- Derived candidates: "
-                f"{json.dumps(input_evidence.get('derived_identifiers') or {}, ensure_ascii=False)}"
-            ),
+            "## 8. Evidence Gaps",
+            *[f"- {gap}" for gap in evidence_gaps],
         ])
 
     def build_onem2m_resource_answer(self, result):
@@ -1876,7 +2078,7 @@ class IOAV3LangGraphN8nAgent:
             if devices and isinstance(devices[0], dict)
             else None
         )
-        resource_lines = []
+        resource_table_rows = []
         missing_resources = []
         present_resources = []
 
@@ -1888,28 +2090,22 @@ class IOAV3LangGraphN8nAgent:
             related_count = int(resource.get("related_match_count") or 0)
             command_count = resource.get("command_count")
             telemetry_resource_count = resource.get("telemetry_count")
-            status = "Present" if present else "Missing"
+            status = "Present" if present else "**Missing**"
 
             if present:
                 present_resources.append(name)
             else:
                 missing_resources.append(name)
 
-            extra_counts = []
+            extra_parts = []
             if command_count is not None:
-                extra_counts.append(f"command_count={command_count}")
+                extra_parts.append(f"cmd={command_count}")
             if telemetry_resource_count is not None:
-                extra_counts.append(f"telemetry_count={telemetry_resource_count}")
+                extra_parts.append(f"tel={telemetry_resource_count}")
+            extra = f" ({', '.join(extra_parts)})" if extra_parts else ""
 
-            count_suffix = (
-                f"; {', '.join(extra_counts)}"
-                if extra_counts
-                else ""
-            )
-            resource_lines.append(
-                f"- {name}: {status} "
-                f"(matched_count={matched_count}, direct_match_count={direct_count}, "
-                f"related_match_count={related_count}{count_suffix})"
+            resource_table_rows.append(
+                f"| `{name}` | {status} | {matched_count} | {direct_count} | {related_count}{extra} |"
             )
 
         if missing_resources:
@@ -1952,19 +2148,20 @@ class IOAV3LangGraphN8nAgent:
         )
 
         return "\n".join([
-            "Summary",
-            (
-                f"Device {device_id} {summary_status} Device status is "
-                f"{device_status}.{telemetry_text}"
-            ),
+            "# OneM2M Device Resource Check Result",
             "",
-            "Evidence",
-            *resource_lines,
+            "## 1. Summary",
+            f"Device `{device_id}` {summary_status} **Device status:** {device_status}.{telemetry_text}",
             "",
-            "Likely Cause",
+            "## 2. Resource Evidence",
+            "| Resource | Status | Matched | Direct | Related |",
+            "|---|---|---|---|---|",
+            *resource_table_rows,
+            "",
+            "## 3. Likely Cause",
             likely_cause,
             "",
-            "Suggested Next Action",
+            "## 4. Suggested Next Action",
             next_action,
         ])
 
@@ -2189,10 +2386,11 @@ JSON schema:
             user_input,
             seen,
         )
-        return self.ensure_infrastructure_overview_workflows(
+        normalized = self.ensure_infrastructure_overview_workflows(
             normalized,
             user_input,
         )
+        return self.ensure_k8s_resource_log_workflows(normalized, user_input)
 
     def enrich_workflow_params(self, tool_name, params, user_input):
         enriched = dict(params or {})
@@ -2331,57 +2529,41 @@ JSON schema:
 
         log_params = {
             "level": "error|warn",
-            "hours_back": 6,
+            "hours_back": 1,
             "limit": 50,
         }
         identifiers = self.extract_onem2m_identifiers(user_input)
         if identifiers.get("device_id"):
             log_params["contains"] = identifiers["device_id"]
 
-        if len(set(target_services)) == 1:
-            log_params["service"] = target_services[0]
+        # Override hours_back if the user mentioned a specific time window.
+        # Patterns: "last 24 hours", "past 24h", "24 hours back", "hours_back=24".
+        # Cap at 72h to match the safety limit in mcp_observability_service.
+        _hours_match = re.search(
+            r"\b(?:last|past|back|trong)\s+(\d+)\s*(?:h\b|hours?|giờ)"
+            r"|\b(\d+)\s*(?:h\b|hours?)\s*(?:back|ago|trước)"
+            r"|\bhours[_\s-]?back\s*[=:]\s*(\d+)",
+            text,
+            re.IGNORECASE,
+        )
+        if _hours_match:
+            _val = next(g for g in _hours_match.groups() if g is not None)
+            log_params["hours_back"] = min(int(_val), 72)
 
-        next_workflows = list(workflows)
-        if "grafana_logs" in seen:
-            for workflow in next_workflows:
-                if workflow.get("tool") == "grafana_logs":
-                    workflow["params"] = log_params
-                    workflow["reason"] = "runbook_required_adapter_logs"
-                    workflow["planner"] = (
-                        workflow.get("planner") or "runbook_required"
-                    )
-                    break
-            return next_workflows[:MAX_WORKFLOW_EXECUTIONS]
+        # Inject one grafana_logs workflow per target service so each gets a specific services
+        next_workflows = [w for w in workflows if w.get("tool") != "grafana_logs"]
 
-        log_workflow = {
-            "tool": "grafana_logs",
-            "params": log_params,
-            "reason": "runbook_required_adapter_logs",
-            "confidence": 0.68,
-            "planner": "runbook_required",
-            "tool_family": "grafana_n8n",
-        }
-
-        if len(next_workflows) >= MAX_WORKFLOW_EXECUTIONS:
-            replace_index = next(
-                (
-                    index
-                    for index in range(len(next_workflows) - 1, -1, -1)
-                    if (
-                        next_workflows[index].get("tool_family")
-                        or self.tool_family(next_workflows[index].get("tool"))
-                    ) == "grafana_n8n"
-                ),
-                None,
-            )
-            if replace_index is not None:
-                next_workflows[replace_index] = log_workflow
-            else:
-                next_workflows = next_workflows[:MAX_WORKFLOW_EXECUTIONS - 1]
-                next_workflows.append(log_workflow)
-        else:
-            insert_at = 1 if next_workflows else 0
-            next_workflows.insert(insert_at, log_workflow)
+        for service in target_services:
+            params = dict(log_params)
+            params["service"] = service
+            next_workflows.append({
+                "tool": "grafana_logs",
+                "params": params,
+                "reason": "runbook_required_adapter_logs",
+                "confidence": 0.68,
+                "planner": "runbook_required",
+                "tool_family": "grafana_n8n",
+            })
 
         return next_workflows[:MAX_WORKFLOW_EXECUTIONS]
 
@@ -2426,6 +2608,37 @@ JSON schema:
                 "tool_family": self.tool_family(tool),
             })
 
+        return next_workflows[:MAX_WORKFLOW_EXECUTIONS]
+
+    def ensure_k8s_resource_log_workflows(self, workflows, user_input):
+        selected_tools = {w.get("tool") for w in workflows}
+        if "grafana_k8s_resources" not in selected_tools:
+            return workflows
+
+        log_params = {
+            "level": "error|warn",
+            "hours_back": 1,
+            "limit": 50,
+        }
+        _hours_match = re.search(
+            r"\b(?:last|past|back|trong)\s+(\d+)\s*(?:h\b|hours?|giờ)"
+            r"|\b(\d+)\s*(?:h\b|hours?)\s*(?:back|ago|trước)",
+            str(user_input or ""),
+            re.IGNORECASE,
+        )
+        if _hours_match:
+            _val = next(g for g in _hours_match.groups() if g is not None)
+            log_params["hours_back"] = min(int(_val), 72)
+            
+        next_workflows = [w for w in workflows if w.get("tool") != "grafana_logs"]
+        next_workflows.append({
+            "tool": "grafana_logs",
+            "params": log_params,
+            "reason": "k8s_resource_error_log_correlation",
+            "confidence": 0.72,
+            "planner": "runbook_required",
+            "tool_family": "grafana_n8n",
+        })
         return next_workflows[:MAX_WORKFLOW_EXECUTIONS]
 
     def coerce_confidence(self, value):
@@ -2705,7 +2918,8 @@ JSON schema:
                 break
 
         workflows = self.ensure_runbook_required_workflows(workflows, user_input)
-        return self.ensure_infrastructure_overview_workflows(workflows, user_input)
+        workflows = self.ensure_infrastructure_overview_workflows(workflows, user_input)
+        return self.ensure_k8s_resource_log_workflows(workflows, user_input)
 
     def detect_additional_grafana_tools(self, user_input, primary_tool):
         text = user_input.lower()

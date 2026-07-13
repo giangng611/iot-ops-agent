@@ -2529,13 +2529,14 @@ def read_onem2m_resource_sets(proxy, identifier=None):
             "authorization",
             "IDENTITY",
             {
-                "_id": 0,
+                "_id": 1,
                 "name": 1,
                 "userId": 1,
                 "category": 1,
                 "type": 1,
                 "active": 1,
                 "tenantId": 1,
+                "mainAppId": 1,
             },
             MAX_COMPANY_INVENTORY_RECORDS,
         ),
@@ -2579,6 +2580,9 @@ def read_onem2m_resource_sets(proxy, identifier=None):
                 "_id": 0,
                 "rn": 1,
                 "pi": 1,
+                "huri": 1,
+                "cr": 1,
+                "mainAppId": 1,
                 "parentContainer": 1,
                 "ct": 1,
                 "lt": 1,
@@ -2615,6 +2619,10 @@ def read_onem2m_resource_sets(proxy, identifier=None):
             "URI_MAPPER",
             {
                 "_id": 1,
+                "nhuri": 1,
+                "orig": 1,
+                "pi": 1,
+                "ty": 1,
                 "rn": 1,
                 "ri": 1,
                 "resourceId": 1,
@@ -2631,17 +2639,51 @@ def read_onem2m_resource_sets(proxy, identifier=None):
     raw_rows = {}
     resource_sets = {}
 
+    _targeted_queries = {}
+    if identifier:
+        _targeted_queries["IDENTITY"] = {"_id": identifier}
+        _targeted_queries["URI_MAPPER"] = {"nhuri": identifier}
+
+    # Phase 1: fetch every collection except CIN (CIN needs CNT IDs first)
+    cin_spec = None
     for label, database_name, collection_name, projection, limit in resource_specs:
-        sort = DEFAULT_COMPANY_CIN_SORT if label == "CIN" else None
+        if label == "CIN":
+            cin_spec = (database_name, collection_name, projection, limit)
+            continue
+        query = _targeted_queries.get(label, {})
         rows = proxy.find(
             database_name,
             collection_name,
-            {},
+            query,
             projection,
-            sort=sort,
             limit=limit,
         )
         raw_rows[label] = rows
+
+    # Phase 2: build a targeted CIN query using matched CNT _id values as pi filter.
+    if cin_spec:
+        database_name, collection_name, projection, limit = cin_spec
+        cin_query: dict = {}
+        if identifier:
+            prelim_matched = related_onem2m_rows(raw_rows, identifier)
+            # Use only CNTs that directly carry the device identifier (e.g. cr == device_id).
+            # Excluding indirectly related CNTs (sibling devices) keeps the $in list small
+            # and avoids the 500-row sort window being swamped by other devices' CINs.
+            matched_cnt_ids = [
+                str(row["_id"])
+                for row in prelim_matched.get("CNT", [])
+                if "_id" in row and resource_matches_identifier(row, identifier)
+            ]
+            if matched_cnt_ids:
+                cin_query = {"pi": {"$in": matched_cnt_ids}}
+        raw_rows["CIN"] = proxy.find(
+            database_name,
+            collection_name,
+            cin_query,
+            projection,
+            sort=DEFAULT_COMPANY_CIN_SORT,
+            limit=limit,
+        )
 
     direct_by_label = {
         label: [

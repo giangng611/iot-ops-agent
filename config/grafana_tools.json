@@ -89,7 +89,7 @@
       "path": "/grafana/emqx",
       "allowed_params": [],
       "kpi": "Broker Availability",
-      "description": "EMQX connections, message rates, drop rate, auth/subscribe rates, and disconnect reasons."
+      "description": "EMQX broker health snapshot: connections, subscriptions, message drop count, delivery drop, auth failure/deny counts, CPU use, memory, and cluster node status."
     },
     {
       "name": "grafana_emqx_dropped_trend",

@@ -376,18 +376,96 @@ def split_telegram_text(text):
     return chunks
 
 
+def _md_to_telegram_html(text):
+    """Convert GFM-style markdown to Telegram HTML (parse_mode=HTML).
+    - Tables → <pre> monospace blocks
+    - # / ## headers → <b>
+    - **bold** → <b>, `code` → <code>
+    - ``` fenced blocks → <pre>
+    - Bullet dashes → • prefix
+    """
+
+    def _esc(s):
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def _inline(s):
+        parts = re.split(r"(`[^`\n]+`)", s)
+        out = []
+        for p in parts:
+            if p.startswith("`") and p.endswith("`") and len(p) > 2:
+                out.append(f"<code>{_esc(p[1:-1])}</code>")
+            else:
+                sub = re.split(r"(\*\*[^*\n]+\*\*)", p)
+                for s2 in sub:
+                    if s2.startswith("**") and s2.endswith("**") and len(s2) > 4:
+                        out.append(f"<b>{_esc(s2[2:-2])}</b>")
+                    else:
+                        out.append(_esc(s2))
+        return "".join(out)
+
+    lines = text.split("\n")
+    out = []
+    table_buf = []
+    in_fence = False
+    fence_buf = []
+
+    def flush_table():
+        if table_buf:
+            out.append("<pre>" + "\n".join(table_buf) + "</pre>")
+            table_buf.clear()
+
+    for raw in lines:
+        stripped = raw.strip()
+
+        # ``` fenced code blocks
+        if stripped.startswith("```"):
+            if not in_fence:
+                in_fence = True
+                fence_buf = []
+            else:
+                in_fence = False
+                flush_table()
+                out.append("<pre>" + "\n".join(fence_buf) + "</pre>")
+            continue
+        if in_fence:
+            fence_buf.append(raw)
+            continue
+
+        # Table rows
+        if raw.startswith("|"):
+            table_buf.append(raw)
+            continue
+        flush_table()
+
+        if raw.startswith("# "):
+            out.append(f"<b>{_esc(raw[2:])}</b>")
+        elif raw.startswith("## "):
+            out.append(f"<b>{_esc(raw[3:])}</b>")
+        elif re.match(r"^\s*[-*]\s+", raw):
+            # bullet: replace leading dash/asterisk with •
+            body = re.sub(r"^\s*[-*]\s+", "", raw)
+            out.append("• " + _inline(body))
+        else:
+            out.append(_inline(raw))
+
+    flush_table()
+    return "\n".join(out)
+
+
 def send_telegram_message(chat_id, text):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 
     if not bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured.")
 
-    for chunk in split_telegram_text(text):
+    html = _md_to_telegram_html(text)
+    for chunk in split_telegram_text(html):
         response = requests.post(
             f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMessage",
             json={
                 "chat_id": chat_id,
                 "text": chunk,
+                "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
             timeout=20,
@@ -623,7 +701,7 @@ def process_telegram_update(
                             merge_stream_event(steps, stream_event)
 
                             if stream_event.get("type") == "final":
-                                final_answer = format_conversational_text(
+                                final_answer = (
                                     stream_event.get("final_answer") or final_answer
                                 )
                                 token_usage = add_telegram_runtime_metadata(

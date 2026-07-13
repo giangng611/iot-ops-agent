@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
     <link rel="stylesheet" href="/static/style.css?v=31">
+    <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 </head>
 
 <body>
@@ -789,8 +790,23 @@
     </div>
 </div>
 
+<!-- Command parameter input modal -->
+<div id="commandParamModal" class="modal-overlay hidden" onclick="handleCommandParamBackdrop(event)">
+    <div class="command-param-dialog">
+        <div class="command-param-header">
+            <span id="commandParamTitle"></span>
+            <button class="command-param-close" onclick="closeCommandParamModal()">×</button>
+        </div>
+        <div id="commandParamFields" class="command-param-fields"></div>
+        <div class="command-param-footer">
+            <button class="command-param-cancel" onclick="closeCommandParamModal()">Cancel</button>
+            <button class="command-param-run" onclick="submitCommandParams()">Run</button>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=40"></script>
+<script src="/static/script.js?v=42"></script>
 </body>
 </html>

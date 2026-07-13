@@ -1,10 +1,6 @@
 import os
-import threading
 
 from grafana_client import GrafanaApi, TokenAuth
-
-_lock = threading.Lock()
-_client = None
 
 
 def _build_credential():
@@ -23,20 +19,14 @@ def _build_credential():
 
 
 def get_pooled_grafana_client():
-    global _client
+    url = os.getenv("GRAFANA_URL")
 
-    with _lock:
-        if _client is None:
-            url = os.getenv("GRAFANA_URL")
+    if not url:
+        raise RuntimeError("GRAFANA_URL is not configured.")
 
-            if not url:
-                raise RuntimeError("GRAFANA_URL is not configured.")
-
-            timeout_seconds = float(os.getenv("GRAFANA_TIMEOUT_SECONDS", "10"))
-            _client = GrafanaApi.from_url(
-                url=url,
-                credential=_build_credential(),
-                timeout=timeout_seconds,
-            )
-
-        return _client
+    timeout_seconds = float(os.getenv("GRAFANA_TIMEOUT_SECONDS", "30"))
+    return GrafanaApi.from_url(
+        url=url,
+        credential=_build_credential(),
+        timeout=timeout_seconds,
+    )

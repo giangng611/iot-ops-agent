@@ -3841,7 +3841,8 @@ button:disabled {
     border-bottom: 1px solid #2f2f2f;
 }
 
-.slash-command:hover {
+.slash-command:hover,
+.slash-command.selected {
     background: #262626;
 }
 

@@ -761,6 +761,14 @@ function usePrompt(promptText) {
 
 function handleEnter(event) {
     if (event.key === "Enter" && !event.shiftKey) {
+        const palette = document.getElementById("slashPalette");
+        if (palette && !palette.classList.contains("hidden")) {
+            event.preventDefault();
+            const selected = palette.querySelector(".slash-command.selected") || palette.querySelector(".slash-command");
+            if (selected) selected.click();
+            return;
+        }
+
         if (isAgentRunning || !getMessageInputValue()) {
             event.preventDefault();
             return;
@@ -850,6 +858,9 @@ function handlePromptSuggestions() {
             <span class="slash-category">${escapeHtml(item.category)}</span>
         </div>
     `).join("");
+
+    const firstItem = palette.querySelector(".slash-command");
+    if (firstItem) firstItem.classList.add("selected");
 
     palette.classList.remove("hidden");
 }
@@ -993,12 +1004,26 @@ function submitCommandParams() {
     input.focus();
 }
 
-// Close modal on Escape / submit on Enter
+// Close modal on Escape / submit on Enter; arrow keys navigate the slash palette
 document.addEventListener("keydown", e => {
     if (e.key === "Escape") closeCommandParamModal();
     if (e.key === "Enter" && !document.getElementById("commandParamModal").classList.contains("hidden")) {
         e.preventDefault();
         submitCommandParams();
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        const palette = document.getElementById("slashPalette");
+        if (!palette || palette.classList.contains("hidden")) return;
+        e.preventDefault();
+        const items = Array.from(palette.querySelectorAll(".slash-command"));
+        if (!items.length) return;
+        const currentIdx = items.findIndex(i => i.classList.contains("selected"));
+        if (currentIdx >= 0) items[currentIdx].classList.remove("selected");
+        const nextIdx = e.key === "ArrowDown"
+            ? (currentIdx + 1) % items.length
+            : (currentIdx - 1 + items.length) % items.length;
+        items[nextIdx].classList.add("selected");
+        items[nextIdx].scrollIntoView({ block: "nearest" });
     }
 });
 

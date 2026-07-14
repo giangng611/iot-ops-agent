@@ -149,6 +149,8 @@ MCP_PROMETHEUS_TOOLS = {
     "grafana_redis_health",
     "grafana_mongodb_health",
     "grafana_mysql_health",
+    "grafana_http_health",
+    "grafana_throughput",
 }
 INFRASTRUCTURE_OVERVIEW_TOOLS = {
     "grafana_k8s_health",
@@ -1214,6 +1216,8 @@ class IOAV3LangGraphN8nAgent:
             "grafana_emqx_dropped_trend": self.build_emqx_dropped_answer,
             "grafana_emqx_connection_trend": self.build_emqx_connection_answer,
             "grafana_k8s_resources": self.build_k8s_resource_answer,
+            "grafana_http_health": self.build_http_health_answer,
+            "grafana_throughput": self.build_throughput_answer,
         }
         builder = builders.get(selected_tool)
         return builder(result, user_input) if builder else None
@@ -1610,6 +1614,131 @@ class IOAV3LangGraphN8nAgent:
             ),
         ])
 
+    def build_http_health_answer(self, result, _user_input):
+        queries = result.get("queries") or {}
+
+        def scalar(key):
+            q = queries.get(key) or {}
+            items = self.prometheus_result_items(q)
+            return self.prometheus_scalar_value(items[0]) if items else None
+
+        request_rate    = scalar("request_rate")
+        error_rate      = scalar("error_rate_percent")
+        success_rate    = scalar("success_rate_percent")
+        latency_p95     = scalar("latency_p95_ms")
+
+        has_evidence = any(v is not None for v in [request_rate, error_rate, latency_p95])
+
+        issues = []
+        kpi_lines = []
+        if success_rate is not None:
+            ok = success_rate >= 99.5
+            kpi_lines.append(f"| API Success Rate | {success_rate:.2f}% | ≥99.5% | {'OK' if ok else 'FAIL'} |")
+            if not ok:
+                issues.append(f"success rate below KPI ({success_rate:.2f}% < 99.5%)")
+        if error_rate is not None:
+            ok = error_rate < 0.5
+            kpi_lines.append(f"| HTTP 5xx Rate | {error_rate:.2f}% | <0.5% | {'OK' if ok else 'FAIL'} |")
+            if not ok:
+                issues.append(f"5xx error rate above KPI ({error_rate:.2f}% ≥ 0.5%)")
+        if latency_p95 is not None:
+            ok = latency_p95 <= 1000
+            kpi_lines.append(f"| API Latency p95 | {latency_p95:.0f} ms | ≤1000 ms | {'OK' if ok else 'FAIL'} |")
+            if not ok:
+                issues.append(f"p95 latency above KPI ({latency_p95:.0f} ms > 1000 ms)")
+
+        status = "degraded" if issues else ("healthy" if has_evidence else "no data")
+
+        def _fmt(v, suffix=""):
+            return f"{v:.2f}{suffix}" if v is not None else "unavailable"
+
+        return "\n".join(filter(None, [
+            "# HTTP API Health Check Result",
+            "",
+            "## 1. Summary",
+            f"Status: **{status}**" + (f" — {'; '.join(issues)}" if issues else ""),
+            "",
+            "## 2. System Metrics",
+            f"- source={result.get('source')}, mcp_tool={result.get('mcp_tool')}",
+            f"- Request rate: {_fmt(request_rate, ' req/s')}",
+            f"- 5xx error rate: {_fmt(error_rate, '%')}",
+            f"- Success rate: {_fmt(success_rate, '%')}",
+            f"- p95 latency: {_fmt(latency_p95, ' ms')}",
+            "",
+            ("## 3. KPI Check\n| KPI | Value | Threshold | Status |\n|---|---|---|---|\n" + "\n".join(kpi_lines)) if kpi_lines else None,
+            "",
+            "## 4. Recommended Next Action",
+            (
+                "Investigate the service returning 5xx errors, check recent deployments, and review adapter/core logs."
+                if issues
+                else (
+                    "All HTTP API KPIs are within threshold. No immediate action needed."
+                    if has_evidence
+                    else "No HTTP metric data returned. Verify the `iot-http-api` job is being scraped by Prometheus."
+                )
+            ),
+        ]))
+
+    def build_throughput_answer(self, result, _user_input):
+        queries = result.get("queries") or {}
+
+        def scalar(key):
+            q = queries.get(key) or {}
+            items = self.prometheus_result_items(q)
+            return self.prometheus_scalar_value(items[0]) if items else None
+
+        publish_rate  = scalar("publish_rate")
+        ack_rate      = scalar("ack_rate")
+        delivery_rate = scalar("delivery_rate")
+        queue_depth   = scalar("queue_depth")
+
+        has_evidence = any(v is not None for v in [publish_rate, ack_rate, queue_depth])
+
+        issues = []
+        if queue_depth is not None and queue_depth > 10000:
+            issues.append(f"high total queue depth ({queue_depth:.0f} messages)")
+        if publish_rate is not None and ack_rate is not None and publish_rate > 0:
+            lag_ratio = (publish_rate - ack_rate) / publish_rate
+            if lag_ratio > 0.2:
+                issues.append(f"ack rate lagging publish rate by {lag_ratio*100:.0f}%")
+
+        pressure = (
+            "YES — queue depth or ack lag indicates ingestion backpressure that may delay telemetry delivery."
+            if issues
+            else (
+                "No significant ingestion pressure detected; queues are draining normally."
+                if has_evidence
+                else "No throughput data available to assess ingestion pressure."
+            )
+        )
+
+        def _fmt(v, suffix=""):
+            return f"{v:.2f}{suffix}" if v is not None else "unavailable"
+
+        return "\n".join([
+            "# RabbitMQ Throughput Check Result",
+            "",
+            "## 1. Summary",
+            f"Status: {'**degraded**' if issues else '**normal**'}" + (f" — {'; '.join(issues)}" if issues else ""),
+            "",
+            "## 2. System Metrics",
+            f"- source={result.get('source')}, mcp_tool={result.get('mcp_tool')}",
+            f"- Publish (confirmed) rate: {_fmt(publish_rate, ' msg/s')}",
+            f"- Ack rate: {_fmt(ack_rate, ' msg/s')}",
+            f"- Delivery rate: {_fmt(delivery_rate, ' msg/s')}",
+            f"- Total queue depth: {_fmt(queue_depth, ' messages')}",
+            "",
+            "## 3. Ingestion Pressure Assessment",
+            f"- {pressure}",
+            "",
+            "## 4. Recommended Next Action",
+            (
+                "Check RabbitMQ consumers, queue-processing services, and adapter logs for backpressure indicators."
+                if issues
+                else "No action needed. Monitor periodically if telemetry freshness complaints recur."
+            ),
+        ])
+
     def build_k8s_resource_answer(self, result, _user_input, tool_outputs=None):
         request = result.get("request") or {}
         queries = result.get("queries") or {}
@@ -1898,6 +2027,30 @@ class IOAV3LangGraphN8nAgent:
             )
         return rows
 
+    def _count_loki_entries(self, raw):
+        if not raw:
+            return 0
+        if isinstance(raw, list):
+            total = 0
+            for item in raw:
+                if isinstance(item, str):
+                    total += 1
+                elif isinstance(item, dict):
+                    values = item.get("values") or []
+                    total += len(values) if values else 1
+            return total
+        if isinstance(raw, dict):
+            data = raw.get("data") or {}
+            if isinstance(data, dict):
+                streams = data.get("result") or []
+                if isinstance(streams, list):
+                    return sum(len(s.get("values") or []) for s in streams if isinstance(s, dict))
+            for key in ("result", "logs", "entries"):
+                val = raw.get(key)
+                if isinstance(val, list):
+                    return len(val)
+        return 0
+
     def summarize_onem2m_log_workflows(self, tool_outputs):
         lines = []
 
@@ -1915,6 +2068,11 @@ class IOAV3LangGraphN8nAgent:
                 )
                 if error:
                     line += f"; error={error}"
+                else:
+                    count = self._count_loki_entries(
+                        result.get("result") if isinstance(result, dict) else None
+                    )
+                    line += f"; {count} entr{'y' if count == 1 else 'ies'} matched"
                 lines.append(line)
                 continue
 
@@ -1993,6 +2151,18 @@ class IOAV3LangGraphN8nAgent:
                 "adapter/core/notify log evidence."
             )
 
+        loki_outputs = [
+            o for o in tool_outputs
+            if o.get("source") == "mcp_server" and o.get("tool") == "grafana_logs"
+        ]
+        loki_entry_count = sum(
+            self._count_loki_entries(
+                (o.get("result") or {}).get("result")
+            )
+            for o in loki_outputs
+            if not (o.get("result") or {}).get("error")
+        )
+
         evidence_gaps = []
         if not flow_checks.get(latest_key):
             evidence_gaps.append("latest CIN evidence is missing for the device")
@@ -2000,11 +2170,17 @@ class IOAV3LangGraphN8nAgent:
             evidence_gaps.append(
                 f"resource evidence is missing for {', '.join(missing_resources)}"
             )
-        evidence_gaps.append(
-            "Grafana/Loki execution is present, but this summary does not prove "
-            "a device/request-specific log root cause unless the log payload "
-            "contains that correlation."
-        )
+        if loki_entry_count > 0:
+            evidence_gaps.append(
+                f"Log search returned {loki_entry_count} entr{'y' if loki_entry_count == 1 else 'ies'} — "
+                "correlate with request/correlation IDs from CIN records to confirm root cause."
+            )
+        else:
+            evidence_gaps.append(
+                f"Log search returned 0 matching entries for `{device_id}` in the queried window. "
+                "The device ID may not appear in adapter logs under this identifier, "
+                "or no activity occurred in this period — try a wider time range or check AE ID variants."
+            )
 
         next_action = (
             result.get("next_diagnostic_step")
@@ -2529,7 +2705,7 @@ JSON schema:
 
         log_params = {
             "level": "error|warn",
-            "hours_back": 1,
+            "hours_back": 6,
             "limit": 50,
         }
         identifiers = self.extract_onem2m_identifiers(user_input)
@@ -2617,7 +2793,7 @@ JSON schema:
 
         log_params = {
             "level": "error|warn",
-            "hours_back": 1,
+            "hours_back": 6,
             "limit": 50,
         }
         _hours_match = re.search(

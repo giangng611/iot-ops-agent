@@ -515,7 +515,73 @@ def query_iot_platform_metric_via_mcp(tool_name, params=None):
             "queries": results,
         }
 
+    if tool_name == "grafana_http_health":
+        queries = {
+            "request_rate": 'sum(rate(http_server_request_duration_seconds_count{job="iot-http-api"}[5m]))',
+            "error_rate_percent": '100 * sum(rate(http_server_request_duration_seconds_count{job="iot-http-api", http_response_status_code=~"5.."}[5m])) / clamp_min(sum(rate(http_server_request_duration_seconds_count{job="iot-http-api"}[5m])), 1)',
+            "success_rate_percent": '100 - (100 * sum(rate(http_server_request_duration_seconds_count{job="iot-http-api", http_response_status_code=~"5.."}[5m])) / clamp_min(sum(rate(http_server_request_duration_seconds_count{job="iot-http-api"}[5m])), 1))',
+            "latency_p95_ms": '1000 * histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{job="iot-http-api"}[5m])) by (le))',
+        }
+        results = _query_prometheus_instant_map(queries)
+        return {
+            "source": "mcp_server",
+            "mcp_tool": "grafana_query",
+            "tool": tool_name,
+            "request": {},
+            "expected_metrics": list(queries.keys()),
+            "queries": results,
+        }
+
+    if tool_name == "grafana_throughput":
+        queries = {
+            "publish_rate": 'sum(rate(rabbitmq_global_messages_confirmed_total{job="monitoring/rabbitmq"}[5m]))',
+            "ack_rate": 'sum(rate(rabbitmq_global_messages_acknowledged_total{job="monitoring/rabbitmq"}[5m]))',
+            "delivery_rate": 'sum(rate(rabbitmq_global_messages_delivered_total{job="monitoring/rabbitmq"}[5m]))',
+            "queue_depth": 'sum(rabbitmq_queue_messages{job="monitoring/rabbitmq"})',
+        }
+        results = _query_prometheus_instant_map(queries)
+        return {
+            "source": "mcp_server",
+            "mcp_tool": "grafana_query",
+            "tool": tool_name,
+            "request": {},
+            "expected_metrics": list(queries.keys()),
+            "queries": results,
+        }
+
     raise ValueError(f"Unsupported MCP metric tool: {tool_name}")
+
+
+def _loki_query_chunk(datasource_uid, start, end, service_name, namespace, contains, limit):
+    return _call_mcp_tool_with_retries(
+        "loki_query_range",
+        {
+            "datasource_uid": datasource_uid,
+            "start": start,
+            "end": end,
+            "service_name": service_name,
+            "namespace": namespace,
+            "contains": contains,
+            "limit": limit,
+        },
+    )
+
+
+def _loki_result_is_empty(result):
+    if not result:
+        return True
+    if isinstance(result, list):
+        return len(result) == 0
+    if isinstance(result, dict):
+        for key in ("data", "result", "logs", "entries"):
+            val = result.get(key)
+            if isinstance(val, list) and len(val) > 0:
+                return False
+            if isinstance(val, dict):
+                inner = val.get("result") or []
+                if isinstance(inner, list) and len(inner) > 0:
+                    return False
+    return True
 
 
 def query_loki_logs_via_mcp(
@@ -548,29 +614,52 @@ def query_loki_logs_via_mcp(
 
     safe_hours = _coerce_positive_int(hours_back, 6, 72)
     safe_limit = _coerce_positive_int(limit, 50, 500)
-    end = int(time.time())
-    start = end - safe_hours * 3600
-    try:
-        result = _call_mcp_tool_with_retries(
-            "loki_query_range",
-            {
-                "datasource_uid": datasource_uid,
-                "start": start,
-                "end": end,
-                "service_name": service_name,
-                "namespace": namespace or DEFAULT_LOKI_NAMESPACE,
-                "contains": contains,
-                "limit": safe_limit,
-            },
-        )
-    except Exception as exc:
+    ns = namespace or DEFAULT_LOKI_NAMESPACE
+    now = int(time.time())
+
+    # Query in 1-hour chunks from newest to oldest so each request stays
+    # well within Loki's server-side query_timeout. Stop on the first chunk
+    # that returns log entries, or after exhausting the full window.
+    last_error = None
+    had_success = False
+    for chunk_idx in range(safe_hours):
+        time.sleep(1.0)
+        chunk_end = now - chunk_idx * 3600
+        chunk_start = chunk_end - 3600
+        try:
+            result = _loki_query_chunk(
+                datasource_uid, chunk_start, chunk_end,
+                service_name, ns, contains, safe_limit,
+            )
+            had_success = True
+            if not _loki_result_is_empty(result):
+                return {
+                    "source": "mcp_server",
+                    "mcp_tool": "loki_query_range",
+                    "request": {
+                        "namespace": ns,
+                        "service_name": service_name,
+                        "contains": contains,
+                        "hours_back": safe_hours,
+                        "chunk_hours_back": chunk_idx + 1,
+                        "limit": safe_limit,
+                    },
+                    "result": result,
+                }
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    # Only surface the error if no chunk ever succeeded.
+    # If some chunks succeeded (empty) and some errored, treat as empty — not an error.
+    if last_error and not had_success:
         return {
             "source": "mcp_server",
             "mcp_tool": "loki_query_range",
             "level": "unavailable",
-            "error": str(exc),
+            "error": str(last_error),
             "request": {
-                "namespace": namespace or DEFAULT_LOKI_NAMESPACE,
+                "namespace": ns,
                 "service_name": service_name,
                 "contains": contains,
                 "hours_back": safe_hours,
@@ -579,15 +668,16 @@ def query_loki_logs_via_mcp(
             "logs": [],
         }
 
+    # All chunks succeeded but returned no matching entries
     return {
         "source": "mcp_server",
         "mcp_tool": "loki_query_range",
         "request": {
-            "namespace": namespace or DEFAULT_LOKI_NAMESPACE,
+            "namespace": ns,
             "service_name": service_name,
             "contains": contains,
             "hours_back": safe_hours,
             "limit": safe_limit,
         },
-        "result": result,
+        "result": [],
     }

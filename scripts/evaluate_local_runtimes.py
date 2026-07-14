@@ -330,6 +330,9 @@ def main():
                 f"[{status}] {MODE_LABELS.get(mode, mode)} | "
                 f"{item['id']} | {latency_seconds}s"
             )
+            # Pause between scenarios so the MCP server can drain its rate
+            # limiter before the next burst of tool calls.
+            time.sleep(5)
 
     print(f"\nSaved evaluation results to: {output_path}")
 

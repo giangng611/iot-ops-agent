@@ -232,6 +232,14 @@ def call_mcp_tool(tool_name, arguments=None):
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
+        try:
+            return asyncio.run(coro)
+        except RuntimeError as loop_exc:
+            # asyncio cleanup (e.g. httpx teardown) can fire after the event
+            # loop closes and re-raise RuntimeError in the except block above,
+            # which would escape unhandled. Wrap it so callers see McpClientError.
+            raise McpClientError(
+                f"MCP tool call failed (event loop error): {loop_exc}"
+            ) from loop_exc
 
     return _run_coro_in_thread(coro)

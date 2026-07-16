@@ -510,7 +510,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("## 2. Input", answer)
         self.assertIn("## 5. System Metrics", answer)
         self.assertIn("queue.telemetry.ingest", answer)
-        self.assertIn("Assessment: abnormal", answer)
+        self.assertIn("**Status:** abnormal", answer)
 
     def test_prompt_catalog_for_mongo_prod_keeps_runbooks_first(self):
         with patch("services.prompt_service.company_db_type", return_value="mongodb"), patch(
@@ -777,10 +777,10 @@ class IOAV3WorkflowTests(unittest.TestCase):
             },
         })
 
-        self.assertIn("IDENTITY: Missing", answer)
-        self.assertIn("AE: Present", answer)
-        self.assertIn("CIN: Missing", answer)
-        self.assertIn("URI_MAPPER: Missing", answer)
+        self.assertIn("| `IDENTITY` | **Missing** |", answer)
+        self.assertIn("| `AE` | Present |", answer)
+        self.assertIn("| `CIN` | **Missing** |", answer)
+        self.assertIn("| `URI_MAPPER` | **Missing** |", answer)
         self.assertIn("incomplete OneM2M registration", answer)
 
     def test_onem2m_command_answer_uses_failure_point_not_root_cause(self):
@@ -884,8 +884,8 @@ class IOAV3WorkflowTests(unittest.TestCase):
             [],
         )
 
-        self.assertIn("cnt_telemetry container: Present", answer)
-        self.assertIn("Latest telemetry CIN: Missing", answer)
+        self.assertIn("| cnt_telemetry container | Present |", answer)
+        self.assertIn("| Latest telemetry CIN | Missing |", answer)
         self.assertIn("backend SUBSCRIPTION notify logs", answer)
         self.assertIn("No Grafana/Loki workflow evidence", answer)
 
@@ -945,16 +945,20 @@ class IOAV3WorkflowTests(unittest.TestCase):
         )
 
         tools = [workflow["tool"] for workflow in planned]
-        self.assertEqual(len(tools), 2)
+        self.assertEqual(len(tools), 3)
         self.assertIn("get_company_onem2m_command_flow", tools)
         self.assertIn("grafana_logs", tools)
         self.assertNotIn("grafana_emqx_health", tools)
-        log_workflow = next(
+        log_workflows = [
             workflow for workflow in planned if workflow["tool"] == "grafana_logs"
+        ]
+        self.assertEqual(
+            {workflow["params"]["service"] for workflow in log_workflows},
+            {"iot-http-api", "iot-mqtt-client-adapter"},
         )
-        self.assertNotIn("service", log_workflow["params"])
-        self.assertEqual(log_workflow["params"]["contains"], "dvi-1")
-        self.assertEqual(log_workflow["params"]["level"], "error|warn")
+        for log_workflow in log_workflows:
+            self.assertEqual(log_workflow["params"]["contains"], "dvi-1")
+            self.assertEqual(log_workflow["params"]["level"], "error|warn")
 
     def test_ioa_v3_strips_trailing_punctuation_from_onem2m_ids(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
@@ -1288,7 +1292,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
         result = agent.generate_answer_node(state)
 
         self.assertEqual(result["token_usage"]["total_tokens"], 27)
-        self.assertIn("IDENTITY: Missing", result["final_answer"])
+        self.assertIn("| `IDENTITY` | **Missing** |", result["final_answer"])
 
     def test_ioa_v3_combines_planner_and_answer_token_usage(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)

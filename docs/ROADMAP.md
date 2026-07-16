@@ -67,7 +67,7 @@ and Grafana adapter tools before they should be treated as production-ready.
 ### Completed / In Progress
 
 * MongoDB telemetry storage path
-* Supabase/Postgres app-data migration path
+* MySQL app-data migration path from Supabase/Postgres
 * SQLite legacy/fallback storage for degraded local cases
 * storage status and migration integrity checks
 * MCP-backed Company DB, Loki, Grafana, and Prometheus path
@@ -79,7 +79,7 @@ Flask Application
         ↓
 Gunicorn / Gevent
         ↓
-Supabase/Postgres app data
+MySQL app data after Supabase/Postgres migration
         ↓
 MongoDB telemetry
         ↓

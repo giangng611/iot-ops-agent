@@ -19,12 +19,12 @@ IOA v3 Ops Graph -> MCP Server -> MongoDB / Loki / Prometheus
                         |
                         └─ bearer auth, rate limit, audit log
 
-App data -> Supabase/Postgres -> fail-closed by default
+App data -> MySQL after Supabase/Postgres migration -> fail-closed by default
 Simulator telemetry -> MongoDB when enabled, SQLite only as fallback/debug
 ```
 
 The storage systems are parallel responsibilities. MongoDB telemetry does not
-flow through Supabase/Postgres or SQLite app-data tables.
+flow through MySQL, Supabase/Postgres, or SQLite app-data tables.
 
 ## Operational Data Sources
 
@@ -97,15 +97,18 @@ but it is not the primary evidence path for IOA v3 runbook scenarios.
 Users, chats, messages, prompts, Telegram identities, and data-source policies
 are routed by `storage/relational_store.py`:
 
-* `APP_DB_BACKEND=supabase` uses Supabase/Postgres.
-* `APP_DB_FALLBACK_ENABLED=false` fails closed when Postgres is unavailable.
+* `APP_DB_BACKEND=mysql` uses the company/local MySQL app-data database.
+* `APP_DB_BACKEND=supabase` keeps the old Supabase/Postgres source available
+  during migration.
+* `APP_DB_FALLBACK_ENABLED=false` fails closed when the selected app database
+  is unavailable.
 * `APP_DB_FALLBACK_ENABLED=true` is only for explicit degraded local fallback.
 * `APP_DB_BACKEND=sqlite` exists for local fallback/debug only, not normal
   company runtime.
 
-The browser does not query Supabase directly. Flask uses a server-side Postgres
-connection, and the schema revokes direct table access from Supabase client
-roles.
+The browser does not query the app database directly. Flask uses server-side
+database connections. Company operational data remains separate and goes
+through MCP.
 
 ## Flask Application
 

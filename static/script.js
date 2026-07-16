@@ -7377,6 +7377,7 @@ async function loadUsageStats(content) {
 
 function formatBackendLabel(value) {
     const labels = {
+        mysql: "MySQL",
         mongodb: "MongoDB",
         postgres: "Postgres",
         supabase: "Supabase/Postgres",
@@ -7391,7 +7392,7 @@ function formatAppDataStatus(status) {
     const activeBackend = formatBackendLabel(status.active_backend);
 
     if (status.healthy) {
-        return `${activeBackend} healthy`;
+        return activeBackend;
     }
 
     if (status.fallback_enabled) {

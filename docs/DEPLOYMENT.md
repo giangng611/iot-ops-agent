@@ -21,8 +21,8 @@ MCP server
   - Loki queries
   - Grafana/Prometheus queries
 
-Supabase/Postgres
-  - app-owned relational data
+MySQL
+  - app-owned relational data after Supabase/Postgres migration
 
 MongoDB
   - optional simulator telemetry storage
@@ -45,9 +45,9 @@ SOCKETIO_CORS_ORIGINS=https://your-app-host
 
 OPENAI_API_KEY=replace_me
 
-APP_DB_BACKEND=supabase
+APP_DB_BACKEND=mysql
 APP_DB_FALLBACK_ENABLED=false
-SUPABASE_DB_URL=replace_me
+SUPABASE_DB_URL=
 POSTGRES_POOL_MIN_SIZE=1
 POSTGRES_POOL_MAX_SIZE=5
 POSTGRES_POOL_TIMEOUT_SECONDS=5
@@ -55,6 +55,10 @@ POSTGRES_CONNECT_TIMEOUT_SECONDS=5
 POSTGRES_STATEMENT_TIMEOUT_MS=4000
 POSTGRES_LOCK_TIMEOUT_MS=3000
 POSTGRES_CIRCUIT_BREAKER_SECONDS=30
+MYSQL_DB_URL=mysql+pymysql://user:password@mysql-host:3306/iot_ops_agent?charset=utf8mb4
+MYSQL_CONNECT_TIMEOUT_SECONDS=5
+MYSQL_READ_TIMEOUT_SECONDS=5
+MYSQL_WRITE_TIMEOUT_SECONDS=5
 
 COMPANY_DATA_ACCESS_MODE=mcp
 MCP_SERVER_URL=https://your-mcp-host/mcp
@@ -123,23 +127,30 @@ Start command:
 PORT=8000 MCP_SERVER_HOST=0.0.0.0 .venv/bin/python mcp_server/server.py
 ```
 
-## Supabase/Postgres
+## App Data Migration
 
-Apply schema before sending traffic to the app:
+Use Supabase/Postgres only as the source during migration. MySQL is the target
+runtime database.
+
+On local or a controlled migration host:
 
 ```bash
-.venv/bin/python scripts/apply_supabase_schema.py
+.venv/bin/python scripts/apply_mysql_schema.py
+.venv/bin/python scripts/migrate_postgres_app_data_to_mysql.py
+.venv/bin/python scripts/migrate_postgres_app_data_to_mysql.py --apply
+.venv/bin/python scripts/verify_mysql_app_data_migration.py
 .venv/bin/python scripts/check_app_storage_status.py
 ```
 
 Fail closed in deployment:
 
 ```env
-APP_DB_BACKEND=supabase
+APP_DB_BACKEND=mysql
 APP_DB_FALLBACK_ENABLED=false
 ```
 
-This prevents split-brain app data during Supabase/Postgres outages.
+This prevents split-brain app data during MySQL outages. Do not enable SQLite
+fallback for company/runtime deployments.
 
 ## Simulator Telemetry MongoDB
 
@@ -194,6 +205,6 @@ Manual platform checks:
 - keep `.env` and `mcp_server/.env` out of Git
 - rotate MCP bearer keys per caller
 - keep company credentials only on MCP
-- keep Supabase browser roles locked down unless explicit policies are added
+- keep Supabase credentials only during migration, then remove them from runtime
 - keep `APP_DB_FALLBACK_ENABLED=false` for company/runtime deployments
 - use HTTPS for public Flask and MCP endpoints

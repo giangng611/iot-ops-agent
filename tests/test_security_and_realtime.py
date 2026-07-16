@@ -25,6 +25,7 @@ import storage.postgres_store as postgres_store  # noqa: E402
 import storage.relational_store as relational_store  # noqa: E402
 import services.telegram_service as telegram_service  # noqa: E402
 import services.diagnose_service as diagnose_service  # noqa: E402
+import services.profile_service as profile_service  # noqa: E402
 import routes.telemetry_routes as telemetry_routes  # noqa: E402
 import routes.auth_routes as auth_routes  # noqa: E402
 from agents.langgraph_agent import LangGraphAgent  # noqa: E402
@@ -2885,6 +2886,33 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertFalse(payload["app_data"]["fallback_enabled"])
         self.assertEqual(payload["telemetry"]["source"], "sqlite")
 
+    def test_profile_usage_counts_company_mongodb_devices_when_selected(self):
+        user = self.create_user_once("profile-company-user", "profile-pass")
+        update_user_data_source_policy(
+            user["id"],
+            allowed_data_sources=["simulator", "company"],
+            default_data_source="company",
+        )
+
+        with patch(
+            "services.profile_service.get_company_operational_payload",
+            return_value={
+                "source": "company_mongodb",
+                "devices": [
+                    {"device_id": "dvi-1"},
+                    {"device_id": "dvi-2"},
+                    {"device_id": "dvi-3"},
+                ],
+            },
+        ):
+            stats = profile_service.get_profile_usage_stats(
+                user["id"],
+                selected_source="company",
+            )
+
+        self.assertEqual(stats["device_count"], 3)
+        self.assertEqual(stats["device_count_source"], "company_mongodb")
+
     def test_supabase_url_enables_postgres_when_backend_flag_is_missing(self):
         original_backend = os.environ.get("APP_DB_BACKEND")
         original_supabase_url = os.environ.get("SUPABASE_DB_URL")
@@ -2908,6 +2936,57 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 os.environ.pop("SUPABASE_DB_URL", None)
             else:
                 os.environ["SUPABASE_DB_URL"] = original_supabase_url
+
+    def test_mysql_backend_is_selected_explicitly(self):
+        original_backend = os.environ.get("APP_DB_BACKEND")
+        original_mysql_url = os.environ.get("MYSQL_DB_URL")
+        os.environ["APP_DB_BACKEND"] = "mysql"
+        os.environ["MYSQL_DB_URL"] = (
+            "mysql+pymysql://app:secret@127.0.0.1:3306/iot_ops_agent"
+        )
+
+        try:
+            self.assertTrue(relational_store.using_mysql())
+            self.assertFalse(relational_store.using_postgres())
+            self.assertEqual(
+                relational_store.get_configured_app_db_backend(),
+                "mysql",
+            )
+            self.assertEqual(relational_store.get_app_db_backend(), "mysql")
+        finally:
+            if original_backend is None:
+                os.environ.pop("APP_DB_BACKEND", None)
+            else:
+                os.environ["APP_DB_BACKEND"] = original_backend
+
+            if original_mysql_url is None:
+                os.environ.pop("MYSQL_DB_URL", None)
+            else:
+                os.environ["MYSQL_DB_URL"] = original_mysql_url
+
+    def test_mysql_error_raises_when_fallback_disabled(self):
+        original_backend = os.environ.get("APP_DB_BACKEND")
+        original_fallback = os.environ.get("APP_DB_FALLBACK_ENABLED")
+        os.environ["APP_DB_BACKEND"] = "mysql"
+        os.environ["APP_DB_FALLBACK_ENABLED"] = "false"
+
+        try:
+            with patch(
+                "storage.mysql_store.create_chat",
+                side_effect=RuntimeError("simulated mysql outage"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    create_chat(1, "Should not fallback")
+        finally:
+            if original_backend is None:
+                os.environ.pop("APP_DB_BACKEND", None)
+            else:
+                os.environ["APP_DB_BACKEND"] = original_backend
+
+            if original_fallback is None:
+                os.environ.pop("APP_DB_FALLBACK_ENABLED", None)
+            else:
+                os.environ["APP_DB_FALLBACK_ENABLED"] = original_fallback
 
     def test_storage_status_records_sqlite_fallback_when_supabase_fails(self):
         original_backend = os.environ.get("APP_DB_BACKEND")

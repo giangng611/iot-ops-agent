@@ -1,9 +1,10 @@
 # IoT Ops Agent
 
 AI-powered IoT operations workspace for company IoT platform triage. The app
-keeps user/chat state in Supabase/Postgres, uses MCP as the gateway to
+keeps user/chat state in a relational app database, uses MCP as the gateway to
 company operational evidence, and supports simulator fallback for local
-resilience testing.
+resilience testing. The current migration path moves app data from
+Supabase/Postgres to MySQL.
 
 ## Overview
 
@@ -11,7 +12,7 @@ IoT Ops Agent combines:
 
 - Flask + Socket.IO web workspace
 - authenticated users, chats, messages, prompts, and Telegram identities
-- Supabase/Postgres app-data storage
+- MySQL app-data storage after Supabase/Postgres migration
 - MCP-backed access to company MongoDB, Loki, Grafana, and Prometheus
 - IOA v3 Ops Graph runbooks for OneM2M, RabbitMQ, EMQX, and Kubernetes checks
 - optional simulator telemetry for fallback and local verification
@@ -25,7 +26,7 @@ Web UI / Telegram
   -> Company MongoDB / Loki / Grafana / Prometheus
 
 App data
-  -> Supabase/Postgres
+  -> MySQL after Supabase/Postgres migration
 
 Simulator telemetry
   -> MongoDB when enabled
@@ -44,7 +45,7 @@ Those credentials belong in `mcp_server/.env`. Flask only receives
 - persistent chats and prompt workflows
 - authenticated web workspace
 - Telegram webhook integration
-- Supabase/Postgres app-data persistence
+- relational app-data persistence
 - MCP-gated read-only operational evidence
 - OneM2M command, telemetry, and resource checks
 - RabbitMQ backlog and queue-growth checks
@@ -84,9 +85,9 @@ FLASK_SECRET_KEY=replace_me
 OPENAI_API_KEY=replace_me
 ACCESS_CODE=replace_me
 
-APP_DB_BACKEND=supabase
+APP_DB_BACKEND=mysql
 APP_DB_FALLBACK_ENABLED=false
-SUPABASE_DB_URL=replace_me
+MYSQL_DB_URL=mysql+pymysql://user:password@127.0.0.1:3306/iot_ops_agent?charset=utf8mb4
 
 COMPANY_DATA_ACCESS_MODE=mcp
 MCP_SERVER_URL=http://127.0.0.1:8000/mcp

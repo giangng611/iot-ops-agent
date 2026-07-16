@@ -3,7 +3,7 @@
 This guide describes the company-oriented local setup. The normal stack is:
 
 - Flask app for UI, auth, chat, prompts, Telegram, and agent execution
-- Supabase/Postgres for app data
+- MySQL for app data after migration from Supabase/Postgres
 - MCP server for company MongoDB, Loki, Grafana, and Prometheus evidence
 - MongoDB for optional simulator telemetry storage
 - SQLite only as fallback/debug storage, not as the expected runtime database
@@ -52,6 +52,12 @@ POSTGRES_STATEMENT_TIMEOUT_MS=4000
 POSTGRES_LOCK_TIMEOUT_MS=3000
 POSTGRES_CIRCUIT_BREAKER_SECONDS=30
 
+# Fill these before migration. Switch APP_DB_BACKEND=mysql only after verify passes.
+MYSQL_DB_URL=mysql+pymysql://user:password@127.0.0.1:3306/iot_ops_agent?charset=utf8mb4
+MYSQL_CONNECT_TIMEOUT_SECONDS=5
+MYSQL_READ_TIMEOUT_SECONDS=5
+MYSQL_WRITE_TIMEOUT_SECONDS=5
+
 COMPANY_DATA_ACCESS_MODE=mcp
 MCP_SERVER_URL=http://127.0.0.1:8000/mcp
 MCP_BEARER_KEY=replace_me
@@ -88,9 +94,9 @@ Generate a Flask secret when needed:
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-## 3. Supabase/Postgres App Data
+## 3. App Data: Supabase to MySQL
 
-Supabase/Postgres stores:
+App data means:
 
 - users
 - chats
@@ -100,28 +106,50 @@ Supabase/Postgres stores:
 - Telegram link codes
 - per-user data-source policy
 
-Apply the schema:
+MongoDB, Loki, Grafana, and Prometheus are not part of this migration. They
+stay behind MCP.
+
+### Current Source: Supabase/Postgres
+
+Keep Supabase configured while exporting data:
 
 ```bash
 .venv/bin/python scripts/apply_supabase_schema.py
-```
-
-Verify the connection and active backend:
-
-```bash
 .venv/bin/python scripts/check_app_storage_status.py
 ```
-
-Keep fail-closed behavior enabled:
 
 ```env
 APP_DB_BACKEND=supabase
 APP_DB_FALLBACK_ENABLED=false
+SUPABASE_DB_URL=replace_me
 ```
 
-With this setting, a Supabase/Postgres outage is visible as an app-data
-failure. The app must not silently create new production chat/user data in
-SQLite.
+### Target: Local MySQL
+
+Create the database first. Then apply the app schema:
+
+```bash
+.venv/bin/python scripts/apply_mysql_schema.py
+```
+
+Migrate and verify:
+
+```bash
+.venv/bin/python scripts/migrate_postgres_app_data_to_mysql.py
+.venv/bin/python scripts/migrate_postgres_app_data_to_mysql.py --apply
+.venv/bin/python scripts/verify_mysql_app_data_migration.py
+```
+
+After verification passes, switch the app:
+
+```env
+APP_DB_BACKEND=mysql
+APP_DB_FALLBACK_ENABLED=false
+MYSQL_DB_URL=mysql+pymysql://user:password@127.0.0.1:3306/iot_ops_agent?charset=utf8mb4
+```
+
+Keep fail-closed behavior in company/runtime setups. The app must not silently
+create production chat/user data in SQLite.
 
 ## 4. MCP Server Environment
 

@@ -282,7 +282,7 @@ app-level reasoning steps when the Chatflow returns them.
 The project is structured as a deployable full-stack application.
 
 Current deployment architecture includes Flask, Flask-SocketIO, OpenAI,
-Supabase/Postgres app data, MCP-backed operational evidence, optional MongoDB
+MySQL app data after Supabase/Postgres migration, MCP-backed operational evidence, optional MongoDB
 simulator telemetry, and environment-based secrets.
 
 Company MongoDB, Loki, Grafana, and Prometheus access is network-dependent and

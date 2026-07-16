@@ -160,9 +160,6 @@ INFRASTRUCTURE_OVERVIEW_TOOLS = {
     "grafana_mysql_health",
 }
 
-# Registry for per-tool deterministic answer builders.
-# Each value is a method name on IoaV3Agent with signature (self, result, state) -> str | None.
-# To add a new scenario: write the builder method, then add one entry here.
 DETERMINISTIC_BUILDER_REGISTRY: dict = {
     "get_company_onem2m_command_flow":     "_dispatch_onem2m_flow",
     "get_company_onem2m_telemetry_flow":   "_dispatch_onem2m_flow",
@@ -855,7 +852,6 @@ class IOAV3LangGraphN8nAgent:
                 return self.build_metric_runbook_answer(result, selected_tool, user_input)
             return None
 
-        # Per-tool registry — add new tools to DETERMINISTIC_BUILDER_REGISTRY
         builder_name = DETERMINISTIC_BUILDER_REGISTRY.get(selected_tool)
         if not builder_name:
             return None
@@ -1758,7 +1754,6 @@ class IOAV3LangGraphN8nAgent:
         abnormal = bool(abnormal_restart or high_node_cpu or high_node_memory
                         or abnormal_phases or waiting_reasons or terminated_reasons)
 
-        # Build critical findings for summary table
         critical_rows = []
         for row in terminated_reasons:
             pod = row.get("pod", "unknown")
@@ -1788,25 +1783,21 @@ class IOAV3LangGraphN8nAgent:
             )
         )
 
-        # Pod CPU table
         cpu_table = (
             ["| Pod | CPU (cores) |", "|---|---|",
              *[f"| `{r['name']}` | {r['value']:.4f} |" for r in cpu]]
             if cpu else ["_No CPU data returned._"]
         )
-        # Pod memory table
         mem_table = (
             ["| Pod | Memory |", "|---|---|",
              *[f"| `{r['name']}` | {r['value'] / (1024*1024):.1f} MiB |" for r in memory]]
             if memory else ["_No memory data returned._"]
         )
-        # Restart table
         restart_table = (
             ["| Pod | Restarts |", "|---|---|",
              *[f"| `{r['name']}` | {r['value']:.0f} |" for r in restarts]]
             if restarts else ["_No restart data returned._"]
         )
-        # Node resources table
         node_rows = []
         node_names = {r["name"] for r in node_cpu + node_memory}
         cpu_by_node = {r["name"]: r["value"] for r in node_cpu}
@@ -1820,18 +1811,15 @@ class IOAV3LangGraphN8nAgent:
             if node_rows else ["_No node data returned._"]
         )
 
-        # Phase / reason lines
         phase_lines = self.k8s_phase_lines(queries.get("pod_status") or {})
         phase_section = phase_lines if phase_lines else ["_All sampled pods are Running/Succeeded._"]
 
-        # Logs
         log_lines = (
             self.summarize_onem2m_log_workflows(tool_outputs)
             if tool_outputs
             else ["_Logs not queried in this run._"]
         )
 
-        # Conclusion detail
         if abnormal and critical_rows:
             conclusion = "Issues detected — see Critical Findings in Section 1 above for the affected pods and types."
         elif has_evidence:
@@ -2726,7 +2714,6 @@ JSON schema:
             _val = next(g for g in _hours_match.groups() if g is not None)
             log_params["hours_back"] = min(int(_val), 72)
 
-        # Inject one grafana_logs workflow per target service so each gets a specific services
         next_workflows = [w for w in workflows if w.get("tool") != "grafana_logs"]
 
         for service in target_services:

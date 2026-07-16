@@ -186,7 +186,7 @@ DEFAULT_PROMPTS = [
     {
         "id": "default-6",
         "title": "Alert Readiness",
-        "command": "Review company rule readiness, provisional alert evidence, and the remaining Grafana integration gaps.",
+        "command": "Review confirmed KPI/Grafana alert rules, n8n workflow readiness, and fallback alert evidence.",
         "category": "Alerts",
         "tags": ["legacy", "company_poc"],
         "is_default": 1,
@@ -194,7 +194,7 @@ DEFAULT_PROMPTS = [
     {
         "id": "default-7",
         "title": "Manual Threshold Scan",
-        "command": "Scan company telemetry payloads for measured values above a specified threshold, then state that this is not an official alert rule.",
+        "command": "Scan company telemetry payloads for measured values above a specified threshold and compare them with confirmed KPI/Grafana alert rules.",
         "category": "Data Quality",
         "tags": ["legacy", "company_poc"],
         "is_default": 1,

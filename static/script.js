@@ -2113,7 +2113,7 @@ function updateDataSourceDisplay() {
     if (rulesStatus === "available_unmapped") {
         note.textContent = (
             currentDataSourceState.rules_message ||
-            "Company rules were discovered, but rule evaluation is not integrated yet."
+            "Company rules are available. Official alert evaluation is handled by the approved Grafana/n8n workflow."
         );
         note.classList.remove("hidden");
         return;
@@ -2122,7 +2122,7 @@ function updateDataSourceDisplay() {
     if (rulesStatus === "provisional_poc") {
         note.textContent = (
             currentAlertPolicy === "official"
-                ? "Official company/Grafana alerts are selected, but the official alert workflow is not integrated yet. Device fallback rules remain available as a separate view."
+                ? "Official KPI/Grafana alerts are active through the approved Grafana/n8n workflow. Fallback rules remain available as a separate view."
                 : currentDataSourceState.rules_message ||
                     "PoC fallback rules are active. These are not official company or Grafana alerts."
         );
@@ -6693,7 +6693,7 @@ async function openProfileDrawer(type) {
                         </button>
                     </div>
                     <p class="drawer-source-note">
-                        Official alerts are reserved for the Grafana/n8n alert feed. Fallback alerts keep the current PoC device rules available.
+                        Official alerts use the approved KPI rules and Grafana/n8n alert workflow. Fallback alerts keep the PoC device rules available as a separate view.
                     </p>
                 </div>
 

@@ -231,7 +231,8 @@ def alert_policy():
     return jsonify({
         "selected_alert_policy": get_selected_alert_policy(),
         "available_alert_policies": sorted(ALLOWED_ALERT_POLICIES),
-        "official_alert_status": "pending_grafana_integration",
+        "official_alert_status": "integrated",
+        "official_alert_source": "company_kpi_grafana_n8n",
         "fallback_alert_status": "available",
     })
 

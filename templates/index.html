@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=31">
+    <link rel="stylesheet" href="/static/style.css?v=34">
     <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 </head>
 
@@ -297,56 +297,58 @@
 
                 </div>
 
-                <div id="companyDataSummary" class="company-data-summary hidden"></div>
+                <div class="tab-scroll-body devices-scroll-body">
+                    <div id="companyDataSummary" class="company-data-summary hidden"></div>
 
-                <div id="devicesCharts" class="charts-grid hidden">
-                    <div class="chart-card">
-                        <h2 id="healthChartTitle">Fleet Health Distribution</h2>
-                        <canvas id="healthChart"></canvas>
-                    </div>
-
-                    <div class="chart-card">
-                        <h2 id="metricsChartTitle">Average Fleet Metrics</h2>
-                        <div id="metricsChartLegend" class="custom-chart-legend">
-                            <span><i class="legend-cpu"></i>Avg CPU %</span>
-                            <span><i class="legend-memory"></i>Avg Memory %</span>
-                            <span><i class="legend-heartbeat"></i>Avg Heartbeat Delay</span>
+                    <div id="devicesCharts" class="charts-grid hidden">
+                        <div class="chart-card">
+                            <h2 id="healthChartTitle">Fleet Health Distribution</h2>
+                            <canvas id="healthChart"></canvas>
                         </div>
-                        <canvas id="metricsChart"></canvas>
+
+                        <div class="chart-card">
+                            <h2 id="metricsChartTitle">Average Fleet Metrics</h2>
+                            <div id="metricsChartLegend" class="custom-chart-legend">
+                                <span><i class="legend-cpu"></i>Avg CPU %</span>
+                                <span><i class="legend-memory"></i>Avg Memory %</span>
+                                <span><i class="legend-heartbeat"></i>Avg Heartbeat Delay</span>
+                            </div>
+                            <canvas id="metricsChart"></canvas>
+                        </div>
                     </div>
-                </div>
 
-                <div id="devicesTableCard" class="table-card">
+                    <div id="devicesTableCard" class="table-card">
 
-                    <div class="devices-table-wrapper">
+                        <div class="devices-table-wrapper">
 
-                        <table>
-                            <thead>
-                            <tr id="deviceTableHeader">
-                                <th>Device ID</th>
-                                <th>Status</th>
-                                <th>CPU</th>
-                                <th>Memory</th>
-                                <th>Heartbeat</th>
-                                <th>Priority</th>
-                                <th>Diagnose</th>
-                                <th>History</th>
-                            </tr>
-                            </thead>
-
-                            <tbody id="deviceTableBody">
-                                <tr id="devicesLoadingRow">
-                                    <td class="devices-loading-cell">
-                                        Loading devices...
-                                    </td>
+                            <table>
+                                <thead>
+                                <tr id="deviceTableHeader">
+                                    <th>Device ID</th>
+                                    <th>Status</th>
+                                    <th>CPU</th>
+                                    <th>Memory</th>
+                                    <th>Heartbeat</th>
+                                    <th>Priority</th>
+                                    <th>Diagnose</th>
+                                    <th>History</th>
                                 </tr>
-                            </tbody>
-                        </table>
+                                </thead>
+
+                                <tbody id="deviceTableBody">
+                                    <tr id="devicesLoadingRow">
+                                        <td class="devices-loading-cell">
+                                            Loading devices...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+
+                        </div>
+
+                        <div id="deviceTablePagination" class="table-pagination hidden"></div>
 
                     </div>
-
-                    <div id="deviceTablePagination" class="table-pagination hidden"></div>
-
                 </div>
 
             </section>
@@ -357,11 +359,13 @@
                     <p>Active warning and critical conditions based on the selected data source</p>
                 </div>
 
-                <div id="alertSummary" class="alert-summary">
-                    No active alerts.
-                </div>
+                <div class="tab-scroll-body alerts-scroll-body">
+                    <div id="alertSummary" class="alert-summary">
+                        No active alerts.
+                    </div>
 
-                <div id="alertList" class="alert-list"></div>
+                    <div id="alertList" class="alert-list"></div>
+                </div>
             </section>
 
             <section id="promptsTab" class="tab-page workspace-page">
@@ -400,7 +404,9 @@
                     </select>
                 </div>
 
-                <div id="promptGrid" class="prompt-grid"></div>
+                <div class="tab-scroll-body prompts-scroll-body">
+                    <div id="promptGrid" class="prompt-grid"></div>
+                </div>
             </section>
 
             <section id="profileTab" class="tab-page workspace-page">
@@ -409,27 +415,28 @@
                     <p>Manage your account settings and workspace preferences</p>
                 </div>
 
-                <div class="profile-dashboard full-width">
+                <div class="tab-scroll-body profile-scroll-body">
+                    <div class="profile-dashboard full-width">
 
-                    <div class="profile-page-card account-card">
-                        <div class="profile-page-header">
-                            <div class="profile-avatar large">
-                                <svg viewBox="0 0 24 24">
-                                    <path d="M20 21a8 8 0 0 0-16 0"></path>
-                                    <circle cx="12" cy="7" r="4"></circle>
-                                </svg>
-                            </div>
+                        <div class="profile-page-card account-card">
+                            <div class="profile-page-header">
+                                <div class="profile-avatar large">
+                                    <svg viewBox="0 0 24 24">
+                                        <path d="M20 21a8 8 0 0 0-16 0"></path>
+                                        <circle cx="12" cy="7" r="4"></circle>
+                                    </svg>
+                                </div>
 
-                            <div>
-                                <h2 id="profileMainUsername">
-                                    {{ session.get("username", "User") }}
-                                </h2>
-                                <p>Local account · IoT Ops Agent workspace</p>
+                                <div>
+                                    <h2 id="profileMainUsername">
+                                        {{ session.get("username", "User") }}
+                                    </h2>
+                                    <p>Local account · IoT Ops Agent workspace</p>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="profile-settings-grid">
+                        <div class="profile-settings-grid">
 
                         <button class="settings-card clickable-card" onclick="openProfileDrawer('settings')">
                             <div class="settings-card-header">
@@ -533,6 +540,7 @@
                             </span>
                         </button>
 
+                        </div>
                     </div>
                 </div>
             </section>

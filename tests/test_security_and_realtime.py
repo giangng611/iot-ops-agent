@@ -2434,8 +2434,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 "/alarms@iot_ops_agent_bot"
             ),
             (
-                "Review company rule readiness, provisional alert evidence, "
-                "and the remaining Grafana integration gaps.",
+                "Review confirmed KPI/Grafana alert rules, n8n workflow "
+                "readiness, and fallback alert evidence.",
                 None,
             ),
         )

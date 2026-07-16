@@ -1965,9 +1965,9 @@ def get_company_operational_payload(
         "rules_status": "provisional_poc",
         "official_rules_status": official_rules_status,
         "rules_message": (
-            "PoC fallback alerts are active for the demo. Company DB rules "
-            "are mapped as read-only catalog/filter evidence; official alert "
-            "execution still requires confirmed enum/operator semantics."
+            "Official KPI/Grafana alert rules are confirmed and available "
+            "through the approved Grafana/n8n workflow. PoC fallback alerts "
+            "remain available as a separate comparison view."
         ),
         "summary": {
             "device_count": len(records),

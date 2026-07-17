@@ -702,7 +702,8 @@ button:hover {
 
 .assistant-row .message-stack {
     align-items: flex-start;
-    max-width: 75%;
+    width: min(75%, 1120px);
+    max-width: 100%;
 }
 
 .message-bubble {
@@ -720,6 +721,8 @@ button:hover {
 }
 
 .assistant-bubble {
+    box-sizing: border-box;
+    width: 100%;
     max-width: 100%;
 
     background: #212121;
@@ -737,7 +740,10 @@ button:hover {
 .markdown-output {
     font-size: 0.95em;
     line-height: 1.65;
-    word-break: break-word;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-wrap: break-word;
+    word-break: normal;
 }
 
 .markdown-output h1,
@@ -773,6 +779,9 @@ button:hover {
     font-family: monospace;
     font-size: 0.9em;
     color: #d4d4d4;
+    overflow-wrap: normal;
+    word-break: normal;
+    white-space: nowrap;
 }
 
 .markdown-output pre {
@@ -793,9 +802,13 @@ button:hover {
 
 .markdown-output table {
     border-collapse: collapse;
+    display: table;
     width: 100%;
+    min-width: 720px;
+    max-width: 100%;
     margin: 0.6em 0;
     font-size: 0.9em;
+    table-layout: fixed;
 }
 
 .markdown-output th,
@@ -803,6 +816,72 @@ button:hover {
     border: 1px solid #3a3a3a;
     padding: 6px 10px;
     text-align: left;
+    vertical-align: middle;
+    overflow-wrap: normal;
+    word-break: normal;
+}
+
+.markdown-output table:has(th:nth-child(6)) th:nth-child(1),
+.markdown-output table:has(th:nth-child(6)) td:nth-child(1) {
+    width: 14%;
+    min-width: 120px;
+}
+
+.markdown-output table:has(th:nth-child(6)) th:nth-child(2),
+.markdown-output table:has(th:nth-child(6)) td:nth-child(2) {
+    width: 10%;
+    min-width: 90px;
+    white-space: nowrap;
+}
+
+.markdown-output table:has(th:nth-child(6)) th:nth-child(3),
+.markdown-output table:has(th:nth-child(6)) td:nth-child(3),
+.markdown-output table:has(th:nth-child(6)) th:nth-child(4),
+.markdown-output table:has(th:nth-child(6)) td:nth-child(4) {
+    width: 9%;
+    min-width: 72px;
+}
+
+.markdown-output table:has(th:nth-child(6)) th:nth-child(5),
+.markdown-output table:has(th:nth-child(6)) td:nth-child(5) {
+    width: 18%;
+    min-width: 155px;
+}
+
+.markdown-output table:has(th:nth-child(6)) th:nth-child(6),
+.markdown-output table:has(th:nth-child(6)) td:nth-child(6) {
+    width: 40%;
+    min-width: 260px;
+}
+
+.markdown-output table:has(th:nth-child(3):last-child) {
+    min-width: 640px;
+}
+
+.markdown-output table:has(th:nth-child(3):last-child) th:nth-child(1),
+.markdown-output table:has(th:nth-child(3):last-child) td:nth-child(1) {
+    width: 28%;
+    min-width: 150px;
+}
+
+.markdown-output table:has(th:nth-child(3):last-child) th:nth-child(2),
+.markdown-output table:has(th:nth-child(3):last-child) td:nth-child(2) {
+    width: 14%;
+    min-width: 90px;
+    white-space: nowrap;
+}
+
+.markdown-output table:has(th:nth-child(3):last-child) th:nth-child(3),
+.markdown-output table:has(th:nth-child(3):last-child) td:nth-child(3) {
+    width: 58%;
+    min-width: 320px;
+}
+
+.markdown-output td code {
+    display: inline-block;
+    max-width: 100%;
+    overflow-x: auto;
+    vertical-align: middle;
 }
 
 .markdown-output th {
@@ -828,6 +907,9 @@ button:hover {
     display: flex;
     flex-wrap: wrap;
     gap: 12px;
+    align-items: center;
+    box-sizing: border-box;
+    width: 100%;
     margin-top: 8px;
     padding-left: 2px;
 }
@@ -839,6 +921,7 @@ button:hover {
     border-radius: 0;
     font-size: 13px;
     font-weight: 600;
+    white-space: nowrap;
 }
 
 .assistant-action-link:hover {
@@ -871,6 +954,12 @@ button:hover {
     font-size: 12px;
     font-weight: 700;
     line-height: 1.4;
+}
+
+@media (max-width: 760px) {
+    .assistant-row .message-stack {
+        width: 100%;
+    }
 }
 
 .user-actions {

@@ -1001,6 +1001,10 @@ function submitCommandParams() {
 
     const input = document.getElementById("messageInput");
     input.value = command;
+
+    const homeButton = document.querySelector(".top-tab");
+    showTab("home", homeButton);
+
     scheduleMessageInputResize();
     updateRunButtonState();
     input.focus();
@@ -1194,6 +1198,11 @@ function usePromptById(promptId) {
     const prompt = findPromptById(promptId);
 
     if (!prompt) {
+        return;
+    }
+
+    if (parseCommandFields(prompt.command || "").length > 0) {
+        openCommandParamModal(prompt);
         return;
     }
 
@@ -3328,6 +3337,15 @@ async function renderAssistantMessage(
 
     const contentEl = document.getElementById(contentId);
     if (contentEl) {
+        if (shouldType) {
+            contentEl.classList.add("typing-output");
+            await typeTextIntoElementPromise(
+                contentEl,
+                formatConversationalText(message || "")
+            );
+            contentEl.classList.remove("typing-output");
+        }
+
         if (typeof marked !== "undefined") {
             contentEl.innerHTML = marked.parse(message || "");
         } else {

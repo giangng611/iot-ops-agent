@@ -2,6 +2,8 @@ import json
 import os
 import re
 import uuid
+from base64 import b64decode
+from datetime import datetime, timezone
 from typing import Any, Dict, List, TypedDict
 
 from langchain_openai import ChatOpenAI
@@ -10,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from prompts import DIAGNOSIS_OUTPUT_FORMAT
 from services.company_data_service import (
     get_company_agent_context,
+    get_company_device_drilldown_context,
     get_company_disconnected_context,
     get_company_inventory_context,
     get_company_onem2m_command_flow_context,
@@ -66,6 +69,16 @@ COMPANY_DB_TOOLS = {
             "inventory-only devices, unmapped telemetry count, and measured-field evidence."
         ),
     },
+    "get_company_device_drilldown": {
+        "workflow_id": "company_device_drilldown",
+        "intent": "company_device_drilldown",
+        "allowed_params": ["device_id"],
+        "description": (
+            "Read company MongoDB device drill-down evidence for a concrete "
+            "device: snapshot, metrics, related alerts, recent telemetry "
+            "history, KPI evidence, and evidence gaps."
+        ),
+    },
     "get_company_rule_readiness": {
         "workflow_id": "company_rule_readiness",
         "intent": "company_rule_readiness",
@@ -86,6 +99,57 @@ COMPANY_DB_TOOLS = {
         "description": (
             "Read company MongoDB OneM2M resource evidence for IDENTITY, AE, "
             "CNT, CIN, SUBSCRIPTION, and URI_MAPPER."
+        ),
+    },
+    "query_company_onem2m_collection": {
+        "workflow_id": "query_company_onem2m_collection",
+        "intent": "query_company_onem2m_collection",
+        "allowed_params": [
+            "device_id",
+            "collection",
+            "ae_id",
+            "request_id",
+            "payload_hint",
+            "time_range",
+            "application_domain",
+        ],
+        "description": (
+            "Render raw bounded OneM2M resource documents for a device and "
+            "specific collection such as AE, CNT, CIN, SUBSCRIPTION, IDENTITY, "
+            "or URI_MAPPER."
+        ),
+    },
+    "query_device_online_status": {
+        "workflow_id": "query_device_online_status",
+        "intent": "query_device_online_status",
+        "allowed_params": [
+            "device_id",
+            "ae_id",
+            "request_id",
+            "payload_hint",
+            "time_range",
+            "application_domain",
+        ],
+        "description": (
+            "Read AE online/offline status, point-of-access URLs, and last "
+            "update evidence for a device."
+        ),
+    },
+    "query_onem2m_cin_records": {
+        "workflow_id": "query_onem2m_cin_records",
+        "intent": "query_onem2m_cin_records",
+        "allowed_params": [
+            "device_id",
+            "cin_type",
+            "ae_id",
+            "request_id",
+            "payload_hint",
+            "time_range",
+            "application_domain",
+        ],
+        "description": (
+            "Render latest OneM2M CIN command and/or telemetry records for a "
+            "device, including decoded content payloads when possible."
         ),
     },
     "get_company_onem2m_command_flow": {
@@ -137,6 +201,15 @@ MAX_WORKFLOW_EXECUTIONS = 5
 MIN_SEMANTIC_CONFIDENCE = 0.55
 MAX_ANSWER_RECORDS = 6
 MAX_ANSWER_EVIDENCE_DEPTH = 8
+VIETNAMESE_MARKERS = (
+    "à", "á", "ạ", "ả", "ã", "â", "ầ", "ấ", "ậ", "ẩ", "ẫ",
+    "ă", "ằ", "ắ", "ặ", "ẳ", "ẵ", "è", "é", "ẹ", "ẻ", "ẽ",
+    "ê", "ề", "ế", "ệ", "ể", "ễ", "ì", "í", "ị", "ỉ", "ĩ",
+    "ò", "ó", "ọ", "ỏ", "õ", "ô", "ồ", "ố", "ộ", "ổ", "ỗ",
+    "ơ", "ờ", "ớ", "ợ", "ở", "ỡ", "ù", "ú", "ụ", "ủ", "ũ",
+    "ư", "ừ", "ứ", "ự", "ử", "ữ", "ỳ", "ý", "ỵ", "ỷ", "ỹ",
+    "đ",
+)
 MCP_PROMETHEUS_TOOLS = {
     "grafana_queue_backlog",
     "grafana_queue_trend",
@@ -151,6 +224,8 @@ MCP_PROMETHEUS_TOOLS = {
     "grafana_mysql_health",
     "grafana_http_health",
     "grafana_throughput",
+    "query_rabbitmq_queue_detail",
+    "query_emqx_connection_count",
 }
 INFRASTRUCTURE_OVERVIEW_TOOLS = {
     "grafana_k8s_health",
@@ -164,6 +239,9 @@ DETERMINISTIC_BUILDER_REGISTRY: dict = {
     "get_company_onem2m_command_flow":     "_dispatch_onem2m_flow",
     "get_company_onem2m_telemetry_flow":   "_dispatch_onem2m_flow",
     "get_company_onem2m_device_resources": "_dispatch_onem2m_resource",
+    "query_company_onem2m_collection":     "_dispatch_onem2m_collection",
+    "query_device_online_status":          "_dispatch_device_online_status",
+    "query_onem2m_cin_records":            "_dispatch_onem2m_cin_records",
 }
 
 
@@ -631,10 +709,20 @@ class IOAV3LangGraphN8nAgent:
             "get_company_disconnected_devices": get_company_disconnected_context,
             "get_company_provisional_alerts": get_company_provisional_alert_context,
             "get_company_fleet_summary": get_company_agent_context,
+            "get_company_device_drilldown": get_company_device_drilldown_context,
             "get_company_inventory": get_company_inventory_context,
             "get_company_telemetry_coverage": get_company_telemetry_coverage_context,
             "get_company_rule_readiness": get_company_rule_readiness_context,
             "get_company_onem2m_device_resources": (
+                get_company_onem2m_device_resource_context
+            ),
+            "query_company_onem2m_collection": (
+                get_company_onem2m_device_resource_context
+            ),
+            "query_device_online_status": (
+                get_company_onem2m_device_resource_context
+            ),
+            "query_onem2m_cin_records": (
                 get_company_onem2m_device_resource_context
             ),
             "get_company_onem2m_command_flow": (
@@ -663,12 +751,26 @@ class IOAV3LangGraphN8nAgent:
             "get_company_onem2m_device_resources",
             "get_company_onem2m_command_flow",
             "get_company_onem2m_telemetry_flow",
+            "query_company_onem2m_collection",
+            "query_device_online_status",
+            "query_onem2m_cin_records",
         }:
             evidence = context_loader(**self.onem2m_context_params(params))
+            evidence["tool"] = selected_tool
+            if selected_tool == "query_company_onem2m_collection":
+                evidence["query_collection"] = params.get("collection")
+            if selected_tool == "query_onem2m_cin_records":
+                evidence["cin_type"] = params.get("cin_type")
+        elif selected_tool == "get_company_device_drilldown":
+            evidence = context_loader(identifier=params.get("device_id"))
         elif context_loader is not None:
             evidence = context_loader()
         else:
             raise RuntimeError("Unsupported company DB workflow.")
+
+        evidence["answer_language"] = self.primary_language(
+            state.get("user_input")
+        )
 
         query_commands = self.build_query_commands(evidence)
         read_plan_commands = self.build_query_commands({
@@ -878,7 +980,24 @@ class IOAV3LangGraphN8nAgent:
     def _dispatch_onem2m_resource(self, result, state):
         if not isinstance(result.get("resource_summary"), dict):
             return None
+        result = dict(result)
+        result["_tool_outputs"] = state.get("tool_outputs") or []
         return self.build_onem2m_resource_answer(result)
+
+    def _dispatch_onem2m_collection(self, result, _state):
+        if not isinstance(result.get("resource_summary"), dict):
+            return None
+        return self.build_onem2m_collection_answer(result)
+
+    def _dispatch_device_online_status(self, result, _state):
+        if not isinstance(result.get("resource_summary"), dict):
+            return None
+        return self.build_device_online_answer(result)
+
+    def _dispatch_onem2m_cin_records(self, result, _state):
+        if not isinstance(result.get("resource_summary"), dict):
+            return None
+        return self.build_cin_records_answer(result)
 
     def first_prometheus_value(self, result):
         items = self.prometheus_result_items(result)
@@ -1211,9 +1330,11 @@ class IOAV3LangGraphN8nAgent:
             "grafana_emqx_health": self.build_emqx_health_answer,
             "grafana_emqx_dropped_trend": self.build_emqx_dropped_answer,
             "grafana_emqx_connection_trend": self.build_emqx_connection_answer,
+            "query_emqx_connection_count": self.build_emqx_connection_count_answer,
             "grafana_k8s_resources": self.build_k8s_resource_answer,
             "grafana_http_health": self.build_http_health_answer,
             "grafana_throughput": self.build_throughput_answer,
+            "query_rabbitmq_queue_detail": self.build_queue_detail_answer,
         }
         builder = builders.get(selected_tool)
         return builder(result, user_input) if builder else None
@@ -1281,6 +1402,65 @@ class IOAV3LangGraphN8nAgent:
                 if has_evidence
                 else "- Verify the RabbitMQ metric name, namespace label, scrape target, and datasource before checking consumers."
             ),
+            *self.suggestion_section([
+                f"Chi tiết về queue {top_name}" if top_name != "unavailable" else "",
+                f"Queue {top_name} có đang tăng không? Check queue trend" if top_name != "unavailable" else "",
+                "Kiểm tra K8s pods xử lý queue này",
+            ]),
+        ])
+
+    def build_queue_detail_answer(self, result, _user_input):
+        request = result.get("request") or {}
+        queries = result.get("queries") or {}
+
+        def scalar(key):
+            q = queries.get(key) or {}
+            items = self.prometheus_result_items(q)
+            return self.prometheus_scalar_value(items[0]) if items else None
+
+        messages = scalar("messages")
+        ready = scalar("messages_ready")
+        unacked = scalar("messages_unacked")
+        consumers = scalar("consumers")
+        deliver_rate = scalar("deliver_rate")
+        publish_rate = scalar("publish_rate")
+        queue_name = request.get("queue_name") or "requested queue"
+        no_consumers = consumers is not None and consumers <= 0
+        status = "stuck" if no_consumers and (messages or 0) > 0 else "checked"
+
+        def fmt(value, suffix=""):
+            return "unavailable" if value is None else f"{value:.2f}{suffix}".rstrip("0").rstrip(".")
+
+        return "\n".join([
+            "# RabbitMQ Queue Detail",
+            "",
+            "## 1. Summary",
+            f"Queue `{queue_name}` status: **{status}**.",
+            (
+                "Messages are present but consumer count is 0, so the queue is likely not being drained."
+                if no_consumers and (messages or 0) > 0
+                else "Queue detail metrics were collected; compare publish and delivery rates for backlog risk."
+            ),
+            "",
+            "## 2. Queue Metrics",
+            f"- Messages total: {fmt(messages)}",
+            f"- Ready: {fmt(ready)}",
+            f"- Unacked: {fmt(unacked)}",
+            f"- Consumers: {fmt(consumers)}",
+            f"- Publish rate: {fmt(publish_rate, '/s')}",
+            f"- Delivery rate: {fmt(deliver_rate, '/s')}",
+            "",
+            "## 3. Suggested Next Action",
+            (
+                "- Check consumer deployment/pods for this queue before tuning broker capacity."
+                if no_consumers
+                else "- Check queue trend and consumer pod logs if backlog keeps increasing."
+            ),
+            *self.suggestion_section([
+                f"Queue {queue_name} có đang tăng không? Check queue trend",
+                "Kiểm tra K8s resource của consumer pods",
+                "RabbitMQ throughput",
+            ]),
         ])
 
     def build_queue_trend_answer(self, result, _user_input):
@@ -1353,6 +1533,10 @@ class IOAV3LangGraphN8nAgent:
                 if has_evidence
                 else "- Verify the RabbitMQ metric name, namespace label, range query, scrape target, and datasource before checking consumers."
             ),
+            *self.suggestion_section([
+                f"Chi tiết về queue này: Check queue {primary_name}" if linear and primary_name != "unavailable" else "",
+                "Kiểm tra K8s resource của consumer pods" if linear else "",
+            ]),
         ])
 
     def build_emqx_health_answer(self, result, _user_input):
@@ -1526,6 +1710,56 @@ class IOAV3LangGraphN8nAgent:
                 if has_evidence
                 else "- Verify the EMQX dropped-message metric name, job label, scrape target, and datasource before assigning root cause."
             ),
+            *self.suggestion_section([
+                "Kiểm tra K8s pods EMQX: Check K8s resources" if increased else "",
+                "Số lượng connection hiện tại: Current EMQX connection count" if increased else "",
+            ]),
+        ])
+
+    def build_emqx_connection_count_answer(self, result, _user_input):
+        queries = result.get("queries") or {}
+
+        def scalar(key):
+            q = queries.get(key) or {}
+            items = self.prometheus_result_items(q)
+            return self.prometheus_scalar_value(items[0]) if items else None
+
+        current = scalar("current_connections")
+        maximum = scalar("max_connections")
+        sessions = scalar("sessions")
+        utilization = (
+            (current / maximum) * 100
+            if current is not None and maximum and maximum > 0
+            else None
+        )
+
+        def fmt(value, suffix=""):
+            return "unavailable" if value is None else f"{value:.2f}{suffix}".rstrip("0").rstrip(".")
+
+        return "\n".join([
+            "# EMQX Connection Count",
+            "",
+            "## 1. Summary",
+            f"Current EMQX connections: **{fmt(current)}**.",
+            (
+                f"Connection utilization is **{fmt(utilization, '%')}** of max capacity."
+                if utilization is not None
+                else "Max connection capacity was not available, so utilization could not be calculated."
+            ),
+            "",
+            "## 2. Metrics",
+            f"- Current connections: {fmt(current)}",
+            f"- Max connections: {fmt(maximum)}",
+            f"- Sessions: {fmt(sessions)}",
+            f"- Utilization: {fmt(utilization, '%')}",
+            "",
+            "## 3. Suggested Next Action",
+            "- If utilization is high or reconnect rate is elevated, check EMQX broker pods and MQTT adapter logs.",
+            *self.suggestion_section([
+                "EMQX connect/disconnect rate",
+                "Check K8s resources for EMQX pods",
+                "Check logs for service iot-mqtt-client-adapter",
+            ]),
         ])
 
     def build_emqx_connection_answer(self, result, _user_input):
@@ -1608,6 +1842,10 @@ class IOAV3LangGraphN8nAgent:
                 if has_evidence
                 else "- Verify the EMQX connected/disconnected metric names, job label, scrape target, and datasource before deriving device candidates from logs."
             ),
+            *self.suggestion_section([
+                "Kiểm tra log MQTT adapter: Check logs for service iot-mqtt-client-adapter" if reconnect_loop else "",
+                "Kiểm tra K8s EMQX broker pods" if reconnect_loop else "",
+            ]),
         ])
 
     def build_http_health_answer(self, result, _user_input):
@@ -1673,6 +1911,12 @@ class IOAV3LangGraphN8nAgent:
                     else "No HTTP metric data returned. Verify the `iot-http-api` job is being scraped by Prometheus."
                 )
             ),
+            *self.suggestion_section([
+                "Kiểm tra log iot-http-api: Check logs for service iot-http-api"
+                if error_rate is not None and error_rate > 0.5 else "",
+                "Kiểm tra K8s pods iot-http-api"
+                if error_rate is not None and error_rate > 0.5 else "",
+            ]),
         ]))
 
     def build_throughput_answer(self, result, _user_input):
@@ -1772,6 +2016,11 @@ class IOAV3LangGraphN8nAgent:
         for row in node_memory:
             if row.get("value", 0) > 85:
                 critical_rows.append(f"| `{row['name']}` | Memory = {row['value']:.1f}% | High node memory |")
+        crashing_pod = (
+            (waiting_reasons[0].get("pod") if waiting_reasons else None)
+            or (terminated_reasons[0].get("pod") if terminated_reasons else None)
+            or (abnormal_phases[0].get("metric", {}).get("pod") if abnormal_phases else None)
+        )
 
         summary_line = (
             "One or more Kubernetes resource signals need follow-up."
@@ -1895,6 +2144,10 @@ class IOAV3LangGraphN8nAgent:
             "",
             "## 7. Recommended Next Action",
             next_action,
+            *self.suggestion_section([
+                f"Xem log pod đang lỗi: Show me logs for pod {crashing_pod}"
+                if crashing_pod else "",
+            ]),
         ]
 
         return "\n".join(lines)
@@ -2055,7 +2308,7 @@ class IOAV3LangGraphN8nAgent:
                     f"; hours_back={params.get('hours_back') or 'unknown'}"
                 )
                 if error:
-                    line += f"; error={error}"
+                    line += f"; unavailable={self.short_error(error)}"
                 else:
                     count = self._count_loki_entries(
                         result.get("result") if isinstance(result, dict) else None
@@ -2085,8 +2338,360 @@ class IOAV3LangGraphN8nAgent:
             "- No Grafana/Loki workflow evidence was attached to this run."
         ]
 
+    def onem2m_collection_name(self, value):
+        text = str(value or "").strip().lower()
+        aliases = {
+            "identity": "IDENTITY",
+            "id": "IDENTITY",
+            "ae": "AE",
+            "cnt": "CNT",
+            "container": "CNT",
+            "containers": "CNT",
+            "cin": "CIN",
+            "content": "CIN",
+            "content_instance": "CIN",
+            "content instance": "CIN",
+            "sub": "SUBSCRIPTION",
+            "subscription": "SUBSCRIPTION",
+            "subscriptions": "SUBSCRIPTION",
+            "uri_mapper": "URI_MAPPER",
+            "uri mapper": "URI_MAPPER",
+            "mapper": "URI_MAPPER",
+        }
+        return aliases.get(text) or (
+            text.upper() if text.upper() in {
+                "IDENTITY", "AE", "CNT", "CIN", "SUBSCRIPTION", "URI_MAPPER"
+            } else None
+        )
+
+    def format_onem2m_timestamp(self, value):
+        if value in (None, ""):
+            return "unavailable"
+
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+
+        if numeric > 10_000_000_000:
+            numeric = numeric / 1000
+
+        try:
+            return datetime.fromtimestamp(
+                numeric,
+                tz=timezone.utc,
+            ).isoformat().replace("+00:00", "Z")
+        except (OSError, ValueError):
+            return str(value)
+
+    def decode_cin_content(self, value):
+        if not isinstance(value, str):
+            return value
+
+        stripped = value.strip()
+        if not stripped:
+            return stripped
+
+        try:
+            return json.loads(stripped)
+        except ValueError:
+            pass
+
+        try:
+            decoded = b64decode(stripped, validate=True).decode("utf-8")
+            try:
+                return json.loads(decoded)
+            except ValueError:
+                return decoded
+        except Exception:
+            return stripped
+
+    def json_block(self, value):
+        return "```json\n" + json.dumps(value, ensure_ascii=False, indent=2) + "\n```"
+
+    def primary_language(self, text):
+        normalized = str(text or "").lower()
+
+        if any(marker in normalized for marker in VIETNAMESE_MARKERS):
+            return "vi"
+
+        return "en"
+
+    def onem2m_followup_suggestions(
+        self,
+        device_id,
+        resource_summary,
+        *,
+        flow=None,
+        language="en",
+        context=None,
+    ):
+        is_vi = language == "vi"
+        context = context or {}
+        suggestions = []
+        ae_present = bool((resource_summary.get("AE") or {}).get("present"))
+        cin = resource_summary.get("CIN") or {}
+        sub_present = bool((resource_summary.get("SUBSCRIPTION") or {}).get("present"))
+        ae_status = context.get("ae_status") or self.onem2m_ae_status(resource_summary)
+        telemetry_status = (
+            context.get("telemetry_status")
+            or self.latest_telemetry_status(resource_summary)
+        )
+
+        def online_question():
+            return (
+                f"Thiết bị {device_id} có đang online không?"
+                if is_vi
+                else f"Is device {device_id} online?"
+            )
+
+        def latest_telemetry_question():
+            return (
+                f"Cho tôi xem telemetry gần nhất của thiết bị {device_id}"
+                if is_vi
+                else f"Show latest telemetry from device {device_id}"
+            )
+
+        def notify_log_question():
+            return (
+                f"Kiểm tra notify logs cho thiết bị {device_id} trong 3 giờ gần nhất"
+                if is_vi
+                else f"Check notify logs for device {device_id} in the last 3 hours"
+            )
+
+        def adapter_log_question():
+            return (
+                f"Kiểm tra iot-mqtt-client-adapter logs cho thiết bị {device_id} trong 3 giờ gần nhất"
+                if is_vi
+                else f"Check iot-mqtt-client-adapter logs for device {device_id} in the last 3 hours"
+            )
+
+        def ae_document_question():
+            return (
+                f"Cho tôi xem AE document của thiết bị {device_id}"
+                if is_vi
+                else f"Show the AE document for device {device_id}"
+            )
+
+        if context.get("answer_kind") == "device_online":
+            suggestions.extend([
+                latest_telemetry_question(),
+                adapter_log_question(),
+                ae_document_question(),
+            ])
+            return suggestions
+
+        if context.get("answer_kind") == "cin_records":
+            suggestions.extend([
+                online_question(),
+                notify_log_question()
+                if telemetry_status in {"disconnected", "offline"}
+                else adapter_log_question(),
+                ae_document_question(),
+            ])
+            return suggestions
+
+        suggestions.append(online_question())
+
+        if not ae_present:
+            suggestions.append(f"Check logs for device {device_id}")
+        if flow == "command":
+            if not int(cin.get("command_count") or 0):
+                suggestions.append(
+                    (
+                        f"Cho tôi xem lệnh gần nhất gửi đến thiết bị {device_id}"
+                        if is_vi
+                        else f"Show the latest command sent to device {device_id}"
+                    )
+                )
+            suggestions.append(
+                (
+                    f"Cho tôi xem SUBSCRIPTION của thiết bị {device_id}"
+                    if is_vi
+                    else f"Show SUBSCRIPTION documents for device {device_id}"
+                )
+            )
+        elif flow == "telemetry":
+            if int(cin.get("telemetry_count") or 0):
+                suggestions.append(latest_telemetry_question())
+            if ae_status == "OFFLINE":
+                suggestions.append(adapter_log_question())
+            if telemetry_status in {"disconnected", "offline"}:
+                suggestions.append(notify_log_question())
+        else:
+            if bool(cin.get("present")):
+                suggestions.append(
+                    (
+                        f"CIN records của thiết bị {device_id}"
+                        if is_vi
+                        else f"CIN records for device {device_id}"
+                    )
+                )
+            if sub_present:
+                suggestions.append(
+                    (
+                        f"Cho tôi xem SUBSCRIPTION của thiết bị {device_id}"
+                        if is_vi
+                        else f"Show SUBSCRIPTION documents for device {device_id}"
+                    )
+                )
+
+        return suggestions
+
+    def suggestion_section(self, suggestions, *, language="en"):
+        unique = []
+        seen = set()
+        for item in suggestions:
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            unique.append(item)
+        if not unique:
+            return []
+        title = "Câu hỏi tiếp theo" if language == "vi" else "Follow-up Questions"
+        return ["", f"## {title}", *[f"- {item}" for item in unique[:4]]]
+
+    def build_onem2m_collection_answer(self, result):
+        device_id = result.get("query_device_id") or "requested device"
+        language = result.get("answer_language") or "en"
+        resource_summary = result.get("resource_summary") or {}
+        collection = self.onem2m_collection_name(result.get("query_collection"))
+        collections = [collection] if collection else [
+            "IDENTITY", "AE", "CNT", "CIN", "SUBSCRIPTION", "URI_MAPPER"
+        ]
+        lines = [
+            "# OneM2M Collection Documents",
+            "",
+            "## 1. Summary",
+            f"Showing bounded raw OneM2M document samples for device `{device_id}`.",
+            "",
+            "## 2. Documents",
+        ]
+
+        for name in collections:
+            resource = resource_summary.get(name) or {}
+            samples = list(resource.get("samples") or [])
+            if name in {"CNT", "CIN"}:
+                samples.extend(resource.get("command_samples") or [])
+                samples.extend(resource.get("telemetry_samples") or [])
+            if not samples:
+                lines.extend([f"### {name}", "_No matched samples returned._", ""])
+                continue
+            lines.append(f"### {name}")
+            for index, sample in enumerate(samples[:MAX_ANSWER_RECORDS], start=1):
+                lines.append(f"**Sample {index}**")
+                lines.append(self.json_block(sample))
+            lines.append("")
+
+        lines.extend(self.suggestion_section(
+            self.onem2m_followup_suggestions(
+                device_id,
+                resource_summary,
+                language=language,
+                context={"answer_kind": "collection"},
+            ),
+            language=language,
+        ))
+        return "\n".join(lines)
+
+    def build_device_online_answer(self, result):
+        device_id = result.get("query_device_id") or "requested device"
+        language = result.get("answer_language") or "en"
+        is_vi = language == "vi"
+        resource_summary = result.get("resource_summary") or {}
+        ae_resource = resource_summary.get("AE") or {}
+        ae_samples = ae_resource.get("samples") or []
+        sample = ae_samples[0] if ae_samples and isinstance(ae_samples[0], dict) else {}
+        poast = sample.get("poast")
+        poast_status = poast
+        if isinstance(poast, list) and poast:
+            first_poast = poast[0]
+            if isinstance(first_poast, dict):
+                poast_status = first_poast.get("status")
+        is_online = poast_status in (1, "1", True)
+        status = "ONLINE" if is_online else ("OFFLINE" if poast_status in (0, "0", False) else "UNKNOWN")
+        poa = sample.get("poa") or []
+        if isinstance(poa, str):
+            poa = [poa]
+        advice = (
+            "Device AE is online in the matched AE document."
+            if status == "ONLINE"
+            else "If this device should be active, check adapter registration, AE point-of-access, and recent MQTT/HTTP logs."
+        )
+        lines = [
+            "# Device Online Status",
+            "",
+            "## 1. Summary",
+            f"Device `{device_id}` AE status: **{status}**.",
+            "",
+            "## 2. AE Evidence",
+            f"- AE resource name: `{sample.get('rn') or 'unavailable'}`",
+            f"- AE ID: `{sample.get('aei') or 'unavailable'}`",
+            f"- poast: `{poast if poast is not None else 'unavailable'}`",
+            f"- last update: `{self.format_onem2m_timestamp(sample.get('lt') or sample.get('ct'))}`",
+            f"- point of access: `{', '.join(map(str, poa)) if poa else 'unavailable'}`",
+            "",
+            "## 3. Advice",
+            advice,
+        ]
+        lines.extend(self.suggestion_section([
+            *self.onem2m_followup_suggestions(
+                device_id,
+                resource_summary,
+                language=language,
+                context={"answer_kind": "device_online"},
+            )
+        ], language=language))
+        return "\n".join(lines)
+
+    def build_cin_records_answer(self, result):
+        device_id = result.get("query_device_id") or "requested device"
+        language = result.get("answer_language") or "en"
+        is_vi = language == "vi"
+        resource_summary = result.get("resource_summary") or {}
+        cin = resource_summary.get("CIN") or {}
+        cin_type = str(result.get("cin_type") or "").lower()
+        records = []
+        if cin_type in {"", "none", "command"}:
+            records.extend(("command", item) for item in cin.get("command_samples") or [])
+        if cin_type in {"", "none", "telemetry"}:
+            records.extend(("telemetry", item) for item in cin.get("telemetry_samples") or [])
+        if not records:
+            records = [("sample", item) for item in cin.get("samples") or []]
+
+        lines = [
+            "# OneM2M CIN Records",
+            "",
+            "## 1. Summary",
+            f"Found {len(records)} bounded CIN sample(s) for device `{device_id}`.",
+            "",
+            "## 2. Records",
+        ]
+        if not records:
+            lines.append("_No matched CIN records returned._")
+        for index, (kind, record) in enumerate(records[:MAX_ANSWER_RECORDS], start=1):
+            decoded = self.decode_cin_content(record.get("con") if isinstance(record, dict) else None)
+            lines.extend([
+                f"### {index}. {kind.upper()} CIN",
+                f"- rn: `{record.get('rn') if isinstance(record, dict) else 'unavailable'}`",
+                f"- parentContainer/pi: `{(record.get('parentContainer') or record.get('pi')) if isinstance(record, dict) else 'unavailable'}`",
+                f"- ct: `{self.format_onem2m_timestamp(record.get('ct') if isinstance(record, dict) else None)}`",
+                "- decoded `con`:",
+                self.json_block(decoded),
+            ])
+        lines.extend(self.suggestion_section([
+            *self.onem2m_followup_suggestions(
+                device_id,
+                resource_summary,
+                language=language,
+                context={"answer_kind": "cin_records"},
+            )
+        ], language=language))
+        return "\n".join(lines)
+
     def build_onem2m_flow_answer(self, result, selected_tool, tool_outputs):
         device_id = result.get("query_device_id") or "requested device"
+        language = result.get("answer_language") or "en"
         resource_summary = result.get("resource_summary") or {}
         flow_checks = result.get("flow_checks") or {}
         input_evidence = result.get("input_evidence") or {}
@@ -2103,6 +2708,15 @@ class IOAV3LangGraphN8nAgent:
         )
         is_command = selected_tool == "get_company_onem2m_command_flow"
         flow_name = "command downlink" if is_command else "telemetry uplink"
+        ae_status = self.onem2m_ae_status(resource_summary)
+        telemetry_status = self.latest_telemetry_status(resource_summary)
+        operational_issues = []
+        if ae_status == "OFFLINE":
+            operational_issues.append("AE point-of-access status is OFFLINE")
+        if telemetry_status in {"disconnected", "offline"}:
+            operational_issues.append(
+                f"latest telemetry CIN reports status `{telemetry_status}`"
+            )
         latest_key = (
             "latest_command_cin_present"
             if is_command
@@ -2124,7 +2738,16 @@ class IOAV3LangGraphN8nAgent:
             else f"Telemetry record count: {telemetry_count if telemetry_count is not None else 0}"
         )
 
-        if failed_checks:
+        if operational_issues and not is_command:
+            likely_cause = (
+                "The required OneM2M telemetry resources are present, but "
+                f"{'; '.join(operational_issues)}. The likely failure point is "
+                "device/session availability or adapter-to-backend delivery "
+                "after resource provisioning, not missing OneM2M resources. "
+                "Correlated adapter, notify, EMQX, or RabbitMQ evidence is "
+                "still required before assigning root cause."
+            )
+        elif failed_checks:
             likely_cause = (
                 f"The likely failure point is incomplete OneM2M {flow_name} "
                 f"evidence around {', '.join(failed_checks)}. Missing resources "
@@ -2143,6 +2766,7 @@ class IOAV3LangGraphN8nAgent:
             o for o in tool_outputs
             if o.get("source") == "mcp_server" and o.get("tool") == "grafana_logs"
         ]
+        loki_errors = []
         loki_entry_count = sum(
             self._count_loki_entries(
                 (o.get("result") or {}).get("result")
@@ -2150,6 +2774,16 @@ class IOAV3LangGraphN8nAgent:
             for o in loki_outputs
             if not (o.get("result") or {}).get("error")
         )
+        for output in loki_outputs:
+            result = output.get("result") or {}
+            error = result.get("error") if isinstance(result, dict) else None
+            if not error:
+                continue
+            params = (output.get("http_call") or {}).get("params") or {}
+            loki_errors.append({
+                "service": params.get("service_name") or "all",
+                "error": error,
+            })
 
         evidence_gaps = []
         if not flow_checks.get(latest_key):
@@ -2158,10 +2792,24 @@ class IOAV3LangGraphN8nAgent:
             evidence_gaps.append(
                 f"resource evidence is missing for {', '.join(missing_resources)}"
             )
+        if operational_issues:
+            evidence_gaps.append(
+                "Operational status evidence needs correlation: "
+                f"{'; '.join(operational_issues)}."
+            )
         if loki_entry_count > 0:
             evidence_gaps.append(
                 f"Log search returned {loki_entry_count} entr{'y' if loki_entry_count == 1 else 'ies'} — "
                 "correlate with request/correlation IDs from CIN records to confirm root cause."
+            )
+        elif loki_errors:
+            evidence_gaps.append(
+                "One or more log sources were unavailable through MCP: "
+                + "; ".join(
+                    f"{item['service']} ({self.short_error(item['error'])})"
+                    for item in loki_errors
+                )
+                + ". Retry the failed log source or reduce the time range before treating log evidence as complete."
             )
         else:
             evidence_gaps.append(
@@ -2170,13 +2818,23 @@ class IOAV3LangGraphN8nAgent:
                 "or no activity occurred in this period — try a wider time range or check AE ID variants."
             )
 
-        next_action = (
-            result.get("next_diagnostic_step")
-            or (
-                "Correlate the missing resource checks with adapter/core logs "
-                "and the latest CIN records before assigning root cause."
+        if operational_issues and not is_command:
+            next_action = (
+                result.get("next_diagnostic_step")
+                or (
+                    "Correlate AE point-of-access status and latest telemetry CIN "
+                    "with iot-mqtt-client-adapter receive logs, notify delivery "
+                    "logs, and EMQX/RabbitMQ evidence for the same time window."
+                )
             )
-        )
+        else:
+            next_action = (
+                result.get("next_diagnostic_step")
+                or (
+                    "Correlate the missing resource checks with adapter/core logs "
+                    "and the latest CIN records before assigning root cause."
+                )
+            )
 
         flow_label = "Command Downlink" if is_command else "Telemetry Uplink"
 
@@ -2184,7 +2842,13 @@ class IOAV3LangGraphN8nAgent:
             f"# OneM2M {flow_label} Flow Check Result",
             "",
             "## 1. Summary",
-            f"Device `{device_id}` has {'incomplete' if failed_checks else 'complete'} {flow_name} evidence. **Device status:** {device_status}.",
+            self.onem2m_flow_summary_line(
+                device_id,
+                flow_name,
+                device_status,
+                failed_checks,
+                operational_issues,
+            ),
             (
                 f"**Failed checks:** {', '.join(failed_checks)}"
                 if failed_checks
@@ -2195,6 +2859,8 @@ class IOAV3LangGraphN8nAgent:
             f"- **Device ID:** `{device_id}`",
             f"- **Required operator input complete:** {str(bool(flow_checks.get('required_input_complete'))).lower()}",
             f"- **{record_count_line}**",
+            f"- **AE online status:** `{ae_status}`",
+            f"- **Latest telemetry status:** `{telemetry_status or 'unavailable'}`",
             f"- **Derived identifiers:** `{json.dumps(input_evidence.get('derived_identifiers') or {}, ensure_ascii=False)}`",
             "",
             "## 3. Logs / Grafana Evidence",
@@ -2218,11 +2884,93 @@ class IOAV3LangGraphN8nAgent:
             "",
             "## 8. Evidence Gaps",
             *[f"- {gap}" for gap in evidence_gaps],
+            *self.suggestion_section(
+                self.onem2m_followup_suggestions(
+                    device_id,
+                    resource_summary,
+                    flow="command" if is_command else "telemetry",
+                    language=language,
+                    context={
+                        "ae_status": ae_status,
+                        "telemetry_status": telemetry_status,
+                    },
+                ),
+                language=language,
+            ),
         ])
+
+    def short_error(self, value, limit=180):
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    def onem2m_flow_summary_line(
+        self,
+        device_id,
+        flow_name,
+        device_status,
+        failed_checks,
+        operational_issues,
+    ):
+        if failed_checks:
+            return (
+                f"Device `{device_id}` has incomplete {flow_name} evidence. "
+                f"**Device status:** {device_status}."
+            )
+
+        if operational_issues:
+            return (
+                f"Device `{device_id}` has the required {flow_name} DB resources, "
+                f"but operational status evidence shows: {'; '.join(operational_issues)}. "
+                f"**Device status:** {device_status}."
+            )
+
+        return (
+            f"Device `{device_id}` has complete {flow_name} evidence in the bounded "
+            f"DB checks. **Device status:** {device_status}."
+        )
+
+    def onem2m_ae_status(self, resource_summary):
+        ae_resource = resource_summary.get("AE") or {}
+        samples = ae_resource.get("samples") or []
+        sample = samples[0] if samples and isinstance(samples[0], dict) else {}
+        poast = sample.get("poast")
+        status = poast
+
+        if isinstance(poast, list) and poast:
+            first = poast[0]
+            if isinstance(first, dict):
+                status = first.get("status")
+
+        if status in (1, "1", True):
+            return "ONLINE"
+        if status in (0, "0", False):
+            return "OFFLINE"
+        return "UNKNOWN"
+
+    def latest_telemetry_status(self, resource_summary):
+        cin = resource_summary.get("CIN") or {}
+        samples = cin.get("telemetry_samples") or []
+
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+            decoded = self.decode_cin_content(sample.get("con"))
+            if isinstance(decoded, str):
+                decoded = self.decode_cin_content(decoded)
+            if isinstance(decoded, dict):
+                status = decoded.get("status")
+                if status not in (None, ""):
+                    return str(status).lower()
+
+        return None
 
     def build_onem2m_resource_answer(self, result):
         device_id = result.get("query_device_id") or "requested device"
+        language = result.get("answer_language") or "en"
         resource_summary = result.get("resource_summary") or {}
+        input_evidence = result.get("input_evidence") or {}
         required_resources = result.get("required_resources") or [
             "IDENTITY",
             "AE",
@@ -2243,6 +2991,7 @@ class IOAV3LangGraphN8nAgent:
             else None
         )
         resource_table_rows = []
+        check_rows = []
         missing_resources = []
         present_resources = []
 
@@ -2267,9 +3016,13 @@ class IOAV3LangGraphN8nAgent:
             if telemetry_resource_count is not None:
                 extra_parts.append(f"tel={telemetry_resource_count}")
             extra = f" ({', '.join(extra_parts)})" if extra_parts else ""
+            evidence = self.onem2m_resource_evidence_summary(resource)
 
             resource_table_rows.append(
-                f"| `{name}` | {status} | {matched_count} | {direct_count} | {related_count}{extra} |"
+                f"| `{name}` | {status} | {matched_count} | {direct_count} | {related_count}{extra} | {evidence} |"
+            )
+            check_rows.append(
+                f"| `{name}` | {'OK' if present else 'MISSING'} | {evidence} |"
             )
 
         if missing_resources:
@@ -2310,6 +3063,18 @@ class IOAV3LangGraphN8nAgent:
             if telemetry_count is not None
             else ""
         )
+        log_lines = self.summarize_onem2m_log_workflows(
+            result.get("_tool_outputs") or []
+        )
+        evidence_gaps = list(result.get("evidence_gaps") or [])
+        if missing_resources:
+            evidence_gaps.append(
+                f"Missing resource evidence for {', '.join(missing_resources)}."
+            )
+        if not evidence_gaps:
+            evidence_gaps.append(
+                "No additional evidence gaps were reported by the bounded DB read."
+            )
 
         return "\n".join([
             "# OneM2M Device Resource Check Result",
@@ -2317,17 +3082,56 @@ class IOAV3LangGraphN8nAgent:
             "## 1. Summary",
             f"Device `{device_id}` {summary_status} **Device status:** {device_status}.{telemetry_text}",
             "",
-            "## 2. Resource Evidence",
-            "| Resource | Status | Matched | Direct | Related |",
-            "|---|---|---|---|---|",
+            "## 2. Input",
+            f"- **Device ID:** `{device_id}`",
+            f"- **Required operator input complete:** {str(bool(input_evidence.get('required_input_complete', device_id != 'requested device'))).lower()}",
+            f"- **Derived identifiers:** `{json.dumps(input_evidence.get('derived_identifiers') or {}, ensure_ascii=False)}`",
+            "",
+            "## 3. Logs / Grafana Evidence",
+            *log_lines,
+            "",
+            "## 4. Database Resources",
+            "| Resource | Status | Matched | Direct | Related | Evidence |",
+            "|---|---|---|---|---|---|",
             *resource_table_rows,
             "",
-            "## 3. Likely Cause",
+            "## 5. Resource Checks",
+            "| Check | Status | Supporting Evidence |",
+            "|---|---|---|",
+            *check_rows,
+            "",
+            "## 6. Likely Failure Point",
             likely_cause,
             "",
-            "## 4. Suggested Next Action",
+            "## 7. Suggested Next Action",
             next_action,
+            "",
+            "## 8. Evidence Gaps",
+            *[f"- {gap}" for gap in evidence_gaps],
+            *self.suggestion_section(
+                self.onem2m_followup_suggestions(
+                    device_id,
+                    resource_summary,
+                    language=language,
+                ),
+                language=language,
+            ),
         ])
+
+    def onem2m_resource_evidence_summary(self, resource):
+        samples = list(resource.get("samples") or [])
+        samples.extend(resource.get("command_samples") or [])
+        samples.extend(resource.get("telemetry_samples") or [])
+        sample = samples[0] if samples and isinstance(samples[0], dict) else {}
+        if not sample:
+            return "No matched sample"
+
+        for key in ("rn", "_id", "aei", "pi", "ct", "lt"):
+            value = sample.get(key)
+            if value not in (None, ""):
+                return f"`{key}={value}`"
+
+        return "Matched sample returned"
 
     def deny_request_node(self, state):
         reason = state.get("policy_reason") or "request_denied"
@@ -2550,6 +3354,7 @@ JSON schema:
             user_input,
             seen,
         )
+        normalized = self.ensure_device_drilldown_workflow(normalized, user_input)
         normalized = self.ensure_infrastructure_overview_workflows(
             normalized,
             user_input,
@@ -2563,6 +3368,9 @@ JSON schema:
             "get_company_onem2m_device_resources",
             "get_company_onem2m_command_flow",
             "get_company_onem2m_telemetry_flow",
+            "query_company_onem2m_collection",
+            "query_device_online_status",
+            "query_onem2m_cin_records",
         }:
             for key, value in self.extract_onem2m_identifiers(user_input).items():
                 current_value = enriched.get(key)
@@ -2574,6 +3382,23 @@ JSON schema:
                     continue
 
                 enriched.setdefault(key, value)
+
+            if tool_name == "query_company_onem2m_collection":
+                collection = self.extract_onem2m_collection_name(user_input)
+                if collection:
+                    enriched.setdefault("collection", collection)
+
+            if tool_name == "query_onem2m_cin_records":
+                cin_type = self.extract_cin_type(user_input)
+                if cin_type:
+                    enriched.setdefault("cin_type", cin_type)
+
+        if tool_name == "get_company_device_drilldown":
+            device_id = self.extract_device_identifier(user_input)
+            if device_id and self.is_weak_device_identifier(
+                enriched.get("device_id")
+            ):
+                enriched["device_id"] = device_id
 
         return enriched
 
@@ -2599,6 +3424,9 @@ JSON schema:
             "get_company_onem2m_device_resources",
             "get_company_onem2m_command_flow",
             "get_company_onem2m_telemetry_flow",
+            "query_company_onem2m_collection",
+            "query_device_online_status",
+            "query_onem2m_cin_records",
         }
         metric_runbook_tools = {
             "grafana_queue_backlog",
@@ -2656,6 +3484,10 @@ JSON schema:
 
         selected_tools = {workflow.get("tool") for workflow in workflows}
         has_onem2m = bool(selected_tools & onem2m_tools)
+        has_flow_debug = bool(selected_tools & {
+            "get_company_onem2m_command_flow",
+            "get_company_onem2m_telemetry_flow",
+        })
 
         if not has_onem2m:
             return workflows
@@ -2669,6 +3501,9 @@ JSON schema:
             )
         ]
         seen = {workflow.get("tool") for workflow in workflows}
+
+        if not has_flow_debug:
+            return workflows
 
         if not any(term in text for term in (
             "log",
@@ -2728,6 +3563,28 @@ JSON schema:
                 "tool_family": "grafana_n8n",
             })
 
+        return next_workflows[:MAX_WORKFLOW_EXECUTIONS]
+
+    def ensure_device_drilldown_workflow(self, workflows, user_input):
+        tool, params, reason = self.classify_tool(user_input)
+
+        if tool != "get_company_device_drilldown":
+            return workflows
+
+        drilldown_workflow = {
+            "tool": tool,
+            "params": self.enrich_workflow_params(tool, params, user_input),
+            "reason": reason,
+            "confidence": 0.9,
+            "planner": "drilldown_keyword_override",
+            "tool_family": "company_db",
+        }
+        next_workflows = [
+            workflow
+            for workflow in workflows
+            if workflow.get("tool") != tool
+        ]
+        next_workflows.insert(0, drilldown_workflow)
         return next_workflows[:MAX_WORKFLOW_EXECUTIONS]
 
     def ensure_infrastructure_overview_workflows(self, workflows, user_input):
@@ -2830,6 +3687,10 @@ JSON schema:
                 except (TypeError, ValueError):
                     continue
             elif key == "device_id":
+                if self.is_placeholder_param(value):
+                    continue
+                filtered[key] = str(value)
+            elif key in {"collection", "cin_type", "queue_name"}:
                 if self.is_placeholder_param(value):
                     continue
                 filtered[key] = str(value)
@@ -3081,6 +3942,7 @@ JSON schema:
                 break
 
         workflows = self.ensure_runbook_required_workflows(workflows, user_input)
+        workflows = self.ensure_device_drilldown_workflow(workflows, user_input)
         workflows = self.ensure_infrastructure_overview_workflows(workflows, user_input)
         return self.ensure_k8s_resource_log_workflows(workflows, user_input)
 
@@ -3195,6 +4057,43 @@ JSON schema:
             "cảnh báo",
             "canh bao",
         ))
+        has_drilldown_terms = has_any((
+            "why",
+            "because",
+            "root cause",
+            "likely cause",
+            "explain",
+            "detail",
+            "details",
+            "drill",
+            "drilldown",
+            "drill-down",
+            "deep dive",
+            "investigate",
+            "investigation",
+            "evidence",
+            "history",
+            "recent",
+            "metric history",
+            "vì sao",
+            "vi sao",
+            "tại sao",
+            "tai sao",
+            "nguyên nhân",
+            "nguyen nhan",
+            "chi tiết",
+            "chi tiet",
+            "đi sâu",
+            "di sau",
+            "hỏi sâu",
+            "hoi sau",
+            "phân tích",
+            "phan tich",
+            "bằng chứng",
+            "bang chung",
+            "lịch sử",
+            "lich su",
+        ))
         has_grafana_infra_terms = has_any((
             "grafana",
             "prometheus",
@@ -3269,6 +4168,143 @@ JSON schema:
             "uri_mapper",
             "uri mapper",
         ))
+        has_raw_document_terms = has_any((
+            "show",
+            "list",
+            "dump",
+            "json",
+            "raw",
+            "document",
+            "documents",
+            "xem",
+            "tra cứu",
+            "tra cuu",
+            "chi tiết",
+            "chi tiet",
+            "lấy",
+            "lay",
+            "tìm",
+            "tim",
+        ))
+        has_online_status_terms = has_any((
+            "online",
+            "offline",
+            "connected",
+            "connection status",
+            "kết nối",
+            "ket noi",
+            "trạng thái",
+            "trang thai",
+            "status",
+            "point of access",
+            "poa",
+        ))
+        has_cin_record_terms = has_any((
+            "latest command",
+            "latest telemetry",
+            "cin",
+            "content instance",
+            "content instances",
+            "lệnh gần nhất",
+            "lenh gan nhat",
+            "telemetry gần nhất",
+            "telemetry gan nhat",
+            "dữ liệu đo",
+            "du lieu do",
+            "bản tin gần nhất",
+            "ban tin gan nhat",
+        ))
+
+        has_command_flow_terms = has_any((
+            "/cmd",
+            "kịch bản 5",
+            "kich ban 5",
+            "command downlink",
+            "did not receive a command",
+            "did not receive command",
+            "không nhận lệnh",
+            "khong nhan lenh",
+        )) or (
+            has_any(("command", "downlink", "cnt_command", "latest command"))
+            and has_any(("debug", "derive", "summarize", "failure point", "next action"))
+        )
+        has_telemetry_flow_terms = has_any((
+            "/telemetry",
+            "kịch bản 6",
+            "kich ban 6",
+            "telemetry uplink",
+            "did not reach the backend",
+            "did not reach backend",
+            "không tới backend",
+            "khong toi backend",
+        )) or (
+            has_any(("telemetry", "uplink", "cnt_telemetry", "latest telemetry"))
+            and has_any(("debug", "derive", "summarize", "failure point", "next action"))
+        )
+        has_resource_check_terms = has_any((
+            "/resources",
+            "kịch bản 7",
+            "kich ban 7",
+            "registered on the platform",
+            "required onem2m resources",
+            "required resources",
+            "resources exist",
+            "resource check",
+            "which resources exist",
+            "which resources are missing",
+            "verify identity",
+            "verify idenity",
+            "verify ae",
+            "verify cnt",
+            "verify cin",
+            "kiểm tra tài nguyên",
+            "kiem tra tai nguyen",
+            "tài nguyên bắt buộc",
+            "tai nguyen bat buoc",
+        )) or (
+            has_onem2m_resource_terms
+            and has_any(("registered", "registration", "exist", "exists", "missing", "platform"))
+            and not has_command_flow_terms
+            and not has_telemetry_flow_terms
+        )
+
+        if has_command_flow_terms:
+            return (
+                "get_company_onem2m_command_flow",
+                with_onem2m_identifiers(),
+                "company_onem2m_command_flow_keywords",
+            )
+
+        if has_telemetry_flow_terms:
+            return (
+                "get_company_onem2m_telemetry_flow",
+                with_onem2m_identifiers(),
+                "company_onem2m_telemetry_flow_keywords",
+            )
+
+        if has_resource_check_terms:
+            return (
+                "get_company_onem2m_device_resources",
+                with_onem2m_identifiers(),
+                "company_onem2m_device_resource_keywords",
+            )
+
+        if device_id and has_online_status_terms and not has_onem2m_resource_terms:
+            return (
+                "query_device_online_status",
+                with_onem2m_identifiers(),
+                "company_device_online_status_keywords",
+            )
+
+        collection = self.extract_onem2m_collection_name(user_input)
+        if device_id and collection and has_raw_document_terms:
+            collection_params = with_onem2m_identifiers()
+            collection_params["collection"] = collection
+            return (
+                "query_company_onem2m_collection",
+                collection_params,
+                "company_onem2m_collection_keywords",
+            )
 
         if has_onem2m_resource_terms and has_any((
             "kịch bản 5",
@@ -3304,6 +4340,17 @@ JSON schema:
                 "get_company_onem2m_telemetry_flow",
                 with_onem2m_identifiers(),
                 "company_onem2m_telemetry_flow_keywords",
+            )
+
+        if device_id and has_cin_record_terms:
+            cin_params = with_onem2m_identifiers()
+            cin_type = self.extract_cin_type(user_input)
+            if cin_type:
+                cin_params["cin_type"] = cin_type
+            return (
+                "query_onem2m_cin_records",
+                cin_params,
+                "company_onem2m_cin_records_keywords",
             )
 
         if has_onem2m_resource_terms:
@@ -3359,6 +4406,18 @@ JSON schema:
                 "get_company_telemetry_coverage",
                 params,
                 "company_telemetry_coverage_keywords",
+            )
+
+        if should_prefer_company_db and (
+            has_drilldown_terms
+            or (device_id and has_company_alert_terms)
+        ):
+            if device_id:
+                params["device_id"] = device_id
+            return (
+                "get_company_device_drilldown",
+                params,
+                "company_device_drilldown_keywords",
             )
 
         if should_prefer_company_db and has_any((
@@ -3435,6 +4494,51 @@ JSON schema:
                 "grafana_emqx_dropped_trend",
                 params,
                 "emqx_dropped_trend_keywords",
+            )
+
+        if (
+            ("emqx" in text or "mqtt" in text or "broker" in text)
+            and has_any((
+                "connection count",
+                "current connections",
+                "connections count",
+                "bao nhiêu thiết bị",
+                "bao nhieu thiet bi",
+                "số lượng kết nối",
+                "so luong ket noi",
+                "tổng số kết nối",
+                "tong so ket noi",
+                "client đang connected",
+                "client dang connected",
+            ))
+        ):
+            return (
+                "query_emqx_connection_count",
+                params,
+                "emqx_connection_count_keywords",
+            )
+
+        queue_name = self.extract_queue_name(user_input)
+        if queue_name and "queue" in text and has_any((
+            "detail",
+            "details",
+            "consumer",
+            "consumers",
+            "consumer count",
+            "specific",
+            "chi tiết",
+            "chi tiet",
+            "bao nhiêu consumer",
+            "bao nhieu consumer",
+            "xử lý",
+            "xu ly",
+            "check queue",
+        )):
+            params["queue_name"] = queue_name
+            return (
+                "query_rabbitmq_queue_detail",
+                params,
+                "rabbitmq_queue_detail_keywords",
             )
 
         if ("emqx" in text or "mqtt" in text or "broker" in text) and (
@@ -3514,8 +4618,28 @@ JSON schema:
 
         if "log" in text or "loki" in text or "error log" in text:
             service = self.extract_param(text, "service")
+            if not service:
+                if "iot-mqtt-client-adapter" in text:
+                    service = "iot-mqtt-client-adapter"
+                elif "iot-http-api" in text:
+                    service = "iot-http-api"
+                elif "notify" in text:
+                    service = "notify"
             if service:
                 params["service"] = service
+            device_id = self.extract_device_identifier(user_input)
+            if device_id:
+                params["contains"] = device_id
+            _hours_match = re.search(
+                r"\b(?:last|past|back|trong)\s+(\d+)\s*(?:h\b|hours?|giờ)"
+                r"|\b(\d+)\s*(?:h\b|hours?)\s*(?:back|ago|trước)"
+                r"|\bhours[_\s-]?back\s*[=:]\s*(\d+)",
+                text,
+                re.IGNORECASE,
+            )
+            if _hours_match:
+                _val = next(g for g in _hours_match.groups() if g is not None)
+                params["hours_back"] = min(int(_val), 72)
             if "warn" in text:
                 params["level"] = "error|warn"
             return "grafana_logs", params, "logs_keywords"
@@ -3599,6 +4723,58 @@ JSON schema:
     def extract_param(self, text, name):
         match = re.search(rf"{name}\s*[=:]\s*([A-Za-z0-9_.:-]+)", text)
         return match.group(1) if match else None
+
+    def extract_queue_name(self, text):
+        patterns = [
+            r"\bqueue\s+([A-Za-z0-9_.:/-]+)",
+            r"\bcheck\s+queue\s+([A-Za-z0-9_.:/-]+)",
+            r"\bchi\s+tiết\s+(?:về\s+)?queue\s+([A-Za-z0-9_.:/-]+)",
+            r"\bchi tiet\s+(?:ve\s+)?queue\s+([A-Za-z0-9_.:/-]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, str(text or ""), flags=re.IGNORECASE)
+            if match:
+                value = self.normalize_identifier_value(match.group(1))
+                if value and value.lower() not in {"trend", "backlog", "health"}:
+                    return value
+        return None
+
+    def extract_onem2m_collection_name(self, text):
+        normalized = str(text or "").lower()
+        for raw, canonical in (
+            ("uri_mapper", "URI_MAPPER"),
+            ("uri mapper", "URI_MAPPER"),
+            ("subscription", "SUBSCRIPTION"),
+            ("sub", "SUBSCRIPTION"),
+            ("identity", "IDENTITY"),
+            ("ae", "AE"),
+            ("cnt", "CNT"),
+            ("container", "CNT"),
+            ("cin", "CIN"),
+            ("content instance", "CIN"),
+        ):
+            if re.search(rf"\b{re.escape(raw)}\b", normalized):
+                return canonical
+        return None
+
+    def extract_cin_type(self, text):
+        normalized = str(text or "").lower()
+        if any(term in normalized for term in (
+            "command",
+            "cmd",
+            "lệnh",
+            "lenh",
+            "downlink",
+        )):
+            return "command"
+        if any(term in normalized for term in (
+            "telemetry",
+            "dữ liệu đo",
+            "du lieu do",
+            "uplink",
+        )):
+            return "telemetry"
+        return None
 
     def extract_device_identifier(self, text):
         patterns = [
@@ -3814,6 +4990,7 @@ JSON schema:
             "device_match_count",
             "command_record_count",
             "next_diagnostic_step",
+            "evidence_gaps",
         ):
             if key in result:
                 summary[key] = result[key]
@@ -3834,6 +5011,20 @@ JSON schema:
                 for alert in result["alerts"][:MAX_ANSWER_RECORDS]
             ]
             summary["alert_sample_count"] = len(summary["alerts"])
+
+        if isinstance(result.get("official_alerts"), list):
+            summary["official_alerts"] = [
+                self.compact_alert_for_answer(alert)
+                for alert in result["official_alerts"][:MAX_ANSWER_RECORDS]
+            ]
+            summary["official_alert_sample_count"] = len(
+                summary["official_alerts"]
+            )
+
+        if isinstance(result.get("kpi_evaluations"), list):
+            summary["kpi_evaluations"] = (
+                result["kpi_evaluations"][:MAX_ANSWER_RECORDS]
+            )
 
         if isinstance(result.get("matches"), list):
             summary["matches"] = result["matches"][:MAX_ANSWER_RECORDS]
@@ -3909,6 +5100,7 @@ JSON schema:
             "status_source",
             "timestamp",
             "telemetry_record_count",
+            "history_count",
         ):
             if key in device:
                 compact[key] = device[key]
@@ -3917,6 +5109,9 @@ JSON schema:
 
         if isinstance(metrics, list):
             compact["metrics"] = metrics[:4]
+
+        if isinstance(device.get("recent_history"), list):
+            compact["recent_history"] = device["recent_history"][:3]
 
         return compact
 
@@ -3974,6 +5169,10 @@ Security instructions:
 - When the selected tool is a company DB read tool, ground the answer in the
   returned device records and query commands. List only devices present in the
   evidence, and say if the result set is truncated.
+- For get_company_device_drilldown, answer as an investigation drill-down:
+  short diagnosis, concrete evidence from device metrics/history/alerts,
+  likely cause if supported, evidence gaps, and next action. If no concrete
+  device_id was provided or no device matched, say that instead of guessing.
 - If the evidence contains only service-level health, do not describe affected
   devices, disconnected devices, or a root cause. Say that device-level evidence
   was not provided by this workflow.
@@ -3989,6 +5188,12 @@ Security instructions:
 - For OneM2M workflows, treat flow_checks and resource_summary as authoritative.
   Do not say a resource is absent if its `present` flag is true or its
   command/telemetry count is greater than zero.
+- For OneM2M telemetry workflows, do not equate present DB resources with a
+  healthy telemetry path. If AE `poast.status` is 0 or latest telemetry CIN
+  content reports `status: disconnected`/`offline`, state that resources are
+  present but operational status evidence points to device/session availability
+  or adapter-to-backend delivery, and require log/queue correlation before
+  assigning root cause.
 - For OneM2M resource_summary, `count` is the bounded collection count and
   `matched_count`/`present`/`device_presence` are the requested device status.
   Never describe a resource as present for the device when `present` is false.

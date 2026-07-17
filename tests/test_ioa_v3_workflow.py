@@ -16,6 +16,7 @@ from services.n8n_gateway_service import (
     build_n8n_v3_payload,
     get_n8n_v3_webhook_url,
 )
+from services import mcp_observability_service
 
 
 class IOAV3WorkflowTests(unittest.TestCase):
@@ -636,6 +637,37 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertEqual(params, {"threshold": 70.0})
         self.assertEqual(reason, "company_threshold_keywords")
 
+    def test_ioa_v3_routes_device_drilldown_followup_to_company_db_tool(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, reason = agent.classify_tool(
+            "vì sao device dev-1 đang critical, phân tích evidence giúp tôi"
+        )
+
+        self.assertEqual(tool, "get_company_device_drilldown")
+        self.assertEqual(params, {"device_id": "dev-1"})
+        self.assertEqual(reason, "company_device_drilldown_keywords")
+
+    def test_ioa_v3_device_drilldown_overrides_generic_semantic_alert_plan(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        workflows = [{
+            "tool": "get_company_provisional_alerts",
+            "params": {},
+            "reason": "generic alert investigation",
+            "confidence": 0.8,
+            "planner": "semantic_llm",
+            "tool_family": "company_db",
+        }]
+
+        planned = agent.ensure_device_drilldown_workflow(
+            workflows,
+            "why is device dev-1 critical? show evidence",
+        )
+
+        self.assertEqual(planned[0]["tool"], "get_company_device_drilldown")
+        self.assertEqual(planned[0]["params"], {"device_id": "dev-1"})
+        self.assertEqual(planned[0]["planner"], "drilldown_keyword_override")
+
     def test_ioa_v3_routes_onem2m_prompts_to_company_db_tools(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
 
@@ -662,6 +694,99 @@ class IOAV3WorkflowTests(unittest.TestCase):
                 tool, params, _ = agent.classify_tool(prompt)
                 self.assertEqual(tool, expected_tool)
                 self.assertEqual(params, expected_params)
+
+    def test_ioa_v3_routes_onem2m_drilldown_followups_to_specific_tools(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        cases = [
+            (
+                "Thiết bị Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b có online không?",
+                "query_device_online_status",
+                {"device_id": "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b"},
+            ),
+            (
+                "Cho tôi xem AE document của thiết bị Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b",
+                "query_company_onem2m_collection",
+                {
+                    "device_id": "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b",
+                    "collection": "AE",
+                },
+            ),
+            (
+                "Lệnh gần nhất gửi đến thiết bị Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b",
+                "query_onem2m_cin_records",
+                {
+                    "device_id": "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b",
+                    "cin_type": "command",
+                },
+            ),
+        ]
+
+        for prompt, expected_tool, expected_params in cases:
+            with self.subTest(prompt=prompt):
+                tool, params, _ = agent.classify_tool(prompt)
+                self.assertEqual(tool, expected_tool)
+                self.assertEqual(params, expected_params)
+
+    def test_ioa_v3_routes_metric_drilldowns_to_specific_prometheus_tools(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        queue_tool, queue_params, _ = agent.classify_tool(
+            "Chi tiết về queue iot.command.notif"
+        )
+        emqx_tool, emqx_params, _ = agent.classify_tool(
+            "Tổng số kết nối EMQX hiện tại"
+        )
+
+        self.assertEqual(queue_tool, "query_rabbitmq_queue_detail")
+        self.assertEqual(queue_params, {"queue_name": "iot.command.notif"})
+        self.assertEqual(emqx_tool, "query_emqx_connection_count")
+        self.assertEqual(emqx_params, {})
+
+    def test_ioa_v3_cin_records_builder_decodes_base64_json_payload(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_cin_records_answer({
+            "query_device_id": "dev-1",
+            "cin_type": "command",
+            "resource_summary": {
+                "CIN": {
+                    "command_samples": [{
+                        "rn": "cin-1",
+                        "pi": "cnt-command",
+                        "ct": 1710000000000,
+                        "con": "eyJjb21tYW5kIjogInJlc3RhcnQifQ==",
+                    }],
+                    "telemetry_samples": [],
+                    "samples": [],
+                }
+            },
+        })
+
+        self.assertIn('"command": "restart"', answer)
+        self.assertIn("2024-03-09T16:00:00Z", answer)
+        self.assertIn("## Follow-up Questions", answer)
+
+    def test_ioa_v3_device_online_builder_reads_ae_poast_and_poa(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_device_online_answer({
+            "query_device_id": "dev-1",
+            "resource_summary": {
+                "AE": {
+                    "samples": [{
+                        "rn": "ae-dev-1",
+                        "aei": "Cdev1",
+                        "poast": 1,
+                        "poa": ["mqtt://broker/dev-1"],
+                        "lt": 1710000000000,
+                    }]
+                },
+                "CIN": {"present": True},
+            },
+        })
+
+        self.assertIn("**ONLINE**", answer)
+        self.assertIn("mqtt://broker/dev-1", answer)
+        self.assertIn("2024-03-09T16:00:00Z", answer)
 
     def test_ioa_v3_runbook_override_keeps_command_flow_primary(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
@@ -698,6 +823,55 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertNotIn(
             "get_company_onem2m_device_resources",
             [workflow["tool"] for workflow in planned],
+        )
+
+    def test_ioa_v3_full_command_debug_prompt_routes_to_command_flow(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, _ = agent.classify_tool(
+            "Debug why device S5bacab3c-a8c7-46fa-8d77-a86c4f5c62a6 did not "
+            "receive a command. Treat S5bacab3c-a8c7-46fa-8d77-a86c4f5c62a6 "
+            "as the only required operator input. Derive AE ID and "
+            "request/correlation IDs from MongoDB resources, URI mapper, latest "
+            "command CIN records, and adapter/core logs. Check iot-http-api and "
+            "iot-mqtt-client-adapter logs, core logs, IDENTITY, AE, cnt_command, "
+            "SUBSCRIPTION, URI_MAPPER, and latest command CIN evidence. "
+            "Summarize the most likely failure point, supporting evidence, "
+            "evidence gaps, and the next action. Time range: last 6 hours."
+        )
+
+        self.assertEqual(tool, "get_company_onem2m_command_flow")
+        self.assertEqual(
+            params["device_id"],
+            "S5bacab3c-a8c7-46fa-8d77-a86c4f5c62a6",
+        )
+
+    def test_ioa_v3_resource_check_prompt_does_not_route_to_online_status(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        prompt = (
+            "Check whether device S5bacab3c-a8c7-46fa-8d77-a86c4f5c62a6 is "
+            "registered on the platform and whether its required OneM2M "
+            "resources exist. Treat S5bacab3c-a8c7-46fa-8d77-a86c4f5c62a6 as "
+            "the only required operator input. Derive AE ID and "
+            "request/correlation IDs from MongoDB resources and logs when "
+            "needed. Check iot-http-api and iot-mqtt-client-adapter logs, then "
+            "verify IDENTITY, AE, CNT, CIN, SUBSCRIPTION, and URI_MAPPER "
+            "evidence. List exactly which resources exist, which are missing, "
+            "what evidence supports each status, and the next action. "
+            "Time range: last 6 hours."
+        )
+
+        tool, params, _ = agent.classify_tool(prompt)
+        workflows = agent.ensure_runbook_required_workflows([], prompt)
+
+        self.assertEqual(tool, "get_company_onem2m_device_resources")
+        self.assertEqual(
+            params["device_id"],
+            "S5bacab3c-a8c7-46fa-8d77-a86c4f5c62a6",
+        )
+        self.assertEqual(
+            [workflow["tool"] for workflow in workflows],
+            ["get_company_onem2m_device_resources"],
         )
 
     def test_ioa_v3_replaces_weak_semantic_device_id(self):
@@ -889,6 +1063,183 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("backend SUBSCRIPTION notify logs", answer)
         self.assertIn("No Grafana/Loki workflow evidence", answer)
 
+    def test_onem2m_telemetry_answer_flags_offline_status_evidence(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_onem2m_flow_answer(
+            {
+                "query_device_id": "S3e1",
+                "devices": [{
+                    "status": "resource_matches_found",
+                    "telemetry_record_count": 2,
+                }],
+                "resource_summary": {
+                    "IDENTITY": {"present": True, "matched_count": 1},
+                    "AE": {
+                        "present": True,
+                        "matched_count": 1,
+                        "samples": [{
+                            "rn": "S3e1",
+                            "aei": "S3e1",
+                            "poast": [{
+                                "pointOfAccess": "mqtt://S3e1",
+                                "status": 0,
+                            }],
+                        }],
+                    },
+                    "CNT": {
+                        "present": True,
+                        "matched_count": 2,
+                        "telemetry_count": 1,
+                    },
+                    "CIN": {
+                        "present": True,
+                        "matched_count": 2,
+                        "telemetry_count": 2,
+                        "telemetry_samples": [
+                            {"con": "{\"status\": \"disconnected\"}"},
+                            {"con": "{\"temp\": 28.7}"},
+                        ],
+                    },
+                    "SUBSCRIPTION": {"present": True, "matched_count": 1},
+                    "URI_MAPPER": {"present": True, "matched_count": 1},
+                },
+                "flow_checks": {
+                    "required_input_complete": True,
+                    "identity_present": True,
+                    "ae_present": True,
+                    "telemetry_container_present": True,
+                    "backend_subscription_present": True,
+                    "latest_telemetry_cin_present": True,
+                },
+            },
+            "get_company_onem2m_telemetry_flow",
+            [],
+        )
+
+        self.assertIn("required telemetry uplink DB resources", answer)
+        self.assertIn("AE point-of-access status is OFFLINE", answer)
+        self.assertIn("latest telemetry CIN reports status `disconnected`", answer)
+        self.assertIn("not missing OneM2M resources", answer)
+        self.assertIn("Check notify logs for device S3e1", answer)
+        self.assertNotIn("Debug telemetry uplink for device S3e1", answer)
+
+    def test_onem2m_cin_followups_progress_to_logs_and_ae_context(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_cin_records_answer({
+            "query_device_id": "S3e1",
+            "cin_type": "telemetry",
+            "resource_summary": {
+                "AE": {"present": True, "matched_count": 1},
+                "CIN": {
+                    "present": True,
+                    "telemetry_samples": [
+                        {"con": "{\"status\": \"disconnected\"}"},
+                        {"con": "{\"status\": \"connected\"}"},
+                    ],
+                },
+            },
+        })
+
+        self.assertIn("Is device S3e1 online?", answer)
+        self.assertIn("Check notify logs for device S3e1", answer)
+        self.assertIn("Show the AE document for device S3e1", answer)
+        self.assertNotIn("Debug telemetry uplink for device S3e1", answer)
+
+    def test_onem2m_telemetry_answer_marks_failed_log_source_as_gap(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_onem2m_flow_answer(
+            {
+                "query_device_id": "S3e1",
+                "devices": [{
+                    "status": "resource_matches_found",
+                    "telemetry_record_count": 2,
+                }],
+                "resource_summary": {
+                    "IDENTITY": {"present": True, "matched_count": 1},
+                    "AE": {"present": True, "matched_count": 1},
+                    "CNT": {
+                        "present": True,
+                        "matched_count": 2,
+                        "telemetry_count": 1,
+                    },
+                    "CIN": {
+                        "present": True,
+                        "matched_count": 2,
+                        "telemetry_count": 2,
+                    },
+                    "SUBSCRIPTION": {"present": True, "matched_count": 1},
+                    "URI_MAPPER": {"present": True, "matched_count": 1},
+                },
+                "flow_checks": {
+                    "required_input_complete": True,
+                    "identity_present": True,
+                    "ae_present": True,
+                    "telemetry_container_present": True,
+                    "backend_subscription_present": True,
+                    "latest_telemetry_cin_present": True,
+                },
+            },
+            "get_company_onem2m_telemetry_flow",
+            [{
+                "source": "mcp_server",
+                "tool": "grafana_logs",
+                "http_call": {
+                    "params": {
+                        "service_name": "notify",
+                        "contains": "S3e1",
+                        "hours_back": 6,
+                    }
+                },
+                "result": {
+                    "error": "MCP tool call failed before tool result",
+                },
+            }],
+        )
+
+        self.assertIn("service=notify", answer)
+        self.assertIn("unavailable=MCP tool call failed", answer)
+        self.assertIn("One or more log sources were unavailable", answer)
+        self.assertIn("notify (MCP tool call failed", answer)
+
+    def test_loki_query_uses_single_full_window_call_when_successful(self):
+        with (
+            patch.object(
+                mcp_observability_service,
+                "_find_datasource_uid",
+                return_value="loki_uid",
+            ),
+            patch.object(
+                mcp_observability_service,
+                "_loki_query_chunk",
+                return_value=[],
+            ) as query_chunk,
+        ):
+            evidence = mcp_observability_service.query_loki_logs_via_mcp(
+                service_name="notify",
+                contains="S3e1",
+                hours_back=6,
+            )
+
+        self.assertEqual(query_chunk.call_count, 1)
+        self.assertEqual(evidence["request"]["hours_back"], 6)
+        self.assertEqual(evidence["result"], [])
+
+    def test_log_followup_extracts_service_device_and_time_window(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, _ = agent.classify_tool(
+            "Check notify logs for device "
+            "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b in the last 3 hours"
+        )
+
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params["service"], "notify")
+        self.assertEqual(
+            params["contains"],
+            "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b",
+        )
+        self.assertEqual(params["hours_back"], 3)
+
     def test_ioa_v3_filters_placeholder_planner_params(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
 
@@ -1065,6 +1416,85 @@ class IOAV3WorkflowTests(unittest.TestCase):
             'db.getSiblingDB("devicemgmt").getCollection("NODE").find',
             db_step["query_commands"][0]["command"],
         )
+        self.assertEqual(events[-1]["type"], "final")
+
+    def test_ioa_v3_device_drilldown_stream_uses_company_mongodb_evidence(self):
+        original_flag = os.environ.get("IOA_V3_SEMANTIC_PLANNER_ENABLED")
+        os.environ["IOA_V3_SEMANTIC_PLANNER_ENABLED"] = "false"
+        model = MagicMock()
+        model.invoke.return_value.content = (
+            "Device dev-1 is critical based on company MongoDB evidence."
+        )
+        model.invoke.return_value.response_metadata = {}
+        agent = IOAV3LangGraphN8nAgent(model=model)
+
+        try:
+            with patch(
+                "agents.ioa_v3_agent.get_company_device_drilldown_context",
+                return_value={
+                    "source": "company_mongodb",
+                    "tool": "get_company_device_drilldown",
+                    "query_device_id": "dev-1",
+                    "device_match_count": 1,
+                    "db_audit_status": "runtime_audit_available",
+                    "db_audit": [{
+                        "actor": "company-llm-tools",
+                        "operation": "find",
+                        "namespace": "datamgmt.CIN",
+                        "query": {"con.deviceId": "dev-1"},
+                        "projection": {"_id": 0, "con": 1, "ct": 1},
+                        "effective_limit": 500,
+                        "max_time_ms": 5000,
+                        "credentials_redacted": True,
+                        "mutating": False,
+                    }],
+                    "devices": [{
+                        "device_id": "dev-1",
+                        "status": "critical",
+                        "metrics": [{"name": "temperature", "value": 83}],
+                        "recent_history": [{
+                            "timestamp": "2026-07-16T09:00:00Z",
+                            "metrics": [{"name": "temperature", "value": 83}],
+                        }],
+                    }],
+                    "alerts": [{
+                        "alert_id": "alert-1",
+                        "device_id": "dev-1",
+                        "severity": "critical",
+                        "title": "Temperature above threshold",
+                    }],
+                    "evidence_gaps": [],
+                    "next_diagnostic_step": "Check recent telemetry trend.",
+                },
+            ):
+                events = list(agent.run_stream(
+                    "vì sao device dev-1 đang critical?",
+                    selected_source="company",
+                    source_resolution={
+                        "selected_source": "company",
+                        "active_source": "company_mongodb",
+                    },
+                    user_id=1,
+                ))
+        finally:
+            if original_flag is None:
+                os.environ.pop("IOA_V3_SEMANTIC_PLANNER_ENABLED", None)
+            else:
+                os.environ["IOA_V3_SEMANTIC_PLANNER_ENABLED"] = original_flag
+
+        observations = [
+            event for event in events
+            if event.get("type") == "observation"
+        ]
+        run_step = next(
+            event["observation"]["output"]
+            for event in observations
+            if event["observation"]["output"].get("workflow_count") == 1
+        )
+        execution = run_step["executions"][0]
+        self.assertEqual(execution["tool"], "get_company_device_drilldown")
+        self.assertEqual(execution["evidence"]["query_device_id"], "dev-1")
+        self.assertIn("query_commands", execution)
         self.assertEqual(events[-1]["type"], "final")
 
     def test_ioa_v3_run_stream_emits_n8n_and_kpi_steps(self):

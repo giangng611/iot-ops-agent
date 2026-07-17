@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime, timezone
 
@@ -264,6 +265,49 @@ def query_iot_platform_metric_via_mcp(tool_name, params=None):
         })
         return evidence
 
+    if tool_name == "query_rabbitmq_queue_detail":
+        namespace = params.get("namespace") or DEFAULT_RABBITMQ_NAMESPACE
+        queue_name = str(params.get("queue_name") or params.get("queue") or "").strip()
+        queue_filter = f',queue="{queue_name}"' if queue_name else ""
+        queries = _query_prometheus_instant_map({
+            "messages": (
+                f'sum(rabbitmq_queue_messages{{namespace="{namespace}",'
+                f'job="monitoring/rabbitmq"{queue_filter}}})'
+            ),
+            "messages_ready": (
+                f'sum(rabbitmq_queue_messages_ready{{namespace="{namespace}",'
+                f'job="monitoring/rabbitmq"{queue_filter}}})'
+            ),
+            "messages_unacked": (
+                f'sum(rabbitmq_queue_messages_unacked{{namespace="{namespace}",'
+                f'job="monitoring/rabbitmq"{queue_filter}}})'
+            ),
+            "consumers": (
+                f'sum(rabbitmq_queue_consumers{{namespace="{namespace}",'
+                f'job="monitoring/rabbitmq"{queue_filter}}})'
+            ),
+            "deliver_rate": (
+                f'sum(rate(rabbitmq_queue_messages_delivered_total{{namespace="{namespace}",'
+                f'job="monitoring/rabbitmq"{queue_filter}}}[5m]))'
+            ),
+            "publish_rate": (
+                f'sum(rate(rabbitmq_queue_messages_published_total{{namespace="{namespace}",'
+                f'job="monitoring/rabbitmq"{queue_filter}}}[5m]))'
+            ),
+        })
+        return {
+            "source": "mcp_server",
+            "mcp_tool": "grafana_query",
+            "scenario": "8_drilldown",
+            "tool": tool_name,
+            "request": {
+                "namespace": namespace,
+                "queue_name": queue_name or None,
+            },
+            "expected_metrics": list(queries.keys()),
+            "queries": queries,
+        }
+
     if tool_name == "grafana_emqx_dropped_trend":
         promql = 'sum(emqx_messages_dropped{namespace="emqx",job="emqx"})'
         evidence = _query_prometheus_range(
@@ -343,6 +387,22 @@ def query_iot_platform_metric_via_mcp(tool_name, params=None):
             "mcp_tool": "grafana_query",
             "scenario": "10a",
             "tool": tool_name,
+            "queries": queries,
+        }
+
+    if tool_name == "query_emqx_connection_count":
+        queries = _query_prometheus_instant_map({
+            "current_connections": 'sum(emqx_connections_count{job="emqx"})',
+            "max_connections": 'sum(emqx_connections_max{job="emqx"})',
+            "sessions": 'sum(emqx_sessions_count{job="emqx"})',
+        })
+        return {
+            "source": "mcp_server",
+            "mcp_tool": "grafana_query",
+            "scenario": "10_drilldown",
+            "tool": tool_name,
+            "request": {},
+            "expected_metrics": list(queries.keys()),
             "queries": queries,
         }
 
@@ -616,13 +676,43 @@ def query_loki_logs_via_mcp(
     safe_limit = _coerce_positive_int(limit, 50, 500)
     ns = namespace or DEFAULT_LOKI_NAMESPACE
     now = int(time.time())
+    full_start = now - safe_hours * 3600
 
-    # Query in 1-hour chunks from newest to oldest so each request stays
-    # well within Loki's server-side query_timeout. Stop on the first chunk
-    # that returns log entries, or after exhausting the full window.
+    try:
+        result = _loki_query_chunk(
+            datasource_uid,
+            full_start,
+            now,
+            service_name,
+            ns,
+            contains,
+            safe_limit,
+        )
+        return {
+            "source": "mcp_server",
+            "mcp_tool": "loki_query_range",
+            "request": {
+                "namespace": ns,
+                "service_name": service_name,
+                "contains": contains,
+                "hours_back": safe_hours,
+                "limit": safe_limit,
+            },
+            "result": result,
+        }
+    except Exception as exc:
+        full_window_error = exc
+
+    # Fallback to a small number of recent chunks only when the full-window
+    # query fails. This avoids turning one diagnostic into many MCP sessions.
+    max_chunks = _coerce_positive_int(
+        os.getenv("MCP_LOKI_FALLBACK_CHUNKS"),
+        2,
+        safe_hours,
+    )
     last_error = None
     had_success = False
-    for chunk_idx in range(safe_hours):
+    for chunk_idx in range(max_chunks):
         time.sleep(1.0)
         chunk_end = now - chunk_idx * 3600
         chunk_start = chunk_end - 3600
@@ -642,6 +732,7 @@ def query_loki_logs_via_mcp(
                         "contains": contains,
                         "hours_back": safe_hours,
                         "chunk_hours_back": chunk_idx + 1,
+                        "fallback_after_full_window_error": True,
                         "limit": safe_limit,
                     },
                     "result": result,
@@ -650,25 +741,25 @@ def query_loki_logs_via_mcp(
             last_error = exc
             continue
 
-    # Only surface the error if no chunk ever succeeded.
-    # If some chunks succeeded (empty) and some errored, treat as empty — not an error.
     if last_error and not had_success:
         return {
             "source": "mcp_server",
             "mcp_tool": "loki_query_range",
             "level": "unavailable",
-            "error": str(last_error),
+            "error": str(last_error or full_window_error),
             "request": {
                 "namespace": ns,
                 "service_name": service_name,
                 "contains": contains,
                 "hours_back": safe_hours,
+                "fallback_chunks": max_chunks,
                 "limit": safe_limit,
             },
             "logs": [],
         }
 
-    # All chunks succeeded but returned no matching entries
+    # Full-window query failed, but fallback chunks succeeded and returned no
+    # matching entries. Report the partial search boundary explicitly.
     return {
         "source": "mcp_server",
         "mcp_tool": "loki_query_range",
@@ -677,6 +768,8 @@ def query_loki_logs_via_mcp(
             "service_name": service_name,
             "contains": contains,
             "hours_back": safe_hours,
+            "searched_recent_chunks": max_chunks,
+            "fallback_after_full_window_error": True,
             "limit": safe_limit,
         },
         "result": [],

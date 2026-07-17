@@ -11,6 +11,10 @@ class McpClientError(RuntimeError):
     pass
 
 
+_mcp_request_lock = threading.Lock()
+_last_mcp_request_at = 0.0
+
+
 def get_mcp_server_url():
     return os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8000/mcp").strip()
 
@@ -21,6 +25,33 @@ def get_mcp_bearer_key():
         or os.getenv("MCP_TEST_BEARER_KEY")
         or ""
     ).strip()
+
+
+def _float_env(name, default):
+    try:
+        return max(0.0, float(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _pace_mcp_request():
+    global _last_mcp_request_at
+
+    min_interval = _float_env("MCP_CLIENT_MIN_INTERVAL_SECONDS", 0.2)
+    if min_interval <= 0:
+        return
+
+    with _mcp_request_lock:
+        now = time.monotonic()
+        wait_seconds = min_interval - (now - _last_mcp_request_at)
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+        _last_mcp_request_at = time.monotonic()
+
+
+def _is_rate_limit_error(exc):
+    message = str(exc).lower()
+    return "429" in message or "too many requests" in message or "rate limit" in message
 
 
 def _extract_mcp_result(result, tool_name):
@@ -73,22 +104,31 @@ async def _call_mcp_tool_async(tool_name, arguments):
 
     result = None
 
-    try:
-        async with streamablehttp_client(
-            url,
-            headers=headers,
-            terminate_on_close=False,
-        ) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(tool_name, arguments or {})
-    except Exception as exc:
-        if result is not None:
-            return _extract_mcp_result(result, tool_name)
+    attempts = int(_float_env("MCP_CLIENT_RETRY_ATTEMPTS", 2))
 
-        raise McpClientError(
-            f"MCP tool call failed before tool result: {tool_name}: {exc}"
-        ) from exc
+    for attempt in range(max(1, attempts)):
+        try:
+            await asyncio.to_thread(_pace_mcp_request)
+            async with streamablehttp_client(
+                url,
+                headers=headers,
+                terminate_on_close=False,
+            ) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    result = await session.call_tool(tool_name, arguments or {})
+            break
+        except Exception as exc:
+            if result is not None:
+                return _extract_mcp_result(result, tool_name)
+
+            if _is_rate_limit_error(exc) and attempt < attempts - 1:
+                await asyncio.sleep(1.0 + attempt)
+                continue
+
+            raise McpClientError(
+                f"MCP tool call failed before tool result: {tool_name}: {exc}"
+            ) from exc
 
     return _extract_mcp_result(result, tool_name)
 
@@ -171,6 +211,7 @@ class SyncMcpToolSession:
                     tool_name, arguments, future = request
 
                     try:
+                        await asyncio.to_thread(_pace_mcp_request)
                         result = await session.call_tool(
                             tool_name,
                             arguments or {},

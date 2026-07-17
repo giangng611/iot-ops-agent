@@ -33,6 +33,16 @@
       "description": "RabbitMQ queue backlog trend over a bounded time range."
     },
     {
+      "name": "query_rabbitmq_queue_detail",
+      "workflow_id": "rabbitmq_queue_detail",
+      "intent": "query_rabbitmq_queue_detail",
+      "method": "MCP",
+      "path": "grafana_query",
+      "allowed_params": ["namespace", "queue_name"],
+      "kpi": "Queue Backlog",
+      "description": "RabbitMQ per-queue messages, ready/unacked breakdown, consumers, and rates for a named queue."
+    },
+    {
       "name": "grafana_throughput",
       "workflow_id": "rabbitmq_throughput",
       "intent": "grafana_throughput",
@@ -110,6 +120,16 @@
       "allowed_params": ["start", "end", "step"],
       "kpi": "Reconnect Rate",
       "description": "EMQX connected/disconnected rate trend for onboarding and reconnect-loop diagnostics."
+    },
+    {
+      "name": "query_emqx_connection_count",
+      "workflow_id": "emqx_connection_count",
+      "intent": "query_emqx_connection_count",
+      "method": "MCP",
+      "path": "grafana_query",
+      "allowed_params": [],
+      "kpi": "Broker Availability",
+      "description": "Current EMQX connection count, sessions, and utilization versus max connections."
     },
     {
       "name": "grafana_k8s_health",

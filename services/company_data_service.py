@@ -2322,6 +2322,131 @@ def get_company_device_context(identifier):
     }
 
 
+def get_company_device_drilldown_context(
+    identifier=None,
+    limit=MAX_AGENT_SAMPLE_RECORDS,
+):
+    if company_db_type() != "mongodb":
+        return simulator_fallback_snapshot(
+            "Company MongoDB URL is not configured."
+        )
+
+    safe_limit = max(1, min(int(limit), MAX_AGENT_SAMPLE_RECORDS))
+    target = normalize_company_key(identifier)
+
+    try:
+        with get_company_mongo_read_proxy("company-llm-tools") as proxy:
+            model = load_company_device_read_model(proxy)
+            db_audit = proxy.get_audit_events()
+    except Exception as exc:
+        return simulator_fallback_snapshot(
+            f"Company MongoDB read failed: {exc}"
+        )
+
+    matched_devices = []
+
+    if target:
+        for device in model.get("devices") or []:
+            aliases = set(device.get("_aliases") or set())
+            aliases.update(company_aliases(
+                device.get("device_id"),
+                device.get("device_name"),
+                device.get("node_id"),
+            ))
+
+            if target not in aliases:
+                continue
+
+            compact = compact_company_device(serialize_company_device(device))
+            compact["recent_history"] = (
+                device.get("_history", [])[-safe_limit:]
+            )
+            compact["history_count"] = len(device.get("_history", []))
+            matched_devices.append(compact)
+
+    records = [
+        serialize_company_device(device)
+        for device in model.get("devices") or []
+    ]
+    fallback_alerts = evaluate_company_poc_rules(records)
+    kpi_evaluations = build_company_kpi_evaluations(model)
+    official_alerts = build_company_kpi_alerts(kpi_evaluations)
+
+    def alert_matches(alert):
+        if not target:
+            return False
+        alert_aliases = company_aliases(
+            alert.get("device_id"),
+            alert.get("device_name"),
+            alert.get("node_id"),
+        )
+        return target in alert_aliases
+
+    matched_fallback_alerts = [
+        alert
+        for alert in fallback_alerts.get("active_alerts") or []
+        if alert_matches(alert)
+    ][:safe_limit]
+    matched_official_alerts = [
+        alert
+        for alert in official_alerts
+        if alert_matches(alert)
+    ][:safe_limit]
+
+    evidence_gaps = []
+
+    if not identifier:
+        evidence_gaps.append("No concrete device_id was provided.")
+    elif not matched_devices:
+        evidence_gaps.append("No company MongoDB device matched the requested identifier.")
+
+    if matched_devices and not any(
+        device.get("recent_history") for device in matched_devices
+    ):
+        evidence_gaps.append("No recent telemetry history was joined for the matched device.")
+
+    if not matched_fallback_alerts and not matched_official_alerts:
+        evidence_gaps.append("No alert matched the requested device in the bounded alert evidence.")
+
+    return {
+        "source": "company_mongodb",
+        "tool": "get_company_device_drilldown",
+        "db_audit": db_audit,
+        "db_audit_status": (
+            "runtime_audit_available" if db_audit else "missing_runtime_audit"
+        ),
+        "query_device_id": identifier,
+        "device_match_count": len(matched_devices),
+        "devices": matched_devices[:safe_limit],
+        "alerts": matched_fallback_alerts,
+        "official_alerts": matched_official_alerts,
+        "kpi_evaluations": [
+            evaluation for evaluation in kpi_evaluations
+            if not target or any(
+                target in company_aliases(
+                    device.get("device_id"),
+                    device.get("device_name"),
+                    device.get("node_id"),
+                )
+                for device in evaluation.get("matched_devices") or []
+            )
+        ][:safe_limit],
+        "evidence_gaps": evidence_gaps,
+        "summary": {
+            "device_count": len(model.get("devices") or []),
+            "matched_device_count": len(matched_devices),
+            "fallback_alert_count": len(matched_fallback_alerts),
+            "official_alert_count": len(matched_official_alerts),
+            "kpi_evaluation_count": len(kpi_evaluations),
+        },
+        "next_diagnostic_step": (
+            "Use the matched metrics, recent telemetry history, and alert evidence "
+            "to explain the device state. If evidence is missing, ask for a more "
+            "specific device_id, time range, or related alert/request id."
+        ),
+    }
+
+
 def compact_resource_document(document):
     if not isinstance(document, dict):
         return document
@@ -2339,6 +2464,7 @@ def compact_resource_document(document):
         "cr",
         "ct",
         "lt",
+        "poast",
         "parentContainer",
         "cnf",
         "con",
@@ -2552,6 +2678,7 @@ def read_onem2m_resource_sets(proxy, identifier=None):
                 "api": 1,
                 "rr": 1,
                 "poa": 1,
+                "poast": 1,
                 "ct": 1,
                 "lt": 1,
                 "tenantId": 1,

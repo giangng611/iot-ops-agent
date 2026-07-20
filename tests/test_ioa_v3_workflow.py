@@ -957,6 +957,17 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("| `URI_MAPPER` | **Missing** |", answer)
         self.assertIn("incomplete OneM2M registration", answer)
 
+    def test_onem2m_resource_evidence_adds_soft_wrap_points(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        evidence = agent.onem2m_resource_evidence_summary({
+            "samples": [{
+                "_id": "in-name/S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f",
+            }]
+        })
+
+        self.assertIn("\u200b", evidence)
+        self.assertIn("in-\u200bname/\u200bS3e1c21c3-\u200b7aad", evidence)
+
     def test_onem2m_command_answer_uses_failure_point_not_root_cause(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
         answer = agent.build_onem2m_flow_answer(

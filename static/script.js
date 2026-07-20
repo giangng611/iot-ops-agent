@@ -77,7 +77,7 @@ socket.on("telegram_chat_started", (data) => {
         return;
     }
 
-    isAgentRunning = true;
+    beginAgentRun();
     telegramActiveChatId = chatId;
     currentChatId = chatId;
     latestReasoningSteps = [];
@@ -321,7 +321,6 @@ const prompts = [
     "/overview system health",
     "/check all unhealthy devices",
     "/find critical devices",
-    "/diagnose system issue",
     "/check devices with delayed heartbeat",
     "/show devices with alarms",
     "/check company telemetry records greater than a threshold",
@@ -331,8 +330,8 @@ const prompts = [
 ];
 
 const homeHeroPrompts = [
-    "Ask about fleet health, critical devices, alarms, or device diagnosis.",
-    "Try a fleet overview, heartbeat check, or root-cause diagnosis.",
+    "Ask about fleet health, critical devices, alarms, or runbook checks.",
+    "Try a fleet overview, heartbeat check, or operational drilldown.",
     "Review alarms, risky gateways, and devices that need attention.",
     "Ask the agent to summarize current IoT operations risk."
 ];
@@ -550,6 +549,17 @@ function isDefaultPromptItem(prompt) {
 
 function promptShortcut(prompt) {
     return isDefaultPromptItem(prompt) ? (prompt.shortcut || "") : "";
+}
+
+function beginAgentRun() {
+    isAgentRunning = true;
+    setAppBusyState(true);
+}
+
+function endAgentRun() {
+    isAgentRunning = false;
+    setAppBusyState(false);
+    updateRunButtonState();
 }
 
 function setMode(mode) {
@@ -1318,7 +1328,7 @@ async function sendMessage() {
         return;
     }
 
-    isAgentRunning = true;
+    beginAgentRun();
     const input = document.getElementById("messageInput");
     const loading = document.getElementById("loading");
     const suggestions = document.getElementById("promptSuggestions");
@@ -1328,8 +1338,7 @@ async function sendMessage() {
     const message = expandSlashShortcutMessage(rawMessage);
 
     if (!message) {
-        isAgentRunning = false;
-        updateRunButtonState();
+        endAgentRun();
         return;
     }
 
@@ -1339,25 +1348,24 @@ async function sendMessage() {
         );
         input.reportValidity();
         input.setCustomValidity("");
-        isAgentRunning = false;
-        updateRunButtonState();
+        endAgentRun();
         return;
     }
 
-    resetLiveReasoningRun();
+    try {
+        resetLiveReasoningRun();
 
-    input.value = "";
-    autoResizeMessageInput();
-    updateRunButtonState();
-    input.disabled = true;
-    setAppBusyState(true);
+        input.value = "";
+        autoResizeMessageInput();
+        updateRunButtonState();
+        input.disabled = true;
 
-    await createChatIfNeeded(message);
+        await createChatIfNeeded(message);
 
-    const hero = document.getElementById("homeHero");
-    hero.classList.add("hidden");
+        const hero = document.getElementById("homeHero");
+        hero.classList.add("hidden");
 
-    suggestions.classList.add("hidden");
+        suggestions.classList.add("hidden");
         if (
             currentMode === "ioa_v2_custom" ||
             currentMode === "ioa_v2_langchain" ||
@@ -1366,31 +1374,30 @@ async function sendMessage() {
             currentMode === "ioa_v2_dify" ||
             currentMode === "ioa_v3_langgraph_n8n"
         ) {
-        loading.innerHTML = `
-            <span>Agent is thinking...</span>
-            <button class="reasoning-loading-btn" onclick="openReasoningDrawer()">
-                Show reasoning trace
-            </button>
+            loading.innerHTML = `
+                <span>Agent is thinking...</span>
+                <button class="reasoning-loading-btn" onclick="openReasoningDrawer()">
+                    Show reasoning trace
+                </button>
+            `;
+        } else {
+            loading.innerHTML = `
+                <span>Agent is thinking...</span>
+            `;
+        }
+
+        loading.classList.remove("hidden");
+
+        runButton.disabled = true;
+        runButton.innerHTML = `
+            <span>Running...</span>
+            <small>Please wait</small>
         `;
-    } else {
-        loading.innerHTML = `
-            <span>Agent is thinking...</span>
-        `;
-    }
 
-    loading.classList.remove("hidden");
+        addUserMessage(message);
 
-    runButton.disabled = true;
-    runButton.innerHTML = `
-        <span>Running...</span>
-        <small>Please wait</small>
-    `;
+        await saveMessageToDatabase("user", message);
 
-    addUserMessage(message);
-
-    await saveMessageToDatabase("user", message);
-
-    try {
         let finalAnswer = "";
 
         if (
@@ -1449,9 +1456,7 @@ async function sendMessage() {
 
         input.disabled = false;
         autoResizeMessageInput();
-        isAgentRunning = false;
-        setAppBusyState(false);
-        updateRunButtonState();
+        endAgentRun();
     }
 }
 
@@ -1593,19 +1598,6 @@ async function sendStreamMessage(message) {
     return finalAnswer;
 }
 
-function diagnoseDevice(deviceId) {
-    rememberPromptDeviceId(deviceId);
-    const input = document.getElementById("messageInput");
-    input.value = `/diagnose ${deviceId}`;
-    scheduleMessageInputResize();
-    updateRunButtonState();
-
-    const homeButton = document.querySelector(".top-tab");
-    showTab("home", homeButton);
-
-    sendMessage();
-}
-
 async function copyDeviceId(deviceId, button = null) {
     const value = String(deviceId || "").trim();
 
@@ -1741,14 +1733,24 @@ function renderChatHistory() {
         `;
 
         item.onclick = function () {
+            if (isAgentRunning) {
+                return;
+            }
+
             loadChat(chat.id);
         };
 
         history.appendChild(item);
     });
+
+    setAppBusyState(isAgentRunning);
 }
 
 async function loadChat(chatId) {
+    if (isAgentRunning) {
+        return;
+    }
+
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
     const chat = chats.find(item => item.id === chatId);
@@ -2917,15 +2919,14 @@ function renderDeviceTable() {
             <th>Memory</th>
             <th>Heartbeat</th>
             <th>Priority</th>
-            <th>Diagnose</th>
-            <th>History</th>
+            <th class="device-history-column">History</th>
         `;
 
     if (!allDevices || allDevices.length === 0) {
         pagination?.classList.add("hidden");
         tableBody.innerHTML = `
             <tr>
-                <td colspan="${companyMode ? 6 : 8}">
+                <td colspan="${companyMode ? 6 : 7}">
                     Waiting for realtime telemetry...
                 </td>
             </tr>
@@ -3007,7 +3008,7 @@ function renderDeviceTable() {
     if (pagedDevices.length === 0) {
         tableBody.innerHTML = `
             <tr>
-                <td colspan="${companyMode ? 6 : 8}">
+                <td colspan="${companyMode ? 6 : 7}">
                     No devices match the current filters.
                 </td>
             </tr>
@@ -3120,13 +3121,7 @@ function renderDeviceTable() {
                 <td>${formatMetricValue(device.memory_usage, "%")}</td>
                 <td>${formatMetricValue(device.heartbeat_delay, "s ago")}</td>
                 <td>${priority}</td>
-                <td>
-                    <button onclick="diagnoseDevice('${rawDeviceId}')">
-                        Diagnose
-                    </button>
-                </td>
-
-                <td>
+                <td class="device-history-cell">
                     ${device.company_record ? `
                         <button disabled title="Company telemetry chart mapping is pending.">
                             Raw record
@@ -5243,10 +5238,6 @@ function renderAlertCenter() {
                 </div>
 
                 <div class="alert-actions">
-                    <button onclick="diagnoseDevice('${device.device_id}')">
-                        Diagnose
-                    </button>
-
                     <button onclick="showDeviceHistory('${device.device_id}')">
                         History
                     </button>
@@ -5417,9 +5408,6 @@ function renderOfficialAlertRow(row) {
     const actions = deviceId
         ? `
             <div class="alert-row-actions">
-                <button onclick="diagnoseDevice('${escapeJsString(deviceId)}')">
-                    Diagnose
-                </button>
                 <button class="secondary-btn" onclick="showDeviceHistory('${escapeJsString(deviceId)}')">
                     History
                 </button>
@@ -5615,9 +5603,6 @@ function renderCompanyPocAlerts(badge, summary, alertList) {
                     </span>
                 </div>
                 <div class="alert-actions">
-                    <button onclick="diagnoseDevice('${escapeHtml(alert.device_id)}')">
-                        Diagnose
-                    </button>
                     <button onclick="showDeviceHistory('${escapeHtml(alert.device_id)}')">
                         History
                     </button>
@@ -7283,9 +7268,19 @@ function setAppBusyState(isBusy) {
     const newChatButton = document.querySelector(".new-chat-btn");
     const logoutButton = document.querySelector(".logout-text-btn");
     const profileCard = document.querySelector(".profile-card");
+    const chatSearch = document.getElementById("chatSearch");
+    const sidebarToggle = document.getElementById("sidebarToggle");
 
     if (newChatButton) {
         newChatButton.disabled = isBusy;
+    }
+
+    if (chatSearch) {
+        chatSearch.disabled = isBusy;
+    }
+
+    if (sidebarToggle) {
+        sidebarToggle.disabled = isBusy;
     }
 
     if (logoutButton) {

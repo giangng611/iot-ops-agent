@@ -2133,9 +2133,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                         },
                     },
                     app_module.langgraph_agent,
-                    get_user_data_source=(
-                        app_module.get_user_selected_data_source
-                    ),
+                    get_user_data_source=lambda user_id: "company",
                 )
 
                 self.assertEqual(payload["status"], "forbidden")
@@ -2202,7 +2200,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                         "message": {
                             "chat": {"id": 123},
                             "from": {"id": 456, "username": "ops_user"},
-                            "text": "/overview system health",
+                            "text": "/api-health system health",
                         },
                     },
                     app_module.langgraph_agent,
@@ -2221,9 +2219,8 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "answered")
                 self.assertTrue(payload["history_chat_id"])
                 mock_run_stream.assert_called_once_with(
-                    "Review core IoT platform KPIs: availability, connected "
-                    "devices rate, ingestion health, API success, and any "
-                    "data quality gaps.",
+                    "Check HTTP API success, 5xx errors, and p95 latency "
+                    "against the platform KPI guidance.",
                     data_source="company",
                 )
 
@@ -2320,6 +2317,82 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             os.environ.pop("TELEGRAM_BOT_TOKEN", None)
             os.environ.pop("TELEGRAM_WEBHOOK_SECRET", None)
             os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
+
+    @patch("services.telegram_service.requests.post")
+    def test_telegram_follow_up_reuses_active_history_chat(self, mock_post):
+        user = self.create_user_once("telegram-followup-user", "followup-pass")
+        self.grant_company_data_source(user)
+        self.map_telegram_user(
+            459,
+            user,
+            allowed_data_sources=["simulator", "company"],
+        )
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-telegram-token"
+        mock_post.return_value.raise_for_status.return_value = None
+
+        ioa_v3_agent = MagicMock()
+        ioa_v3_agent.plan_workflows = MagicMock()
+        ioa_v3_agent.run_stream.side_effect = [
+            iter([{
+                "type": "final",
+                "final_answer": "Command check complete.",
+                "token_usage": {},
+            }]),
+            iter([{
+                "type": "final",
+                "final_answer": "Latest command evidence.",
+                "token_usage": {},
+            }]),
+        ]
+
+        try:
+            first_payload = telegram_service.process_telegram_update(
+                {
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 459, "username": "followup_user"},
+                        "text": "/cmd Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b",
+                    },
+                },
+                ioa_v3_agent,
+                get_user_data_source=lambda user_id: "company",
+                resolve_source_context=lambda selected_source: {
+                    "selected_source": selected_source,
+                    "active_source": "company_mongodb",
+                },
+            )
+            followup_payload = telegram_service.process_telegram_update(
+                {
+                    "message": {
+                        "chat": {"id": 123},
+                        "from": {"id": 459, "username": "followup_user"},
+                        "text": (
+                            "Show the latest command sent to device "
+                            "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b"
+                        ),
+                    },
+                },
+                ioa_v3_agent,
+                get_user_data_source=lambda user_id: "company",
+                resolve_source_context=lambda selected_source: {
+                    "selected_source": selected_source,
+                    "active_source": "company_mongodb",
+                },
+            )
+
+            self.assertTrue(first_payload["history_chat_created"])
+            self.assertFalse(followup_payload["history_chat_created"])
+            self.assertEqual(
+                first_payload["history_chat_id"],
+                followup_payload["history_chat_id"],
+            )
+            messages = get_messages(first_payload["history_chat_id"])
+            self.assertEqual(
+                [message["role"] for message in messages],
+                ["user", "assistant", "user", "assistant"],
+            )
+        finally:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
 
     @patch("services.telegram_service.requests.post")
     def test_telegram_chat_started_before_company_source_resolution(self, mock_post):
@@ -2514,9 +2587,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                         },
                     },
                     app_module.langgraph_agent,
-                    get_user_data_source=(
-                        app_module.get_user_selected_data_source
-                    ),
+                    get_user_data_source=lambda user_id: "company",
                 )
 
                 self.assertEqual(payload["status"], "help_sent")
@@ -2548,6 +2619,23 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertIn("1. Summary", formatted)
         self.assertIn("• CPU is 92%", formatted)
 
+    def test_telegram_answer_format_flattens_markdown_tables(self):
+        formatted = telegram_service.format_telegram_answer_text(
+            "4. Database Resources\n"
+            "| Resource | Status | Matched | Evidence |\n"
+            "|---|---|---|---|\n"
+            "| `IDENTITY` | Present | 1 | `_id=S3e1c21c3-7aad` |\n"
+            "| `AE` | Present | 50 | `rn=S3e1c21c3-7aad` |\n"
+        )
+
+        self.assertNotIn("| Resource |", formatted)
+        self.assertNotIn("|---|", formatted)
+        self.assertIn(
+            "• Resource: IDENTITY — Status: Present; Matched: 1; "
+            "Evidence: _id=S3e1c21c3-7aad",
+            formatted,
+        )
+
     def test_telegram_command_payload_contains_supported_commands(self):
         payload = telegram_service.build_set_commands_payload()
         commands = json.loads(payload["commands"])
@@ -2555,19 +2643,19 @@ class SecurityAndRealtimeTests(unittest.TestCase):
 
         self.assertTrue(
             {
-                "kpi",
                 "apihealth",
-                "companyfleet",
+                "infra",
                 "cmd",
                 "telemetry",
                 "resources",
-                "simfleet",
                 "diagnose",
                 "link",
                 "unlink",
                 "help",
             }.issubset(command_names),
         )
+        self.assertNotIn("simfleet", command_names)
+        self.assertNotIn("companyfleet", command_names)
 
     @patch("services.telegram_service.requests.post")
     def test_telegram_duplicate_update_is_answered_once(self, mock_post):
@@ -2582,7 +2670,7 @@ class SecurityAndRealtimeTests(unittest.TestCase):
             "message": {
                 "chat": {"id": 123},
                 "from": {"id": 456, "username": "ops_user"},
-                "text": "/overview system health",
+                "text": "/sim-fleet",
             },
         }
 
@@ -2613,9 +2701,9 @@ class SecurityAndRealtimeTests(unittest.TestCase):
                     "duplicate",
                 )
                 mock_run_stream.assert_called_once_with(
-                    "Review core IoT platform KPIs: availability, connected "
-                    "devices rate, ingestion health, API success, and any "
-                    "data quality gaps.",
+                    "Check the simulator fleet status. Summarize total "
+                    "devices, healthy, warning, critical, active alarms, and "
+                    "the next simple diagnostic step.",
                     data_source="simulator",
                 )
                 self.assertEqual(mock_post.call_count, 1)

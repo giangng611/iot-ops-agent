@@ -3129,9 +3129,15 @@ class IOAV3LangGraphN8nAgent:
         for key in ("rn", "_id", "aei", "pi", "ct", "lt"):
             value = sample.get(key)
             if value not in (None, ""):
-                return f"`{key}={value}`"
+                return f"`{self.wrap_table_token(f'{key}={value}')}`"
 
         return "Matched sample returned"
+
+    def wrap_table_token(self, value):
+        text = str(value)
+        for separator in ("=", "/", "_", "-"):
+            text = text.replace(separator, separator + "\u200b")
+        return text
 
     def deny_request_node(self, state):
         reason = state.get("policy_reason") or "request_denied"

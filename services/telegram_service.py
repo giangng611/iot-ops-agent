@@ -10,12 +10,19 @@ import requests
 from services.chat_service import save_chat_message
 from services.company_data_service import get_company_telemetry_coverage_context
 from services.prompt_service import (
+    DEFAULT_PROMPTS,
     PROMPT_SHORTCUTS,
-    get_default_prompt,
+    SIMULATOR_PROMPTS,
     get_default_prompt_command,
+    list_prompts,
 )
 from services.telegram_link_service import consume_link_code, unlink_telegram_identity
-from storage.relational_store import create_chat, get_telegram_identity
+from storage.relational_store import (
+    chat_belongs_to_user,
+    create_chat,
+    get_chats,
+    get_telegram_identity,
+)
 
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -23,6 +30,7 @@ MAX_TELEGRAM_MESSAGE_CHARS = 3900
 _telegram_update_lock = threading.Lock()
 _telegram_updates_inflight = set()
 _telegram_updates_processed = OrderedDict()
+_telegram_active_history = {}
 TELEGRAM_STATIC_COMMANDS = [
     {"command": "diagnose", "description": "Diagnose the system or a device"},
     {"command": "link", "description": "Link Telegram to your IoT Ops Agent account"},
@@ -78,37 +86,60 @@ def normalize_telegram_command_name(command):
 
 
 def build_telegram_command_prompt_map():
+    return build_telegram_command_prompt_map_for_source()
+
+
+def get_telegram_prompt_catalog(user_id=None, selected_source=None):
+    if selected_source in {"simulator", "company"}:
+        return list_prompts(user_id or 0, selected_source)
+
+    prompts = DEFAULT_PROMPTS + SIMULATOR_PROMPTS
+    return [
+        {
+            **prompt,
+            "shortcut": PROMPT_SHORTCUTS.get(prompt["id"]),
+        }
+        for prompt in prompts
+    ]
+
+
+def build_telegram_command_prompt_map_for_source(
+    user_id=None,
+    selected_source=None,
+):
     prompt_map = {}
 
-    for prompt_id, shortcut in PROMPT_SHORTCUTS.items():
-        prompt_command = get_default_prompt_command(prompt_id)
+    for prompt in get_telegram_prompt_catalog(user_id, selected_source):
+        shortcut = prompt.get("shortcut")
+        prompt_command = prompt.get("command")
 
-        if not prompt_command:
+        if not shortcut or not prompt_command:
             continue
 
         prompt_map[str(shortcut).lstrip("/").lower()] = prompt_command
         prompt_map[telegram_command_name(shortcut)] = prompt_command
 
-    for alias, prompt_id in TELEGRAM_LEGACY_PROMPT_ALIASES.items():
-        prompt_command = get_default_prompt_command(prompt_id)
+    if selected_source is None:
+        for alias, prompt_id in TELEGRAM_LEGACY_PROMPT_ALIASES.items():
+            prompt_command = get_default_prompt_command(prompt_id)
 
-        if prompt_command:
-            prompt_map.setdefault(alias, prompt_command)
+            if prompt_command:
+                prompt_map.setdefault(alias, prompt_command)
 
     return prompt_map
 
 
-def build_telegram_prompt_commands():
+def build_telegram_prompt_commands(user_id=None, selected_source="company"):
     commands = []
     seen = set()
 
-    for prompt_id, shortcut in PROMPT_SHORTCUTS.items():
+    for prompt in get_telegram_prompt_catalog(user_id, selected_source):
+        shortcut = prompt.get("shortcut")
         command = telegram_command_name(shortcut)
 
         if not command or command in seen:
             continue
 
-        prompt = get_default_prompt(prompt_id) or {}
         commands.append({
             "command": command,
             "description": str(prompt.get("title") or command)[:256],
@@ -118,8 +149,11 @@ def build_telegram_prompt_commands():
     return commands
 
 
-def get_telegram_commands():
-    return build_telegram_prompt_commands() + TELEGRAM_STATIC_COMMANDS
+def get_telegram_commands(user_id=None, selected_source="company"):
+    return (
+        build_telegram_prompt_commands(user_id, selected_source)
+        + TELEGRAM_STATIC_COMMANDS
+    )
 
 
 def get_telegram_device_suggestions(limit=5):
@@ -331,11 +365,15 @@ def data_source_is_allowed(identity, data_source):
     return data_source in allowed_sources
 
 
-def build_help_text():
+def build_help_text(user_id=None, selected_source=None):
     prompt_lines = []
 
-    for prompt_id, shortcut in PROMPT_SHORTCUTS.items():
-        prompt = get_default_prompt(prompt_id) or {}
+    for prompt in get_telegram_prompt_catalog(user_id, selected_source):
+        shortcut = prompt.get("shortcut")
+
+        if not shortcut:
+            continue
+
         title = prompt.get("title") or shortcut
         telegram_alias = telegram_command_name(shortcut)
         display_shortcut = str(shortcut)
@@ -357,15 +395,23 @@ def build_help_text():
     ])
 
 
-def normalize_telegram_prompt(text, include_device_suggestions=False):
+def normalize_telegram_prompt(
+    text,
+    include_device_suggestions=False,
+    user_id=None,
+    selected_source=None,
+):
     if text in {"/", "/start", "/help"}:
-        return None, build_help_text()
+        return None, build_help_text(user_id, selected_source)
 
     command_text, _, arguments = text.partition(" ")
     command = normalize_telegram_command_name(
         command_text.split("@", 1)[0].lstrip("/").lower()
     )
-    command_prompts = build_telegram_command_prompt_map()
+    command_prompts = build_telegram_command_prompt_map_for_source(
+        user_id,
+        selected_source,
+    )
 
     if command in command_prompts:
         prompt = command_prompts[command]
@@ -392,6 +438,16 @@ def normalize_telegram_prompt(text, include_device_suggestions=False):
         )
 
     return text, None
+
+
+def telegram_message_starts_new_topic(text):
+    command_text = str(text or "").strip().partition(" ")[0]
+
+    if not command_text.startswith("/"):
+        return False
+
+    command = command_text.split("@", 1)[0].lstrip("/").lower()
+    return command not in {"", "start", "help", "link", "unlink"}
 
 
 def parse_link_command(text):
@@ -510,6 +566,95 @@ def format_conversational_text(text):
     return value.strip()
 
 
+def _split_markdown_table_row(line):
+    stripped = line.strip()
+
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+
+    return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+
+def _is_markdown_separator_row(cells):
+    return bool(cells) and all(
+        re.fullmatch(r":?-{3,}:?", str(cell or "").strip())
+        for cell in cells
+    )
+
+
+def _plain_table_cell(value):
+    value = re.sub(r"`([^`\n]+)`", r"\1", str(value or "").strip())
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _format_markdown_table_for_telegram(table_lines):
+    rows = [
+        _split_markdown_table_row(line)
+        for line in table_lines
+    ]
+    rows = [row for row in rows if row]
+
+    if len(rows) < 2:
+        return table_lines
+
+    headers = [_plain_table_cell(cell) for cell in rows[0]]
+    body_rows = [
+        row
+        for row in rows[1:]
+        if not _is_markdown_separator_row(row)
+    ]
+    formatted = []
+
+    for row in body_rows:
+        cells = [_plain_table_cell(cell) for cell in row]
+        pairs = [
+            (headers[index], cell)
+            for index, cell in enumerate(cells)
+            if index < len(headers) and cell
+        ]
+
+        if not pairs:
+            continue
+
+        label_header, label = pairs[0]
+        rest = pairs[1:]
+
+        if rest:
+            details = "; ".join(
+                f"{header}: {cell}" if header else cell
+                for header, cell in rest
+            )
+            formatted.append(f"• {label_header}: {label} — {details}")
+        else:
+            formatted.append(f"• {label_header}: {label}")
+
+    return formatted or table_lines
+
+
+def format_telegram_answer_text(text):
+    lines = str(text or "").replace("\r\n", "\n").split("\n")
+    output = []
+    table_lines = []
+
+    def flush_table():
+        if not table_lines:
+            return
+
+        output.extend(_format_markdown_table_for_telegram(table_lines))
+        table_lines.clear()
+
+    for line in lines:
+        if _split_markdown_table_row(line):
+            table_lines.append(line)
+            continue
+
+        flush_table()
+        output.append(line)
+
+    flush_table()
+    return "\n".join(output).strip()
+
+
 def split_telegram_text(text):
     if len(text) <= MAX_TELEGRAM_MESSAGE_CHARS:
         return [text]
@@ -526,7 +671,7 @@ def split_telegram_text(text):
 
 def _md_to_telegram_html(text):
     """Convert GFM-style markdown to Telegram HTML (parse_mode=HTML).
-    - Tables → <pre> monospace blocks
+    - Table rows that remain at this stage → <pre> monospace blocks
     - # / ## headers → <b>
     - **bold** → <b>, `code` → <code>
     - ``` fenced blocks → <pre>
@@ -606,7 +751,7 @@ def send_telegram_message(chat_id, text):
     if not bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured.")
 
-    html = _md_to_telegram_html(text)
+    html = _md_to_telegram_html(format_telegram_answer_text(text))
     for chunk in split_telegram_text(html):
         response = requests.post(
             f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMessage",
@@ -642,16 +787,69 @@ def make_chat_title(message):
     return f"Telegram: {compact_message or 'New request'}"
 
 
-def start_telegram_history(user_id, message):
-    chat_id = create_chat(user_id, make_chat_title(message["text"]))
-    save_chat_message(
+def telegram_history_key(message):
+    return (
+        str(message.get("telegram_user_id") or ""),
+        str(message.get("chat_id") or ""),
+    )
+
+
+def latest_telegram_history_chat_id(user_id):
+    try:
+        chats = get_chats(user_id)
+    except Exception:
+        return None
+
+    telegram_chats = [
+        chat
+        for chat in chats
+        if str(chat.get("title") or "").startswith("Telegram:")
+    ]
+
+    if not telegram_chats:
+        return None
+
+    return max(telegram_chats, key=lambda chat: int(chat.get("id") or 0))["id"]
+
+
+def start_telegram_history(user_id, message, new_topic=True):
+    key = telegram_history_key(message)
+    chat_id = None
+    created = False
+
+    if not new_topic:
+        chat_id = _telegram_active_history.get(key)
+
+        if chat_id and not chat_belongs_to_user(chat_id, user_id):
+            chat_id = None
+
+        if chat_id is None:
+            chat_id = latest_telegram_history_chat_id(user_id)
+
+    if chat_id is None:
+        chat_id = create_chat(user_id, make_chat_title(message["text"]))
+        _telegram_active_history[key] = chat_id
+        created = True
+
+    saved, _, _ = save_chat_message(
         chat_id=chat_id,
         user_id=user_id,
         role="user",
         content=message["text"],
     )
 
-    return user_id, chat_id
+    if not saved and not created:
+        chat_id = create_chat(user_id, make_chat_title(message["text"]))
+        _telegram_active_history[key] = chat_id
+        save_chat_message(
+            chat_id=chat_id,
+            user_id=user_id,
+            role="user",
+            content=message["text"],
+        )
+        created = True
+
+    return user_id, chat_id, created
 
 
 def finish_telegram_history(user_id, chat_id, result):
@@ -766,47 +964,55 @@ def process_telegram_update(
                     )
                     result = {"status": "forbidden", "reason": deny_reason}
                 else:
+                    history_user_id = identity["user_id"]
+                    data_source = (
+                        get_user_data_source(history_user_id)
+                        if get_user_data_source
+                        else "simulator"
+                    )
+
+                    if not data_source_is_allowed(identity, data_source):
+                        send_telegram_message(
+                            message["chat_id"],
+                            (
+                                "You are not allowed to use the selected "
+                                "IoT Ops Agent data source."
+                            ),
+                        )
+                        result = {
+                            "status": "forbidden",
+                            "reason": "data_source_not_allowed",
+                            "data_source": data_source,
+                        }
+                        complete_telegram_update(update_key)
+                        return result
+
                     prompt, help_text = normalize_telegram_prompt(
                         message["text"],
                         include_device_suggestions=True,
+                        user_id=history_user_id,
+                        selected_source=data_source,
                     )
 
                     if help_text:
                         send_telegram_message(message["chat_id"], help_text)
                         result = {"status": "help_sent"}
                     else:
-                        history_user_id = identity["user_id"]
                         history_chat_id = None
                         title = make_chat_title(message["text"])
 
                         steps = []
                         final_answer = "No answer was generated."
                         token_usage = None
-                        data_source = (
-                            get_user_data_source(history_user_id)
-                            if get_user_data_source
-                            else "simulator"
+                        new_topic = telegram_message_starts_new_topic(
+                            message["text"]
                         )
-
-                        if not data_source_is_allowed(identity, data_source):
-                            send_telegram_message(
-                                message["chat_id"],
-                                (
-                                    "You are not allowed to use the selected "
-                                    "IoT Ops Agent data source."
-                                ),
+                        history_user_id, history_chat_id, history_created = (
+                            start_telegram_history(
+                                history_user_id,
+                                message,
+                                new_topic=new_topic,
                             )
-                            result = {
-                                "status": "forbidden",
-                                "reason": "data_source_not_allowed",
-                                "data_source": data_source,
-                            }
-                            complete_telegram_update(update_key)
-                            return result
-
-                        history_user_id, history_chat_id = start_telegram_history(
-                            history_user_id,
-                            message,
                         )
 
                         if emit_user_event:
@@ -819,6 +1025,8 @@ def process_telegram_update(
                                     "message": message["text"],
                                     "telegram_user_id": identity["telegram_user_id"],
                                     "telegram_role": identity["role"],
+                                    "is_new_topic": new_topic,
+                                    "created": history_created,
                                 },
                             )
 
@@ -904,6 +1112,7 @@ def process_telegram_update(
                         result = {
                             "status": "answered",
                             "history_chat_id": history_chat_id,
+                            "history_chat_created": history_created,
                             "step_count": len(agent_result.get("steps", [])),
                         }
     except Exception:
@@ -979,7 +1188,7 @@ def build_set_webhook_payload(public_base_url):
     return payload
 
 
-def build_set_commands_payload():
+def build_set_commands_payload(user_id=None, selected_source="company"):
     return {
-        "commands": json.dumps(get_telegram_commands()),
+        "commands": json.dumps(get_telegram_commands(user_id, selected_source)),
     }

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=38">
+    <link rel="stylesheet" href="/static/style.css?v=41">
     <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 </head>
 
@@ -89,7 +89,7 @@
 
                 <div id="homeHero" class="home-hero">
                     <h1>IoT Ops Agent</h1>
-                    <p id="homeHeroPrompt">Ask about fleet health, critical devices, alarms, or device diagnosis.</p>
+                    <p id="homeHeroPrompt">Ask about fleet health, critical devices, alarms, or runbook checks.</p>
                 </div>
 
                 <div id="chatMessages" class="chat-messages"></div>
@@ -330,8 +330,7 @@
                                     <th>Memory</th>
                                     <th>Heartbeat</th>
                                     <th>Priority</th>
-                                    <th>Diagnose</th>
-                                    <th>History</th>
+                                    <th class="device-history-column">History</th>
                                 </tr>
                                 </thead>
 
@@ -817,6 +816,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=44"></script>
+<script src="/static/script.js?v=45"></script>
 </body>
 </html>

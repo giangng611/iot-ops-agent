@@ -236,6 +236,7 @@ INFRASTRUCTURE_OVERVIEW_TOOLS = {
 }
 
 DETERMINISTIC_BUILDER_REGISTRY: dict = {
+    "grafana_logs":                         "_dispatch_grafana_logs",
     "get_company_onem2m_command_flow":     "_dispatch_onem2m_flow",
     "get_company_onem2m_telemetry_flow":   "_dispatch_onem2m_flow",
     "get_company_onem2m_device_resources": "_dispatch_onem2m_resource",
@@ -771,6 +772,7 @@ class IOAV3LangGraphN8nAgent:
         evidence["answer_language"] = self.primary_language(
             state.get("user_input")
         )
+        evidence["current_user_input"] = state.get("user_input") or ""
 
         query_commands = self.build_query_commands(evidence)
         read_plan_commands = self.build_query_commands({
@@ -998,6 +1000,100 @@ class IOAV3LangGraphN8nAgent:
         if not isinstance(result.get("resource_summary"), dict):
             return None
         return self.build_cin_records_answer(result)
+
+    def _dispatch_grafana_logs(self, result, state):
+        if not isinstance(result, dict):
+            return None
+        result = dict(result)
+        result["answer_language"] = self.primary_language(
+            state.get("user_input")
+        )
+        result["current_user_input"] = state.get("user_input") or ""
+        return self.build_grafana_logs_answer(result)
+
+    def build_grafana_logs_answer(self, result):
+        request = result.get("request") or {}
+        service_name = (
+            request.get("service_name")
+            or request.get("service")
+            or "requested service"
+        )
+        contains = request.get("contains") or ""
+        hours_back = request.get("hours_back") or 6
+        logs = result.get("logs") or result.get("entries") or result.get("result") or []
+        error = result.get("error")
+        device_id = contains if re.search(r"\b[SN][A-Za-z0-9-]{8,}\b", str(contains)) else ""
+        count = len(logs) if isinstance(logs, list) else 0
+        status = "unavailable" if error else ("matched" if count else "no_entries")
+        lines = [
+            "# Grafana Log Check Result",
+            "",
+            "## 1. Summary",
+            (
+                f"Checked `{service_name}` logs for `{contains}` in the last {hours_back} hours. "
+                f"Status: **{status}**."
+            ),
+            "",
+            "## 2. Input",
+            f"- Service: `{service_name}`",
+            f"- Contains: `{contains or 'not specified'}`",
+            f"- Time window: last `{hours_back}` hours",
+            "",
+            "## 3. Log Evidence",
+        ]
+
+        if error:
+            lines.append(f"- Log query failed: `{self.short_error(error)}`")
+        elif count:
+            for index, entry in enumerate(logs[:MAX_ANSWER_RECORDS], start=1):
+                lines.append(
+                    f"- Sample {index}: `{self.short_error(entry, limit=260)}`"
+                )
+        else:
+            lines.append("- No matching log entries returned in this window.")
+
+        lines.extend([
+            "",
+            "## 4. Suggested Next Action",
+            (
+                "- Widen the time range or correlate with adjacent service logs and DB resource evidence before assigning root cause."
+                if not count
+                else "- Correlate the matched log timestamps with DB resource/CIN evidence and adjacent service logs."
+            ),
+        ])
+
+        suggestions = []
+        if device_id:
+            if service_name == "notify":
+                suggestions.extend([
+                    f"Check iot-mqtt-client-adapter logs for device {device_id} in the last 3 hours",
+                    f"Show the AE document for device {device_id}",
+                    f"Is device {device_id} online?",
+                ])
+            elif service_name == "iot-mqtt-client-adapter":
+                suggestions.extend([
+                    f"Check notify logs for device {device_id} in the last 3 hours",
+                    f"CIN records for device {device_id}",
+                    f"Show the AE document for device {device_id}",
+                ])
+            else:
+                suggestions.extend([
+                    f"Check notify logs for device {device_id} in the last 3 hours",
+                    f"Check iot-mqtt-client-adapter logs for device {device_id} in the last 3 hours",
+                    f"Show the AE document for device {device_id}",
+                ])
+        else:
+            suggestions.extend([
+                f"Check K8s resources for service {service_name}",
+                f"Check recent errors for service {service_name}",
+            ])
+
+        lines.extend(self.suggestion_section(
+            suggestions,
+            language=result.get("answer_language") or "en",
+            current_input=result.get("current_user_input"),
+        ))
+        return "\n".join(lines)
 
     def first_prometheus_value(self, result):
         items = self.prometheus_result_items(result)
@@ -2417,6 +2513,13 @@ class IOAV3LangGraphN8nAgent:
 
         return "en"
 
+    def normalize_followup_text(self, value):
+        return re.sub(
+            r"\s+",
+            " ",
+            re.sub(r"[`*_>#\-]", "", str(value or "").lower()),
+        ).strip()
+
     def onem2m_followup_suggestions(
         self,
         device_id,
@@ -2538,13 +2641,169 @@ class IOAV3LangGraphN8nAgent:
 
         return suggestions
 
-    def suggestion_section(self, suggestions, *, language="en"):
+    def onem2m_next_action_followup_suggestions(
+        self,
+        device_id,
+        resource_summary,
+        *,
+        flow=None,
+        language="en",
+        next_action="",
+        evidence_gaps=None,
+        log_errors=None,
+        current_input="",
+    ):
+        is_vi = language == "vi"
+        combined = " ".join([
+            str(next_action or ""),
+            " ".join(map(str, evidence_gaps or [])),
+        ]).lower()
+        suggestions = []
+
+        def add(question):
+            if question:
+                suggestions.append(question)
+
+        def notify_logs():
+            return (
+                f"Kiểm tra notify logs cho thiết bị {device_id} trong 3 giờ gần nhất"
+                if is_vi
+                else f"Check notify logs for device {device_id} in the last 3 hours"
+            )
+
+        def adapter_logs():
+            return (
+                f"Kiểm tra iot-mqtt-client-adapter logs cho thiết bị {device_id} trong 3 giờ gần nhất"
+                if is_vi
+                else f"Check iot-mqtt-client-adapter logs for device {device_id} in the last 3 hours"
+            )
+
+        def http_logs():
+            return (
+                f"Kiểm tra iot-http-api logs cho thiết bị {device_id} trong 3 giờ gần nhất"
+                if is_vi
+                else f"Check iot-http-api logs for device {device_id} in the last 3 hours"
+            )
+
+        def ae_doc():
+            return (
+                f"Cho tôi xem AE document của thiết bị {device_id}"
+                if is_vi
+                else f"Show the AE document for device {device_id}"
+            )
+
+        def online_status():
+            return (
+                f"Thiết bị {device_id} có đang online không?"
+                if is_vi
+                else f"Is device {device_id} online?"
+            )
+
+        def cin_records():
+            if flow == "command":
+                return (
+                    f"Cho tôi xem lệnh gần nhất gửi đến thiết bị {device_id}"
+                    if is_vi
+                    else f"Show the latest command sent to device {device_id}"
+                )
+            if flow == "telemetry":
+                return (
+                    f"Cho tôi xem telemetry gần nhất của thiết bị {device_id}"
+                    if is_vi
+                    else f"Show latest telemetry from device {device_id}"
+                )
+            return (
+                f"CIN records của thiết bị {device_id}"
+                if is_vi
+                else f"CIN records for device {device_id}"
+            )
+
+        log_errors = log_errors or []
+        failed_services = {
+            str(item.get("service") or "").lower()
+            for item in log_errors
+            if isinstance(item, dict) and item.get("service")
+        }
+
+        if "notify" in failed_services or "notify" in combined:
+            add(notify_logs())
+        if (
+            "iot-mqtt-client-adapter" in failed_services
+            or "mqtt-client-adapter" in combined
+            or "adapter" in combined
+            or "mqtt" in combined
+        ):
+            add(adapter_logs())
+        if (
+            "iot-http-api" in failed_services
+            or "http-api" in combined
+            or "http" in combined
+        ):
+            add(http_logs())
+        if (
+            "latest cin" in combined
+            or re.search(r"\blatest\b.{0,40}\bcin\b", combined)
+            or "cin record" in combined
+            or "request/correlation" in combined
+            or "correlation id" in combined
+        ):
+            add(cin_records())
+        if (
+            "ae point-of-access" in combined
+            or "ae id" in combined
+            or "ae variant" in combined
+            or "point-of-access" in combined
+        ):
+            add(ae_doc())
+            add(online_status())
+        if "emqx" in combined:
+            add(
+                f"Check EMQX evidence for device {device_id} in the last 3 hours"
+            )
+        if "rabbitmq" in combined:
+            add(
+                f"Check RabbitMQ evidence for device {device_id} in the last 3 hours"
+            )
+        if "subscription" in combined:
+            add(
+                (
+                    f"Cho tôi xem SUBSCRIPTION của thiết bị {device_id}"
+                    if is_vi
+                    else f"Show SUBSCRIPTION documents for device {device_id}"
+                )
+            )
+
+        if not suggestions:
+            suggestions = self.onem2m_followup_suggestions(
+                device_id,
+                resource_summary,
+                flow=flow,
+                language=language,
+                context={
+                    "ae_status": self.onem2m_ae_status(resource_summary),
+                    "telemetry_status": self.latest_telemetry_status(resource_summary),
+                },
+            )
+
+        return [
+            item
+            for item in suggestions
+            if self.normalize_followup_text(item) != self.normalize_followup_text(current_input)
+        ]
+
+    def suggestion_section(self, suggestions, *, language="en", current_input=""):
         unique = []
         seen = set()
+        current_normalized = self.normalize_followup_text(current_input)
         for item in suggestions:
-            if not item or item in seen:
+            normalized = self.normalize_followup_text(item)
+            if not item or not normalized:
                 continue
-            seen.add(item)
+            if normalized == current_normalized:
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
             unique.append(item)
         if not unique:
             return []
@@ -2591,6 +2850,7 @@ class IOAV3LangGraphN8nAgent:
                 context={"answer_kind": "collection"},
             ),
             language=language,
+            current_input=result.get("current_user_input"),
         ))
         return "\n".join(lines)
 
@@ -2641,7 +2901,7 @@ class IOAV3LangGraphN8nAgent:
                 language=language,
                 context={"answer_kind": "device_online"},
             )
-        ], language=language))
+        ], language=language, current_input=result.get("current_user_input")))
         return "\n".join(lines)
 
     def build_cin_records_answer(self, result):
@@ -2686,7 +2946,7 @@ class IOAV3LangGraphN8nAgent:
                 language=language,
                 context={"answer_kind": "cin_records"},
             )
-        ], language=language))
+        ], language=language, current_input=result.get("current_user_input")))
         return "\n".join(lines)
 
     def build_onem2m_flow_answer(self, result, selected_tool, tool_outputs):
@@ -2885,17 +3145,18 @@ class IOAV3LangGraphN8nAgent:
             "## 8. Evidence Gaps",
             *[f"- {gap}" for gap in evidence_gaps],
             *self.suggestion_section(
-                self.onem2m_followup_suggestions(
+                self.onem2m_next_action_followup_suggestions(
                     device_id,
                     resource_summary,
                     flow="command" if is_command else "telemetry",
                     language=language,
-                    context={
-                        "ae_status": ae_status,
-                        "telemetry_status": telemetry_status,
-                    },
+                    next_action=next_action,
+                    evidence_gaps=evidence_gaps,
+                    log_errors=loki_errors,
+                    current_input=result.get("current_user_input"),
                 ),
                 language=language,
+                current_input=result.get("current_user_input"),
             ),
         ])
 
@@ -3109,12 +3370,16 @@ class IOAV3LangGraphN8nAgent:
             "## 8. Evidence Gaps",
             *[f"- {gap}" for gap in evidence_gaps],
             *self.suggestion_section(
-                self.onem2m_followup_suggestions(
+                self.onem2m_next_action_followup_suggestions(
                     device_id,
                     resource_summary,
                     language=language,
+                    next_action=next_action,
+                    evidence_gaps=evidence_gaps,
+                    current_input=result.get("current_user_input"),
                 ),
                 language=language,
+                current_input=result.get("current_user_input"),
             ),
         ])
 

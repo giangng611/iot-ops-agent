@@ -1156,6 +1156,64 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("Show the AE document for device S3e1", answer)
         self.assertNotIn("Debug telemetry uplink for device S3e1", answer)
 
+    def test_onem2m_collection_followups_do_not_repeat_current_question(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_onem2m_collection_answer({
+            "query_device_id": "S3e1",
+            "query_collection": "SUBSCRIPTION",
+            "current_user_input": (
+                "Show SUBSCRIPTION documents for device S3e1"
+            ),
+            "resource_summary": {
+                "AE": {"present": True, "samples": [{"rn": "ae-S3e1"}]},
+                "CIN": {"present": True, "samples": [{"rn": "cin-S3e1"}]},
+                "SUBSCRIPTION": {
+                    "present": True,
+                    "samples": [{"rn": "sub_S3e1_command"}],
+                },
+            },
+        })
+
+        self.assertIn("## Follow-up Questions", answer)
+        self.assertIn("Is device S3e1 online?", answer)
+        self.assertIn("CIN records for device S3e1", answer)
+        self.assertNotIn(
+            "- Show SUBSCRIPTION documents for device S3e1",
+            answer,
+        )
+
+    def test_grafana_log_followup_answer_keeps_drilldown_suggestions(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_grafana_logs_answer({
+            "answer_language": "en",
+            "current_user_input": (
+                "Check notify logs for device S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f in the last 3 hours"
+            ),
+            "request": {
+                "service_name": "notify",
+                "contains": "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f",
+                "hours_back": 3,
+            },
+            "logs": [],
+        })
+
+        self.assertIn("## Follow-up Questions", answer)
+        self.assertIn(
+            "Check iot-mqtt-client-adapter logs for device "
+            "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f",
+            answer,
+        )
+        self.assertIn(
+            "Show the AE document for device "
+            "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f",
+            answer,
+        )
+        self.assertNotIn(
+            "- Check notify logs for device "
+            "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f in the last 3 hours",
+            answer,
+        )
+
     def test_onem2m_telemetry_answer_marks_failed_log_source_as_gap(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
         answer = agent.build_onem2m_flow_answer(
@@ -1211,6 +1269,53 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("unavailable=MCP tool call failed", answer)
         self.assertIn("One or more log sources were unavailable", answer)
         self.assertIn("notify (MCP tool call failed", answer)
+
+    def test_onem2m_flow_followups_follow_next_action_not_static_checklist(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_onem2m_flow_answer(
+            {
+                "query_device_id": "S3e1",
+                "devices": [{
+                    "status": "resource_matches_found",
+                    "telemetry_record_count": 2,
+                }],
+                "next_diagnostic_step": (
+                    "Correlate latest telemetry CIN with "
+                    "iot-mqtt-client-adapter receive logs and notify delivery logs."
+                ),
+                "resource_summary": {
+                    "IDENTITY": {"present": True, "matched_count": 1},
+                    "AE": {"present": True, "matched_count": 1},
+                    "CNT": {
+                        "present": True,
+                        "matched_count": 2,
+                        "telemetry_count": 1,
+                    },
+                    "CIN": {
+                        "present": True,
+                        "matched_count": 2,
+                        "telemetry_count": 2,
+                    },
+                    "SUBSCRIPTION": {"present": True, "matched_count": 1},
+                    "URI_MAPPER": {"present": True, "matched_count": 1},
+                },
+                "flow_checks": {
+                    "required_input_complete": True,
+                    "identity_present": True,
+                    "ae_present": True,
+                    "telemetry_container_present": True,
+                    "backend_subscription_present": True,
+                    "latest_telemetry_cin_present": True,
+                },
+            },
+            "get_company_onem2m_telemetry_flow",
+            [],
+        )
+
+        self.assertIn("Check notify logs for device S3e1", answer)
+        self.assertIn("Check iot-mqtt-client-adapter logs for device S3e1", answer)
+        self.assertIn("Show latest telemetry from device S3e1", answer)
+        self.assertNotIn("Show SUBSCRIPTION documents for device S3e1", answer)
 
     def test_loki_query_uses_single_full_window_call_when_successful(self):
         with (

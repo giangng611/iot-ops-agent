@@ -161,6 +161,12 @@ socket.on("telegram_chat_completed", async (data) => {
     const chatId = Number(data.chat_id);
     const chat = chats.find(item => item.id === chatId);
     const reasoningSteps = Array.isArray(data.steps) ? data.steps : [];
+    const latestPrompt = chat ? findLatestUserMessage(chat.messages) : null;
+    const answerView = splitAssistantFollowUps(
+        data.final_answer || "",
+        latestPrompt || ""
+    );
+    const finalAnswer = answerView.answer;
     const tokenUsage = {
         ...(inferRuntimeMetadataFromReasoningSteps(reasoningSteps) || {}),
         ...(data.token_usage || {})
@@ -168,11 +174,11 @@ socket.on("telegram_chat_completed", async (data) => {
 
     if (chat && !chat.messages.some(message =>
         message.role === "assistant" &&
-        message.content === data.final_answer
+        message.content === finalAnswer
     )) {
         chat.messages.push({
             role: "assistant",
-            content: data.final_answer,
+            content: finalAnswer,
             hasReasoning: reasoningSteps.length > 0,
             reasoningSteps: reasoningSteps,
             tokenUsage: tokenUsage
@@ -182,7 +188,7 @@ socket.on("telegram_chat_completed", async (data) => {
     if (chatId === currentChatId) {
         latestReasoningSteps = reasoningSteps;
         latestTokenUsage = tokenUsage;
-        pendingFinalAnswer = data.final_answer;
+        pendingFinalAnswer = finalAnswer;
 
         await reasoningTypingQueue;
         await wait(WORKFLOW_EVENT_DELAY_MS);
@@ -199,14 +205,15 @@ socket.on("telegram_chat_completed", async (data) => {
         document.getElementById("loading").classList.add("hidden");
 
         await renderAssistantMessage(
-            data.final_answer,
+            finalAnswer,
             reasoningSteps.length > 0,
             reasoningSteps,
             null,
             true,
-            chat ? findLatestUserMessage(chat.messages) : null,
+            latestPrompt,
             latestTokenUsage
         );
+        renderFollowUpSuggestions(answerView.followUps);
     }
 
     if (chatId === telegramActiveChatId) {
@@ -533,6 +540,155 @@ function inferRuntimeMetadataFromReasoningSteps(reasoningSteps) {
     return null;
 }
 
+function normalizeFollowUpText(value) {
+    return String(value || "")
+        .toLowerCase()
+        .replace(/[`*_>#-]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function splitAssistantFollowUps(message, currentUserPrompt = "") {
+    const lines = String(message || "").replace(/\r\n/g, "\n").split("\n");
+    const headingIndex = lines.findIndex(line =>
+        /^(?:#{1,6}\s*)?(follow-up questions|câu hỏi tiếp theo)\s*:?$/i
+            .test(line.trim())
+    );
+
+    if (headingIndex < 0) {
+        return {
+            answer: String(message || ""),
+            followUps: []
+        };
+    }
+
+    const answer = lines.slice(0, headingIndex).join("\n").trim();
+    const currentNormalized = normalizeFollowUpText(currentUserPrompt);
+    const seen = new Set();
+    const followUps = [];
+
+    for (const line of lines.slice(headingIndex + 1)) {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+            continue;
+        }
+
+        if (/^#{1,6}\s+/.test(trimmed)) {
+            break;
+        }
+
+        const question = trimmed
+            .replace(/^[-*]\s+/, "")
+            .replace(/^\d+[.)]\s+/, "")
+            .trim();
+        const normalized = normalizeFollowUpText(question);
+
+        if (!question || !normalized || normalized === currentNormalized) {
+            continue;
+        }
+
+        if (seen.has(normalized)) {
+            continue;
+        }
+
+        seen.add(normalized);
+        followUps.push(question);
+    }
+
+    return {
+        answer,
+        followUps: followUps.slice(0, 4)
+    };
+}
+
+function hideFollowUpSuggestions() {
+    const suggestions = document.getElementById("promptSuggestions");
+    const chatMessages = document.getElementById("chatMessages");
+
+    if (!suggestions) {
+        return;
+    }
+
+    suggestions.classList.add("hidden");
+    suggestions.classList.remove("follow-up-suggestions");
+    suggestions.innerHTML = "";
+
+    if (chatMessages) {
+        chatMessages.style.paddingBottom = "";
+    }
+}
+
+function scrollChatForFollowUpSuggestions() {
+    const suggestions = document.getElementById("promptSuggestions");
+    const chatMessages = document.getElementById("chatMessages");
+
+    if (!suggestions || !chatMessages || suggestions.classList.contains("hidden")) {
+        return;
+    }
+
+    const bottomInset = suggestions.offsetHeight + 40;
+    chatMessages.style.paddingBottom = `${bottomInset}px`;
+    chatMessages.scrollTo({
+        top: chatMessages.scrollHeight,
+        behavior: "smooth"
+    });
+}
+
+function renderFollowUpSuggestions(questions) {
+    const suggestions = document.getElementById("promptSuggestions");
+    const safeQuestions = Array.isArray(questions)
+        ? questions.filter(Boolean).slice(0, 4)
+        : [];
+
+    if (!suggestions || safeQuestions.length === 0) {
+        hideFollowUpSuggestions();
+        return;
+    }
+
+    suggestions.classList.add("follow-up-suggestions");
+    suggestions.classList.remove("hidden");
+    suggestions.innerHTML = `
+        <div class="follow-up-suggestions-header">
+            <span>Continue drilldown</span>
+            <button
+                class="follow-up-close-btn"
+                type="button"
+                aria-label="Close follow-up suggestions"
+                onclick="hideFollowUpSuggestions()"
+            >
+                ×
+            </button>
+        </div>
+        ${safeQuestions.map(question => `
+            <button
+                class="suggestion-item follow-up-suggestion-item"
+                type="button"
+                onclick="selectFollowUpQuestion('${escapeJsString(question)}')"
+            >
+                ${escapeHtml(question)}
+            </button>
+        `).join("")}
+    `;
+
+    requestAnimationFrame(scrollChatForFollowUpSuggestions);
+}
+
+function selectFollowUpQuestion(question) {
+    if (isAgentRunning) {
+        return;
+    }
+
+    const input = document.getElementById("messageInput");
+
+    input.value = question;
+    hideFollowUpSuggestions();
+    scheduleMessageInputResize();
+    updateRunButtonState();
+    input.focus();
+    sendMessage();
+}
+
 function findPromptById(promptId) {
     return promptsData.find(prompt => String(prompt.id) === String(promptId));
 }
@@ -813,6 +969,10 @@ function scheduleMessageInputResize() {
 }
 
 function handleMessageInput() {
+    if (getMessageInputValue()) {
+        hideFollowUpSuggestions();
+    }
+
     handlePromptSuggestions();
     scheduleMessageInputResize();
     updateRunButtonState();
@@ -1428,7 +1588,11 @@ async function sendMessage() {
             latestReasoningSteps = [];
         }
 
+        const answerView = splitAssistantFollowUps(finalAnswer, message);
+        finalAnswer = answerView.answer;
+
         await addAssistantMessage(finalAnswer, latestReasoningSteps.length > 0);
+        renderFollowUpSuggestions(answerView.followUps);
 
         await saveMessageToDatabase(
             "assistant",
@@ -1441,6 +1605,7 @@ async function sendMessage() {
         updateRunButtonState();
 
     } catch (error) {
+        hideFollowUpSuggestions();
         addAssistantMessage("Request failed: " + error, false);
 
     } finally {
@@ -3271,6 +3436,8 @@ async function renderAssistantMessage(
     tokenUsage = null
 ) {
     const chatMessages = document.getElementById("chatMessages");
+    const answerView = splitAssistantFollowUps(message, retryPrompt || "");
+    const displayMessage = answerView.answer;
     const reasoningId = `reasoning-${Date.now()}-${Math.random()}`;
     const messageId = `assistant-message-${Date.now()}-${Math.random()}`;
     const contentId = `${messageId}-content`;
@@ -3278,7 +3445,7 @@ async function renderAssistantMessage(
 
     window[reasoningId] = reasoningSteps;
     assistantMessageActionStore[messageId] = {
-        answer: message,
+        answer: displayMessage,
         retryPrompt: retryPrompt
     };
     const tokenUsageLabel = formatTokenUsage(tokenUsage);
@@ -3336,15 +3503,15 @@ async function renderAssistantMessage(
             contentEl.classList.add("typing-output");
             await typeTextIntoElementPromise(
                 contentEl,
-                formatConversationalText(message || "")
+                formatConversationalText(displayMessage || "")
             );
             contentEl.classList.remove("typing-output");
         }
 
         if (typeof marked !== "undefined") {
-            contentEl.innerHTML = marked.parse(message || "");
+            contentEl.innerHTML = marked.parse(displayMessage || "");
         } else {
-            contentEl.textContent = message || "";
+            contentEl.textContent = displayMessage || "";
         }
     }
 

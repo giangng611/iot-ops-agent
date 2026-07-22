@@ -241,9 +241,12 @@ def query_iot_platform_metric_via_mcp(tool_name, params=None):
 
     if tool_name == "grafana_queue_trend":
         namespace = params.get("namespace") or DEFAULT_RABBITMQ_NAMESPACE
+        queue_name = str(params.get("queue") or "").strip()
+        queue_filter = f',queue="{queue_name}"' if queue_name else ""
         promql = (
             f'sum by (queue) '
-            f'(rabbitmq_queue_messages{{namespace="{namespace}",job="monitoring/rabbitmq"}})'
+            f'(rabbitmq_queue_messages{{namespace="{namespace}",'
+            f'job="monitoring/rabbitmq"{queue_filter}}})'
         )
         evidence = _query_prometheus_range(
             promql,
@@ -696,6 +699,8 @@ def query_loki_logs_via_mcp(
                 "service_name": service_name,
                 "contains": contains,
                 "hours_back": safe_hours,
+                "start": full_start,
+                "end": now,
                 "limit": safe_limit,
             },
             "result": result,
@@ -731,6 +736,10 @@ def query_loki_logs_via_mcp(
                         "service_name": service_name,
                         "contains": contains,
                         "hours_back": safe_hours,
+                        "start": full_start,
+                        "end": now,
+                        "chunk_start": chunk_start,
+                        "chunk_end": chunk_end,
                         "chunk_hours_back": chunk_idx + 1,
                         "fallback_after_full_window_error": True,
                         "limit": safe_limit,
@@ -752,6 +761,8 @@ def query_loki_logs_via_mcp(
                 "service_name": service_name,
                 "contains": contains,
                 "hours_back": safe_hours,
+                "start": full_start,
+                "end": now,
                 "fallback_chunks": max_chunks,
                 "limit": safe_limit,
             },
@@ -768,6 +779,8 @@ def query_loki_logs_via_mcp(
             "service_name": service_name,
             "contains": contains,
             "hours_back": safe_hours,
+            "start": full_start,
+            "end": now,
             "searched_recent_chunks": max_chunks,
             "fallback_after_full_window_error": True,
             "limit": safe_limit,

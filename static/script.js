@@ -1,3 +1,4 @@
+const MAX_FOLLOW_UP_SUGGESTIONS = 5;
 const socket = io();
 
 socket.on("connect", () => {
@@ -82,11 +83,20 @@ socket.on("telegram_chat_started", (data) => {
     currentChatId = chatId;
     latestReasoningSteps = [];
     displayedWorkflowSteps = [];
+    currentReasoningWorkflowSteps = [];
+    currentReasoningWorkflowFinalized = false;
     workflowNodeStatusMemory = {};
+    workflowNodeDetailStore = {};
     workflowFinalized = false;
+    workflowMapExpanded = false;
     pendingFinalAnswer = null;
     latestTokenUsage = null;
     reasoningTypingQueue = Promise.resolve();
+
+    if (reasoningDrawerOpen) {
+        activeReasoningViewId = LIVE_REASONING_VIEW_ID;
+        renderReasoningStepsStatic([], false);
+    }
 
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
@@ -189,6 +199,7 @@ socket.on("telegram_chat_completed", async (data) => {
         latestReasoningSteps = reasoningSteps;
         latestTokenUsage = tokenUsage;
         pendingFinalAnswer = finalAnswer;
+        document.getElementById("loading").classList.add("hidden");
 
         await reasoningTypingQueue;
         await wait(WORKFLOW_EVENT_DELAY_MS);
@@ -202,8 +213,6 @@ socket.on("telegram_chat_completed", async (data) => {
         updateReasoningWorkflowMap(reasoningSteps, true);
         await wait(WORKFLOW_EVENT_DELAY_MS);
 
-        document.getElementById("loading").classList.add("hidden");
-
         await renderAssistantMessage(
             finalAnswer,
             reasoningSteps.length > 0,
@@ -213,7 +222,7 @@ socket.on("telegram_chat_completed", async (data) => {
             latestPrompt,
             latestTokenUsage
         );
-        renderFollowUpSuggestions(answerView.followUps);
+        renderFollowUpSuggestions(answerView.followUps, finalAnswer);
     }
 
     if (chatId === telegramActiveChatId) {
@@ -248,6 +257,8 @@ let chats = [];
 let currentChatId = null;
 let latestReasoningSteps = [];
 let displayedWorkflowSteps = [];
+let currentReasoningWorkflowSteps = [];
+let currentReasoningWorkflowFinalized = false;
 let workflowNodeStatusMemory = {};
 let reasoningDrawerOpen = false;
 let activeReasoningViewId = null;
@@ -283,6 +294,7 @@ let workflowNodeDetailStore = {};
 let selectedDataSource = "simulator";
 let allowedDataSources = ["simulator"];
 let selectedPromptDeviceId = "";
+let lastFollowUpParamOptions = {};
 let devicesLoading = true;
 const LIVE_REASONING_VIEW_ID = "__live_reasoning_trace__";
 
@@ -302,15 +314,18 @@ function resetReasoningWorkflowView() {
 function resetLiveReasoningRun() {
     latestReasoningSteps = [];
     displayedWorkflowSteps = [];
+    currentReasoningWorkflowSteps = [];
+    currentReasoningWorkflowFinalized = false;
     workflowNodeStatusMemory = {};
+    workflowNodeDetailStore = {};
     workflowFinalized = false;
     workflowMapExpanded = false;
     pendingFinalAnswer = null;
     latestTokenUsage = null;
     reasoningTypingQueue = Promise.resolve();
 
-    if (isLiveReasoningDrawerOpen()) {
-        resetReasoningWorkflowView();
+    if (reasoningDrawerOpen) {
+        activeReasoningViewId = LIVE_REASONING_VIEW_ID;
         renderReasoningStepsStatic([], false);
     }
 }
@@ -598,7 +613,74 @@ function splitAssistantFollowUps(message, currentUserPrompt = "") {
 
     return {
         answer,
-        followUps: followUps.slice(0, 4)
+        followUps: followUps.slice(0, MAX_FOLLOW_UP_SUGGESTIONS)
+    };
+}
+
+function uniqueEntityValues(values) {
+    const seen = new Set();
+    const unique = [];
+
+    values.forEach(value => {
+        const cleaned = String(value || "")
+            .replace(/[\u200b]/g, "")
+            .replace(/[|,.;:)]+$/g, "")
+            .trim();
+
+        if (!cleaned || seen.has(cleaned)) {
+            return;
+        }
+
+        seen.add(cleaned);
+        unique.push(cleaned);
+    });
+
+    return unique.slice(0, 20);
+}
+
+function extractFollowUpParamOptions(answer) {
+    const text = String(answer || "");
+    const queueValues = [];
+    const podValues = [];
+    const serviceValues = [];
+
+    for (const match of text.matchAll(/`([^`]+)`/g)) {
+        const value = match[1].trim();
+        if (/^(?:amq\.gen-|queue\.|emqx-[^.]*\.queue\.)/.test(value)) {
+            queueValues.push(value);
+        }
+        if (/-[a-z0-9]{5,}(?:-[a-z0-9]{4,})?$/i.test(value) && !value.includes(".")) {
+            podValues.push(value);
+        }
+        if (/^(?:iot-|emqx|rabbitmq|redis|mysql|mongodb|notify)/i.test(value)) {
+            serviceValues.push(value);
+        }
+    }
+
+    for (const line of text.split("\n")) {
+        const cells = line.split("|").map(cell =>
+            cell.replace(/`/g, "").trim()
+        ).filter(Boolean);
+
+        if (cells.length < 2) {
+            continue;
+        }
+
+        const firstCell = cells[0];
+        if (/^(?:amq\.gen-|queue\.|emqx-[^.]*\.queue\.)/.test(firstCell)) {
+            queueValues.push(firstCell);
+        }
+    }
+
+    const queues = uniqueEntityValues(queueValues);
+    const pods = uniqueEntityValues(podValues);
+    const services = uniqueEntityValues(serviceValues);
+
+    return {
+        queue_id: queues,
+        queue_name: queues,
+        pod: pods,
+        service: services,
     };
 }
 
@@ -627,7 +709,7 @@ function scrollChatForFollowUpSuggestions() {
         return;
     }
 
-    const bottomInset = suggestions.offsetHeight + 40;
+    const bottomInset = suggestions.offsetHeight + 18;
     chatMessages.style.paddingBottom = `${bottomInset}px`;
     chatMessages.scrollTo({
         top: chatMessages.scrollHeight,
@@ -635,10 +717,10 @@ function scrollChatForFollowUpSuggestions() {
     });
 }
 
-function renderFollowUpSuggestions(questions) {
+function renderFollowUpSuggestions(questions, answer = "") {
     const suggestions = document.getElementById("promptSuggestions");
     const safeQuestions = Array.isArray(questions)
-        ? questions.filter(Boolean).slice(0, 4)
+        ? questions.filter(Boolean).slice(0, MAX_FOLLOW_UP_SUGGESTIONS)
         : [];
 
     if (!suggestions || safeQuestions.length === 0) {
@@ -646,6 +728,7 @@ function renderFollowUpSuggestions(questions) {
         return;
     }
 
+    lastFollowUpParamOptions = extractFollowUpParamOptions(answer);
     suggestions.classList.add("follow-up-suggestions");
     suggestions.classList.remove("hidden");
     suggestions.innerHTML = `
@@ -676,6 +759,18 @@ function renderFollowUpSuggestions(questions) {
 
 function selectFollowUpQuestion(question) {
     if (isAgentRunning) {
+        return;
+    }
+
+    const fields = parseCommandFields(question);
+    if (fields.length > 0) {
+        hideFollowUpSuggestions();
+        openCommandParamModal({
+            title: "Continue drilldown",
+            command: question,
+            paramOptions: lastFollowUpParamOptions,
+            autoRun: true,
+        });
         return;
     }
 
@@ -1047,6 +1142,10 @@ function handlePromptSuggestions() {
 
 const PARAM_LABEL_OVERRIDES = {
     device_id:     "Device ID",
+    queue_id:      "Queue ID",
+    queue_name:    "Queue",
+    pod:           "Pod",
+    service:       "Service",
     request_id:    "Request ID",
     time_range:    "Time range",
     resource_name: "Resource",
@@ -1055,6 +1154,10 @@ const PARAM_LABEL_OVERRIDES = {
 
 const PARAM_PLACEHOLDER_OVERRIDES = {
     device_id:     "e.g. S3e1c21c3-7aad-...",
+    queue_id:      "Select a queue from the latest answer",
+    queue_name:    "Select a queue from the latest answer",
+    pod:           "Select a pod from the latest answer",
+    service:       "Select a service from the latest answer",
     time_range:    "e.g. last 6 hours",
     resource_name: "e.g. CNT, CIN",
 };
@@ -1086,29 +1189,52 @@ let _pendingCommandPrompt = null;
 
 function openCommandParamModal(prompt) {
     const fields = parseCommandFields(prompt.command || "");
+    const paramOptions = prompt.paramOptions || {};
     _pendingCommandPrompt = prompt;
 
     document.getElementById("commandParamTitle").textContent = prompt.title;
 
     const fieldsEl = document.getElementById("commandParamFields");
-    fieldsEl.innerHTML = fields.map(f => `
-        <div class="param-field">
-            <label class="param-label" for="param-${f.key}">
-                ${escapeHtml(paramLabel(f.key))}
-                ${f.required ? '<span class="param-required">*</span>' : ""}
-            </label>
-            <input
-                id="param-${f.key}"
-                class="param-input${f.required ? " param-input-required" : ""}"
-                type="text"
-                placeholder="${escapeHtml(paramPlaceholder(f.key, f.required))}"
-                autocomplete="off"
-                ${f.key === "device_id" && selectedPromptDeviceId
-                    ? `value="${escapeHtml(selectedPromptDeviceId)}"`
-                    : ""}
-            />
-        </div>
-    `).join("");
+    fieldsEl.innerHTML = fields.map(f => {
+        const options = Array.isArray(paramOptions[f.key])
+            ? paramOptions[f.key].filter(Boolean)
+            : [];
+        const defaultValue = f.key === "device_id" && selectedPromptDeviceId
+            ? selectedPromptDeviceId
+            : "";
+        const control = options.length > 0
+            ? `
+                <select
+                    id="param-${f.key}"
+                    class="param-input param-select${f.required ? " param-input-required" : ""}"
+                >
+                    <option value="">${escapeHtml(paramPlaceholder(f.key, f.required))}</option>
+                    ${options.map(option => `
+                        <option value="${escapeHtml(option)}">${escapeHtml(option)}</option>
+                    `).join("")}
+                </select>
+            `
+            : `
+                <input
+                    id="param-${f.key}"
+                    class="param-input${f.required ? " param-input-required" : ""}"
+                    type="text"
+                    placeholder="${escapeHtml(paramPlaceholder(f.key, f.required))}"
+                    autocomplete="off"
+                    ${defaultValue ? `value="${escapeHtml(defaultValue)}"` : ""}
+                />
+            `;
+
+        return `
+            <div class="param-field">
+                <label class="param-label" for="param-${f.key}">
+                    ${escapeHtml(paramLabel(f.key))}
+                    ${f.required ? '<span class="param-required">*</span>' : ""}
+                </label>
+                ${control}
+            </div>
+        `;
+    }).join("");
 
     document.getElementById("commandParamModal").classList.remove("hidden");
 
@@ -1167,6 +1293,7 @@ function submitCommandParams() {
     command = command.replace(/\s{2,}/g, " ").trimEnd();
     if (extras.length) command += " " + extras.join(". ") + ".";
 
+    const shouldAutoRun = Boolean(_pendingCommandPrompt?.autoRun);
     closeCommandParamModal();
 
     const input = document.getElementById("messageInput");
@@ -1178,6 +1305,10 @@ function submitCommandParams() {
     scheduleMessageInputResize();
     updateRunButtonState();
     input.focus();
+
+    if (shouldAutoRun) {
+        sendMessage();
+    }
 }
 
 // Close modal on Escape / submit on Enter; arrow keys navigate the slash palette
@@ -1554,6 +1685,8 @@ async function sendMessage() {
             <small>Please wait</small>
         `;
 
+        const conversationContext = buildRecentConversationContext();
+
         addUserMessage(message);
 
         await saveMessageToDatabase("user", message);
@@ -1568,7 +1701,7 @@ async function sendMessage() {
             currentMode === "ioa_v2_dify" ||
             currentMode === "ioa_v3_langgraph_n8n"
         ) {
-            finalAnswer = await sendStreamMessage(message);
+            finalAnswer = await sendStreamMessage(message, conversationContext);
         } else {
             const response = await fetch("/api/diagnose", {
                 method: "POST",
@@ -1578,7 +1711,8 @@ async function sendMessage() {
                 body: JSON.stringify({
                     message: message,
                     mode: currentMode,
-                    data_source: selectedDataSource
+                    data_source: selectedDataSource,
+                    conversation_context: conversationContext
                 })
             });
 
@@ -1591,8 +1725,10 @@ async function sendMessage() {
         const answerView = splitAssistantFollowUps(finalAnswer, message);
         finalAnswer = answerView.answer;
 
+        loading.classList.add("hidden");
+
         await addAssistantMessage(finalAnswer, latestReasoningSteps.length > 0);
-        renderFollowUpSuggestions(answerView.followUps);
+        renderFollowUpSuggestions(answerView.followUps, finalAnswer);
 
         await saveMessageToDatabase(
             "assistant",
@@ -1611,8 +1747,6 @@ async function sendMessage() {
     } finally {
         await waitForAssistantTypingToFinish();
 
-        loading.classList.add("hidden");
-
         runButton.disabled = false;
         runButton.innerHTML = `
             <span>Run</span>
@@ -1625,7 +1759,7 @@ async function sendMessage() {
     }
 }
 
-async function sendStreamMessage(message) {
+async function sendStreamMessage(message, conversationContext = []) {
     const response = await fetch("/api/diagnose-stream", {
         method: "POST",
         headers: {
@@ -1634,7 +1768,8 @@ async function sendStreamMessage(message) {
         body: JSON.stringify({
             message: message,
             mode: currentMode,
-            data_source: selectedDataSource
+            data_source: selectedDataSource,
+            conversation_context: conversationContext
         })
     });
 
@@ -3566,6 +3701,25 @@ function editUserMessage(messageId) {
     input.focus();
 }
 
+function buildRecentConversationContext(limit = 6) {
+    const chat = chats.find(item => item.id === currentChatId);
+    if (!chat || !Array.isArray(chat.messages)) {
+        return [];
+    }
+
+    return chat.messages
+        .filter(message =>
+            message &&
+            (message.role === "user" || message.role === "assistant") &&
+            message.content
+        )
+        .slice(-limit)
+        .map(message => ({
+            role: message.role,
+            content: String(message.content).slice(0, 4000)
+        }));
+}
+
 async function copyAssistantMessage(messageId, button) {
     const storedMessage = assistantMessageActionStore[messageId];
 
@@ -4435,6 +4589,8 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     const safeSteps = Array.isArray(steps) ? steps : [];
     const scrollContainer = content.querySelector(".reasoning-trace-list") || content;
     const shouldPinScroll = shouldKeepTypingPinnedToBottom(scrollContainer);
+    currentReasoningWorkflowSteps = safeSteps;
+    currentReasoningWorkflowFinalized = finalized;
 
     if (safeSteps.length === 0) {
         content.innerHTML = `
@@ -5138,10 +5294,19 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
 
 function toggleReasoningWorkflowMap() {
     workflowMapExpanded = !workflowMapExpanded;
-    updateReasoningWorkflowMap(
-        displayedWorkflowSteps.length ? displayedWorkflowSteps : latestReasoningSteps,
-        workflowFinalized
-    );
+    const steps = isLiveReasoningDrawerOpen()
+        ? (displayedWorkflowSteps.length ? displayedWorkflowSteps : latestReasoningSteps)
+        : currentReasoningWorkflowSteps;
+    const finalized = isLiveReasoningDrawerOpen()
+        ? workflowFinalized
+        : currentReasoningWorkflowFinalized;
+
+    if (isLiveReasoningDrawerOpen()) {
+        updateReasoningWorkflowMap(steps, finalized);
+        return;
+    }
+
+    renderReasoningStepsStatic(steps, finalized);
 }
 
 function getWorkflowNodeSummary(node, matchingStep) {
@@ -5182,6 +5347,8 @@ function updateReasoningWorkflowMap(steps, finalized = workflowFinalized) {
     }
 
     const existing = document.getElementById("reasoningWorkflowMap");
+    currentReasoningWorkflowSteps = Array.isArray(steps) ? steps : [];
+    currentReasoningWorkflowFinalized = finalized;
 
     if (existing) {
         existing.outerHTML = renderWorkflowMap(steps, finalized);

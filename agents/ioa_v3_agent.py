@@ -198,6 +198,7 @@ MAX_EVIDENCE_ITEMS = 80
 MAX_EVIDENCE_DEPTH = 5
 MAX_EVIDENCE_STRING_CHARS = 1800
 MAX_WORKFLOW_EXECUTIONS = 5
+MAX_FOLLOWUP_SUGGESTIONS = 5
 MIN_SEMANTIC_CONFIDENCE = 0.55
 MAX_ANSWER_RECORDS = 6
 MAX_ANSWER_EVIDENCE_DEPTH = 8
@@ -237,6 +238,7 @@ INFRASTRUCTURE_OVERVIEW_TOOLS = {
 
 DETERMINISTIC_BUILDER_REGISTRY: dict = {
     "grafana_logs":                         "_dispatch_grafana_logs",
+    "grafana_platform_service_health":      "_dispatch_platform_service_health",
     "get_company_onem2m_command_flow":     "_dispatch_onem2m_flow",
     "get_company_onem2m_telemetry_flow":   "_dispatch_onem2m_flow",
     "get_company_onem2m_device_resources": "_dispatch_onem2m_resource",
@@ -248,6 +250,8 @@ DETERMINISTIC_BUILDER_REGISTRY: dict = {
 
 class IOAV3State(TypedDict):
     user_input: str
+    conversation_context: List[Dict[str, Any]]
+    workflow_user_input: str
     selected_source: str
     source_resolution: Dict[str, Any]
     user_id: Any
@@ -306,9 +310,12 @@ class IOAV3LangGraphN8nAgent:
         selected_source="simulator",
         source_resolution=None,
         user_id=None,
+        conversation_context=None,
     ):
         return {
             "user_input": user_input,
+            "conversation_context": conversation_context or [],
+            "workflow_user_input": user_input,
             "selected_source": selected_source,
             "source_resolution": source_resolution or {},
             "user_id": user_id,
@@ -382,8 +389,12 @@ class IOAV3LangGraphN8nAgent:
         }
 
     def select_workflow_node(self, state):
+        workflow_user_input = self.resolve_contextual_user_input(
+            state.get("user_input") or "",
+            state.get("conversation_context") or [],
+        )
         workflows, planner_metadata = self.plan_workflows(
-            state.get("user_input") or ""
+            workflow_user_input
         )
         primary = workflows[0] if workflows else {
             "tool": "",
@@ -397,6 +408,7 @@ class IOAV3LangGraphN8nAgent:
             "selected_tool": selected_tool,
             "selected_params": params,
             "selected_workflows": workflows,
+            "workflow_user_input": workflow_user_input,
             "token_usage": planner_metadata.get("token_usage"),
             "steps": self.append_step(
                 state,
@@ -407,6 +419,7 @@ class IOAV3LangGraphN8nAgent:
                 action="plan_workflows",
                 output={
                     "planner": planner_metadata,
+                    "workflow_user_input": workflow_user_input,
                     "selected_tool": selected_tool,
                     "selected_workflows": [
                         self.summarize_workflow_plan(workflow)
@@ -545,7 +558,7 @@ class IOAV3LangGraphN8nAgent:
             return self.execute_mcp_prometheus_workflow(state, workflow, tool)
 
         result = call_n8n_grafana_workflow(
-            user_input=state["user_input"],
+            user_input=state.get("workflow_user_input") or state["user_input"],
             selected_tool=selected_tool,
             params=selected_params,
             source_resolution=state.get("source_resolution"),
@@ -643,7 +656,65 @@ class IOAV3LangGraphN8nAgent:
         }
 
     def execute_mcp_loki_workflow(self, state, workflow, tool):
-        selected_params = workflow.get("params") or {}
+        selected_params = dict(workflow.get("params") or {})
+        if selected_params.get("service"):
+            selected_params["service"] = self.normalize_log_service_name(
+                selected_params.get("service")
+            )
+        if not selected_params.get("service") and not selected_params.get("contains"):
+            evidence = {
+                "source": "mcp_server",
+                "mcp_tool": "loki_query_range",
+                "level": "needs_target",
+                "request": {
+                    "service_name": None,
+                    "contains": None,
+                    "hours_back": selected_params.get("hours_back", 6),
+                    "limit": selected_params.get("limit", 50),
+                },
+                "logs": [],
+                "message": (
+                    "A concrete service name or search keyword is required "
+                    "before running a scoped Loki query."
+                ),
+            }
+            request = evidence.get("request") or {}
+            step_output = {
+                "source": "mcp_server",
+                "tool": "grafana_logs",
+                "workflow_id": "loki_recent_logs",
+                "workflow": {
+                    "id": "mcp_loki_gateway",
+                    "tool": "grafana_logs",
+                    "workflow_id": "loki_recent_logs",
+                    "method": "MCP",
+                    "path": "loki_query_range",
+                    "params": request,
+                    "description": (tool or {}).get("description"),
+                },
+                "planner_reason": workflow.get("reason"),
+                "planner_confidence": workflow.get("confidence"),
+                "http_call": {
+                    "method": "MCP",
+                    "path": "loki_query_range",
+                    "params": request,
+                    "base_url": "mcp_server",
+                },
+                "evidence": self.sanitize_evidence(evidence),
+                "mcp_tool": "loki_query_range",
+            }
+            return {
+                "step_output": step_output,
+                "tool_output": {
+                    "source": "mcp_server",
+                    "tool": "grafana_logs",
+                    "mcp_tool": "loki_query_range",
+                    "http_call": step_output["http_call"],
+                    "result": evidence,
+                    "planner_reason": workflow.get("reason"),
+                    "planner_confidence": workflow.get("confidence"),
+                },
+            }
         try:
             evidence = query_loki_logs_via_mcp(
                 service_name=selected_params.get("service"),
@@ -895,8 +966,13 @@ class IOAV3LangGraphN8nAgent:
                     "deterministic": True,
                 }
             )
+            planned_answer, followup_usage = self.apply_followup_planner(
+                deterministic_answer,
+                state,
+            )
+            token_usage = self.combine_token_usage(token_usage, followup_usage)
             return {
-                "final_answer": deterministic_answer,
+                "final_answer": planned_answer,
                 "token_usage": token_usage,
                 "steps": self.append_step(
                     state,
@@ -918,8 +994,13 @@ class IOAV3LangGraphN8nAgent:
             state.get("token_usage"),
             self.extract_token_usage(response),
         )
+        planned_answer, followup_usage = self.apply_followup_planner(
+            response.content,
+            state,
+        )
+        token_usage = self.combine_token_usage(token_usage, followup_usage)
         return {
-            "final_answer": response.content,
+            "final_answer": planned_answer,
             "token_usage": token_usage,
             "steps": self.append_step(
                 state,
@@ -940,6 +1021,7 @@ class IOAV3LangGraphN8nAgent:
         selected_tool = state.get("selected_tool")
         tool_outputs  = state.get("tool_outputs") or []
         user_input    = state.get("user_input")   or ""
+        workflow_user_input = state.get("workflow_user_input") or user_input
 
         # Prometheus / MCP metric tool family
         if selected_tool in MCP_PROMETHEUS_TOOLS:
@@ -950,10 +1032,21 @@ class IOAV3LangGraphN8nAgent:
                 if not isinstance(result, dict):
                     return None
                 if selected_tool in INFRASTRUCTURE_OVERVIEW_TOOLS:
-                    return self.build_infrastructure_overview_answer(tool_outputs)
+                    return self.build_infrastructure_overview_answer(
+                        tool_outputs,
+                        workflow_user_input,
+                    )
                 if selected_tool == "grafana_k8s_resources":
-                    return self.build_k8s_resource_answer(result, user_input, tool_outputs)
-                return self.build_metric_runbook_answer(result, selected_tool, user_input)
+                    return self.build_k8s_resource_answer(
+                        result,
+                        workflow_user_input,
+                        tool_outputs,
+                    )
+                return self.build_metric_runbook_answer(
+                    result,
+                    selected_tool,
+                    workflow_user_input,
+                )
             return None
 
         builder_name = DETERMINISTIC_BUILDER_REGISTRY.get(selected_tool)
@@ -1011,12 +1104,92 @@ class IOAV3LangGraphN8nAgent:
         result["current_user_input"] = state.get("user_input") or ""
         return self.build_grafana_logs_answer(result)
 
+    def _dispatch_platform_service_health(self, result, state):
+        if not isinstance(result, dict):
+            return None
+        return self.build_platform_service_health_answer(
+            result,
+            state.get("user_input") or "",
+        )
+
+    def build_platform_service_health_answer(self, result, user_input=""):
+        body = result.get("body") if isinstance(result.get("body"), dict) else result
+        dashboards = body.get("dashboards") if isinstance(body.get("dashboards"), dict) else {}
+        verdict = (
+            body.get("overall_verdict")
+            or result.get("level")
+            or result.get("status")
+            or "unknown"
+        )
+        rows = []
+        warning_services = []
+        for service, status in sorted(dashboards.items()):
+            rows.append(f"| {service} | {status} |")
+            if str(status).lower() not in {"good", "ok", "normal", "healthy"}:
+                warning_services.append(str(service))
+
+        if rows:
+            metric_lines = ["| Service | Status |", "|---|---|", *rows]
+        else:
+            metric_lines = ["_No platform service health rows returned._"]
+
+        if warning_services:
+            conclusion = (
+                "One or more platform service groups need follow-up: "
+                f"{', '.join(warning_services)}."
+            )
+            next_action = (
+                "- Drill down into the concrete warning group above instead of using a generic platform check.\n"
+                "- Check that group's metrics first, then scoped logs if the metric evidence stays abnormal."
+            )
+            followups = [
+                f"Check {service} health"
+                for service in warning_services[:3]
+            ]
+        elif dashboards:
+            conclusion = "All reported platform service groups are healthy."
+            next_action = "- No action needed for platform service health in the sampled evidence."
+            followups = []
+        else:
+            conclusion = "Insufficient platform service health evidence was returned."
+            next_action = "- Verify the platform service-health endpoint and Grafana datasource before assigning root cause."
+            followups = []
+
+        return "\n".join([
+            "# Platform Service Health Check Result",
+            "",
+            "## 1. Summary",
+            f"Overall verdict: {verdict}.",
+            "",
+            "## 2. Input",
+            "- Issue type: platform_service_health",
+            "- Scope: platform service dashboard groups",
+            "",
+            "## 3. Logs Checked",
+            "- Detailed service logs were not checked in this workflow; this run checks service health metrics first.",
+            "",
+            "## 4. Database Resources",
+            "- Not applicable for the platform service health workflow.",
+            "",
+            "## 5. System Metrics",
+            *metric_lines,
+            "",
+            "## 6. Conclusion",
+            conclusion,
+            "",
+            "## 7. Recommended Next Action",
+            next_action,
+            *self.suggestion_section(
+                followups,
+                language=self.primary_language(user_input),
+                current_input=user_input,
+            ),
+        ])
+
     def build_grafana_logs_answer(self, result):
         request = result.get("request") or {}
-        service_name = (
-            request.get("service_name")
-            or request.get("service")
-            or "requested service"
+        service_name = self.normalize_log_service_name(
+            request.get("service_name") or request.get("service")
         )
         contains = request.get("contains") or ""
         hours_back = request.get("hours_back") or 6
@@ -1024,25 +1197,58 @@ class IOAV3LangGraphN8nAgent:
         error = result.get("error")
         device_id = contains if re.search(r"\b[SN][A-Za-z0-9-]{8,}\b", str(contains)) else ""
         count = len(logs) if isinstance(logs, list) else 0
-        status = "unavailable" if error else ("matched" if count else "no_entries")
+        needs_target = result.get("level") == "needs_target"
+        status = (
+            "needs_target"
+            if needs_target
+            else "unavailable"
+            if error
+            else ("matched" if count else "no_entries")
+        )
+        service_display = service_name or "not specified"
+        contains_display = contains or "not specified"
+        start = request.get("start")
+        end = request.get("end")
+        time_window_line = (
+            f"- Time range: {start} → {end} (last {hours_back} hours)"
+            if start and end
+            else f"- Time window: last {hours_back} hours"
+        )
+        target_phrase = (
+            f"{service_name} logs"
+            if service_name
+            else "logs"
+            if contains
+            else "logs for a not-yet-specified service"
+        )
+        filter_phrase = (
+            f" filtered by {contains}"
+            if contains
+            else " without a keyword filter"
+        )
         lines = [
             "# Grafana Log Check Result",
             "",
             "## 1. Summary",
             (
-                f"Checked `{service_name}` logs for `{contains}` in the last {hours_back} hours. "
+                f"Checked {target_phrase}{filter_phrase} in the last {hours_back} hours. "
                 f"Status: **{status}**."
             ),
             "",
             "## 2. Input",
-            f"- Service: `{service_name}`",
-            f"- Contains: `{contains or 'not specified'}`",
-            f"- Time window: last `{hours_back}` hours",
+            f"- Service: {service_display}",
+            f"- Contains: {contains_display}",
+            time_window_line,
             "",
             "## 3. Log Evidence",
         ]
 
-        if error:
+        if needs_target:
+            lines.append(
+                "- No Loki query was executed because no concrete service name "
+                "or search keyword was provided."
+            )
+        elif error:
             lines.append(f"- Log query failed: `{self.short_error(error)}`")
         elif count:
             for index, entry in enumerate(logs[:MAX_ANSWER_RECORDS], start=1):
@@ -1056,14 +1262,22 @@ class IOAV3LangGraphN8nAgent:
             "",
             "## 4. Suggested Next Action",
             (
-                "- Widen the time range or correlate with adjacent service logs and DB resource evidence before assigning root cause."
+                "- Select a concrete service or provide a keyword, then rerun the scoped log check."
+                if needs_target
+                else "- Widen the time range or correlate with adjacent service logs and DB resource evidence before assigning root cause."
                 if not count
                 else "- Correlate the matched log timestamps with DB resource/CIN evidence and adjacent service logs."
             ),
         ])
 
         suggestions = []
-        if device_id:
+        if needs_target:
+            suggestions.extend([
+                "Check EMQX logs",
+                "Check MQTT adapter logs",
+                "Check RabbitMQ queue backlog",
+            ])
+        elif device_id:
             if service_name == "notify":
                 suggestions.extend([
                     f"Check iot-mqtt-client-adapter logs for device {device_id} in the last 3 hours",
@@ -1083,10 +1297,25 @@ class IOAV3LangGraphN8nAgent:
                     f"Show the AE document for device {device_id}",
                 ])
         else:
-            suggestions.extend([
-                f"Check K8s resources for service {service_name}",
-                f"Check recent errors for service {service_name}",
-            ])
+            next_hours = self.next_log_widen_hours(hours_back)
+            if service_name == "emqx":
+                suggestions.append("Check MQTT adapter logs for reconnect evidence")
+                if next_hours:
+                    suggestions.append(f"Widen EMQX logs to the last {next_hours} hours")
+            elif service_name == "iot-mqtt-client-adapter":
+                suggestions.append("Check EMQX logs for errors or warnings")
+                if next_hours:
+                    suggestions.append(f"Widen MQTT adapter logs to the last {next_hours} hours")
+            elif service_name:
+                suggestions.extend([
+                    f"Check K8s resources for service {service_name}",
+                    f"Check recent errors for service {service_name}",
+                ])
+            else:
+                suggestions.extend([
+                    "Check EMQX logs",
+                    "Check MQTT adapter logs",
+                ])
 
         lines.extend(self.suggestion_section(
             suggestions,
@@ -1094,6 +1323,724 @@ class IOAV3LangGraphN8nAgent:
             current_input=result.get("current_user_input"),
         ))
         return "\n".join(lines)
+
+    def split_followup_section_from_answer(self, answer):
+        lines = str(answer or "").replace("\r\n", "\n").split("\n")
+        heading_index = None
+        for index, line in enumerate(lines):
+            if re.match(
+                r"^(?:#{1,6}\s*)?(follow-up questions|câu hỏi tiếp theo)\s*:?$",
+                line.strip(),
+                flags=re.IGNORECASE,
+            ):
+                heading_index = index
+                break
+
+        if heading_index is None:
+            return str(answer or "").strip(), []
+
+        body = "\n".join(lines[:heading_index]).strip()
+        existing = []
+        for line in lines[heading_index + 1:]:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                break
+            item = re.sub(r"^[-*]\s+", "", stripped)
+            item = re.sub(r"^\d+[.)]\s+", "", item).strip()
+            if item:
+                existing.append(item)
+        return body, existing
+
+    def apply_followup_planner(self, answer, state):
+        answer_body, fallback_followups = self.split_followup_section_from_answer(answer)
+        completed_signatures = self.completed_followup_signatures(
+            state.get("conversation_context") or []
+        )
+        current_input = state.get("user_input") or ""
+        selected_tool = state.get("selected_tool")
+        context_log_retry = (
+            selected_tool == "grafana_logs"
+            and self.is_context_dependent_followup(current_input)
+            and "needs_target" not in answer_body.lower()
+        )
+
+        token_usage = None
+        if context_log_retry:
+            followups = self.filter_followups_against_completed_actions(
+                fallback_followups,
+                current_input,
+                completed_signatures,
+            )
+        else:
+            try:
+                response = self.model.invoke(
+                    self.build_followup_planner_prompt(answer_body, state)
+                )
+                token_usage = self.extract_token_usage(response)
+                parsed = self.parse_json_object(getattr(response, "content", response))
+                followups = self.normalize_followup_plan(
+                    parsed,
+                    current_input,
+                    selected_tool,
+                    answer_body,
+                    completed_signatures,
+                )
+            except Exception:
+                followups = self.filter_followups_against_completed_actions(
+                    fallback_followups,
+                    current_input,
+                    completed_signatures,
+                )
+
+            if (
+                not followups
+                and fallback_followups
+                and self.answer_has_open_next_action(answer_body)
+            ):
+                followups = self.filter_followups_against_completed_actions(
+                    fallback_followups,
+                    current_input,
+                    completed_signatures,
+                )
+
+            followups = self.enforce_required_followup_branches(
+                followups,
+                state,
+                answer_body,
+                completed_signatures,
+            )
+            followups = self.prune_followups_for_context(
+                followups,
+                state,
+                answer_body,
+            )
+
+        if not followups:
+            return answer_body, token_usage
+
+        language = self.primary_language(current_input)
+        return "\n".join([
+            answer_body,
+            *self.suggestion_section(
+                followups,
+                language=language,
+                current_input=current_input,
+            ),
+        ]), token_usage
+
+    def prune_followups_for_context(self, followups, state, answer):
+        if not followups:
+            return []
+
+        selected_tool = state.get("selected_tool")
+        current_input = state.get("user_input") or ""
+        context_text = " ".join([
+            str(answer or ""),
+            str(current_input or ""),
+            self.recent_context_text(state.get("conversation_context") or []),
+        ]).lower()
+
+        if selected_tool == "grafana_logs" and (
+            "reconnect" in context_text
+            or "emqx" in context_text
+            or "mqtt" in context_text
+        ):
+            allow_queue_branch = (
+                "rabbitmq" in str(answer or "").lower()
+                or "queue backlog" in str(answer or "").lower()
+                or "queue depth" in str(answer or "").lower()
+            )
+            if not allow_queue_branch:
+                followups = [
+                    item for item in followups
+                    if not any(term in item.lower() for term in (
+                        "rabbitmq",
+                        "queue backlog",
+                        "throughput",
+                    ))
+                ]
+
+        return followups[:MAX_FOLLOWUP_SUGGESTIONS]
+
+    def answer_has_open_next_action(self, answer):
+        text = str(answer or "").lower()
+        if not any(term in text for term in (
+            "suggested next action",
+            "recommended next action",
+            "evidence gap",
+            "widen the time range",
+            "adjacent service logs",
+            "correlate with adjacent",
+        )):
+            return False
+
+        closed_terms = (
+            "no action needed",
+            "no immediate action required",
+            "all sampled metrics are within normal thresholds",
+            "all reported platform service groups are healthy",
+        )
+        return not any(term in text for term in closed_terms)
+
+    def build_followup_planner_prompt(self, answer, state):
+        language = self.primary_language(state.get("user_input"))
+        evidence = self.compact_followup_evidence_value(
+            {
+                "selected_tool": state.get("selected_tool"),
+                "tool_outputs": state.get("tool_outputs") or [],
+                "completed_actions": sorted(self.completed_followup_signatures(
+                    state.get("conversation_context") or []
+                )),
+            },
+            depth=4,
+        )
+        return f"""
+You are the follow-up planner for an IoT operations agent.
+
+Read the operator's prompt, the final answer, and the bounded evidence summary.
+Return ONLY valid JSON.
+
+Rules:
+- Primary language must stay {"Vietnamese" if language == "vi" else "English"}.
+- Decide dynamically from the answer, not from fixed keyword templates.
+- If the answer says no action needed, all healthy, no immediate action, or no
+  evidence gap/next investigation remains, return needs_followup=false.
+- If the answer contains a Suggested/Recommended Next Action, Evidence Gap, log
+  failure, missing evidence, unavailable source, abnormal metric, or unresolved
+  root-cause question, return every remaining concrete follow-up that directly
+  advances that next action, up to {MAX_FOLLOWUP_SUGGESTIONS}. Do not pad the
+  list to a fixed count.
+- Do not repeat the current user prompt.
+- Do not repeat, rephrase, or slightly rename an action that already appears in
+  completed_actions. Move to a different branch of the investigation.
+- Do not ask broad questions when a concrete entity is present.
+- Use placeholders only for selectable entities that are explicitly listed as
+  candidates in the answer, such as <queue_id>, <pod>, <device_id>, or
+  <request_id>. Do not use placeholders for broad concepts like service/log
+  source unless the answer listed concrete service candidates.
+- For RabbitMQ queue lists, prefer "Show details for queue <queue_id>" or
+  "Check whether queue <queue_id> is increasing" instead of choosing one queue.
+- If the next action mentions consumer, adjacent, or queue-processing service
+  logs but no concrete service name is present in the answer, ask the next
+  concrete RabbitMQ/Kubernetes check instead of inventing a service name.
+- Never output "requested device", "requested service", "not specified", empty
+  backticks, or another fake placeholder as if it were a real entity.
+- If selected_tool is a RabbitMQ/queue tool, do NOT ask about device IDs,
+  OneM2M resources, CIN, AE, SUBSCRIPTION, command flow, or telemetry flow
+  unless the final answer explicitly includes a concrete device identifier and
+  says to switch domains.
+- Preserve technical identifiers and placeholder tokens exactly.
+
+JSON shape:
+{{
+  "needs_followup": true,
+  "reason": "short reason",
+  "questions": [
+    "question or command"
+  ]
+}}
+
+Operator prompt:
+{state.get("user_input") or ""}
+
+Final answer:
+{answer}
+
+Evidence summary:
+{json.dumps(evidence, ensure_ascii=False)}
+"""
+
+    def compact_followup_evidence_value(self, value, depth=3):
+        if depth <= 0:
+            return "..."
+        if isinstance(value, dict):
+            compact = {}
+            for key, item in list(value.items())[:30]:
+                compact[str(key)] = self.compact_followup_evidence_value(
+                    item,
+                    depth=depth - 1,
+                )
+            return compact
+        if isinstance(value, list):
+            return [
+                self.compact_followup_evidence_value(item, depth=depth - 1)
+                for item in value[:10]
+            ]
+        if isinstance(value, str):
+            return value[:600]
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        return str(value)[:600]
+
+    def normalize_followup_plan(
+        self,
+        parsed,
+        current_input,
+        selected_tool=None,
+        answer="",
+        completed_signatures=None,
+    ):
+        if not isinstance(parsed, dict):
+            return []
+        if parsed.get("needs_followup") is False:
+            return []
+
+        questions = parsed.get("questions")
+        if not isinstance(questions, list):
+            return []
+
+        unique = []
+        seen = set()
+        completed_signatures = set(completed_signatures or set())
+        current_normalized = self.normalize_followup_text(current_input)
+        current_signature = self.current_action_signature(current_input, selected_tool)
+        queue_candidates = self.extract_queue_candidates_from_answer(answer)
+        for item in questions:
+            text = self.parameterize_followup_entities(
+                str(item or "").strip(),
+                selected_tool,
+                queue_candidates,
+            )
+            text = self.normalize_generic_infra_followup(text, selected_tool)
+            normalized = self.normalize_followup_text(text)
+            if not text or not normalized:
+                continue
+            if not self.is_followup_compatible_with_tool(text, selected_tool):
+                continue
+            if normalized == current_normalized or normalized in seen:
+                continue
+            signature = self.followup_action_signature(text)
+            if signature and (
+                signature == current_signature
+                or signature in completed_signatures
+                or signature in seen
+            ):
+                continue
+            seen.add(normalized)
+            if signature:
+                seen.add(signature)
+            unique.append(text)
+        return unique[:MAX_FOLLOWUP_SUGGESTIONS]
+
+    def filter_followups_against_completed_actions(
+        self,
+        followups,
+        current_input,
+        completed_signatures,
+    ):
+        unique = []
+        seen = set()
+        current_signature = self.current_action_signature(current_input)
+        completed_signatures = set(completed_signatures or set())
+        for item in followups or []:
+            text = self.format_followup_question(item)
+            normalized = self.normalize_followup_text(text)
+            signature = self.followup_action_signature(text)
+            if not normalized or normalized in seen:
+                continue
+            if signature and (
+                signature == current_signature
+                or signature in completed_signatures
+                or signature in seen
+            ):
+                continue
+            seen.add(normalized)
+            if signature:
+                seen.add(signature)
+            unique.append(text)
+        return unique
+
+    def enforce_required_followup_branches(
+        self,
+        followups,
+        state,
+        answer,
+        completed_signatures,
+    ):
+        selected_tool = state.get("selected_tool")
+        current_input = state.get("user_input") or ""
+        completed_signatures = set(completed_signatures or set())
+        current_signature = self.current_action_signature(current_input, selected_tool)
+        existing = []
+        seen = set()
+
+        for candidate in self.required_followup_candidates(
+            selected_tool,
+            answer,
+            current_input,
+            state.get("conversation_context") or [],
+        ):
+            self.add_followup_candidate(
+                existing,
+                seen,
+                candidate,
+                current_signature=current_signature,
+                completed_signatures=completed_signatures,
+            )
+
+        for item in followups or []:
+            self.add_followup_candidate(
+                existing,
+                seen,
+                item,
+                current_signature=current_signature,
+                completed_signatures=completed_signatures,
+            )
+
+        return existing[:MAX_FOLLOWUP_SUGGESTIONS]
+
+    def add_followup_candidate(
+        self,
+        followups,
+        seen,
+        candidate,
+        *,
+        current_signature=None,
+        completed_signatures=None,
+    ):
+        text = self.format_followup_question(candidate)
+        normalized = self.normalize_followup_text(text)
+        if not text or not normalized or normalized in seen:
+            return False
+
+        signature = self.followup_action_signature(text)
+        completed_signatures = set(completed_signatures or set())
+        if signature and (
+            signature == current_signature
+            or signature in completed_signatures
+            or signature in seen
+        ):
+            return False
+
+        seen.add(normalized)
+        if signature:
+            seen.add(signature)
+        followups.append(text)
+        return True
+
+    def current_action_signature(self, current_input, selected_tool=None):
+        text = self.normalize_followup_text(current_input)
+        if not text:
+            return None
+
+        selected_tool_signature = {
+            "grafana_emqx_dropped_trend": "emqx_dropped_messages",
+            "grafana_emqx_health": "emqx_broker_health",
+            "query_emqx_connection_count": "emqx_connection_count",
+            "grafana_emqx_connection_trend": "emqx_connection_trend",
+            "grafana_queue_backlog": "rabbitmq_queue_backlog",
+            "grafana_throughput": "rabbitmq_throughput",
+            "query_rabbitmq_queue_detail": "rabbitmq_queue_detail:any",
+        }.get(selected_tool)
+
+        if selected_tool_signature:
+            return selected_tool_signature
+
+        return self.followup_action_signature(current_input)
+
+    def required_followup_candidates(
+        self,
+        selected_tool,
+        answer,
+        current_input,
+        conversation_context=None,
+    ):
+        text = " ".join([
+            str(answer or ""),
+            str(current_input or ""),
+            self.recent_context_text(conversation_context),
+        ]).lower()
+        candidates = []
+
+        if selected_tool == "grafana_logs":
+            service = self.extract_log_service_name(current_input)
+            if not service:
+                service = self.extract_recent_log_service([
+                    {"role": "assistant", "content": answer}
+                ])
+            if service:
+                service = self.normalize_log_service_name(service)
+            service_label = {
+                "iot-mqtt-client-adapter": "MQTT adapter",
+                "emqx": "EMQX",
+                "rabbitmq": "RabbitMQ",
+                "iot-http-api": "HTTP API",
+                "notify": "notify",
+            }.get(service, service)
+
+            if service and (
+                "widen the time range" in text
+                or "wider time range" in text
+                or "no_entries" in text
+            ):
+                current_hours = (
+                    self.extract_requested_hours_back(current_input)
+                    or self.extract_requested_hours_back(answer)
+                    or 6
+                )
+                next_hours = self.next_log_widen_hours(current_hours)
+                if next_hours:
+                    candidates.append(
+                        f"Widen {service_label} logs to last {next_hours} hours"
+                    )
+
+            if service == "emqx" and (
+                "reconnect" in text
+                or "mqtt adapter" in text
+                or "iot-mqtt-client-adapter" in text
+            ):
+                candidates.append(
+                    "Check MQTT adapter logs for reconnect evidence"
+                    if "reconnect" in text
+                    else "Check MQTT adapter logs for any issues"
+                )
+            elif service == "iot-mqtt-client-adapter" and (
+                "reconnect" in text
+                or "emqx" in text
+                or "broker" in text
+            ):
+                candidates.append("Check EMQX logs for broker-side errors")
+
+        if selected_tool in {
+            "grafana_emqx_dropped_trend",
+            "grafana_emqx_health",
+            "query_emqx_connection_count",
+            "grafana_emqx_connection_trend",
+            "grafana_logs",
+        } and ("emqx" in text or "mqtt" in text or "broker" in text):
+            if "emqx log" in text or "emqx logs" in text:
+                candidates.append("Check EMQX logs for errors or warnings")
+            if "mqtt adapter" in text or "iot-mqtt-client-adapter" in text:
+                candidates.append(
+                    "Check MQTT adapter logs for reconnect evidence"
+                    if "reconnect" in text
+                    else "Check MQTT adapter logs for any issues"
+                )
+            if (
+                "broker cpu" in text
+                or "cpu/memory" in text
+                or "memory" in text
+                or "broker health" in text
+            ):
+                candidates.append("Review broker CPU/memory usage and connection count")
+            if (
+                "connection count" in text
+                and "broker cpu" not in text
+                and "cpu/memory" not in text
+                and "broker health" not in text
+            ):
+                candidates.append("Show current EMQX connection count")
+            if "queue backlog" in text or "rabbitmq" in text:
+                candidates.append("Check RabbitMQ queue backlog")
+        return candidates
+
+    def extract_queue_candidates_from_answer(self, answer):
+        candidates = []
+        for match in re.finditer(r"`([^`]+)`", str(answer or "")):
+            value = self.normalize_identifier_value(match.group(1))
+            if self.is_queue_identifier(value):
+                candidates.append(value)
+
+        for line in str(answer or "").splitlines():
+            cells = [
+                self.normalize_identifier_value(cell.replace("`", "").strip())
+                for cell in line.split("|")
+            ]
+            if len(cells) >= 2 and self.is_queue_identifier(cells[1]):
+                candidates.append(cells[1])
+
+        seen = set()
+        unique = []
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                unique.append(candidate)
+        return unique
+
+    def is_queue_identifier(self, value):
+        text = str(value or "")
+        return bool(re.match(r"^(?:amq\.gen-|queue\.|emqx-[^.]*\.queue\.)", text))
+
+    def parameterize_followup_entities(self, question, selected_tool, queue_candidates):
+        if selected_tool not in {
+            "grafana_queue_backlog",
+            "query_rabbitmq_queue_detail",
+            "grafana_queue_trend",
+            "grafana_throughput",
+        }:
+            return question
+
+        if len(queue_candidates) < 2:
+            return question
+
+        rewritten = str(question or "")
+        for candidate in sorted(queue_candidates, key=len, reverse=True):
+            rewritten = rewritten.replace(f"`{candidate}`", "<queue_id>")
+            rewritten = rewritten.replace(candidate, "<queue_id>")
+
+        rewritten = re.sub(r"`<queue_id>`", "<queue_id>", rewritten)
+        rewritten = re.sub(r"\s+", " ", rewritten).strip()
+        return rewritten
+
+    def normalize_generic_infra_followup(self, question, selected_tool):
+        if selected_tool not in {
+            "grafana_queue_backlog",
+            "query_rabbitmq_queue_detail",
+            "grafana_queue_trend",
+            "grafana_throughput",
+            "grafana_logs",
+        }:
+            return question
+
+        text = str(question or "").strip()
+        lowered = text.lower()
+        fake_targets = (
+            "`requested service`",
+            "requested service",
+            "`not specified`",
+            "not specified",
+            "``",
+            "<service>",
+        )
+        if any(target in lowered for target in fake_targets):
+            text = re.sub(
+                r"`?(?:requested service|not specified)`?|<service>",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).replace("``", "")
+            lowered = text.lower()
+
+        if (
+            "consumer" in lowered
+            and "pod" in lowered
+            and ("log" in lowered or "logs" in lowered)
+        ):
+            namespace = self.extract_param(lowered, "namespace") or "test"
+            return f"Check K8s resources for consumer pods in namespace {namespace}"
+
+        has_concrete_service = bool(re.search(
+            r"\b(?:iot-[a-z0-9-]+|notify|rabbitmq|redis|mysql|mongodb|emqx[^\s,.;]*)\b",
+            text,
+            flags=re.IGNORECASE,
+        ))
+        generic_service_log = (
+            ("log" in lowered or "logs" in lowered)
+            and (
+                "queue-processing" in lowered
+                or "adjacent service" in lowered
+                or "service logs" in lowered
+                or "related service" in lowered
+            )
+        )
+        if generic_service_log and "<service>" not in text and not has_concrete_service:
+            if "k8s" in lowered or "kubernetes" in lowered:
+                return "Check Kubernetes pods for RabbitMQ consumers"
+            return "Check RabbitMQ throughput"
+
+        return re.sub(r"\s+", " ", text).strip()
+
+    def is_followup_compatible_with_tool(self, question, selected_tool):
+        text = str(question or "").lower()
+        if selected_tool in {
+            "get_company_onem2m_device_resources",
+            "get_company_onem2m_command_flow",
+            "get_company_onem2m_telemetry_flow",
+            "query_company_onem2m_collection",
+            "query_device_online_status",
+            "query_onem2m_cin_records",
+        }:
+            forbidden = (
+                "<queue_id>",
+                "rabbitmq",
+                "queue",
+                "consumer pod",
+                "consumer pods",
+                "k8s",
+                "kubernetes",
+            )
+            return not any(term in text for term in forbidden)
+
+        if selected_tool in {
+            "grafana_emqx_dropped_trend",
+            "grafana_emqx_health",
+            "query_emqx_connection_count",
+            "grafana_emqx_connection_trend",
+        }:
+            forbidden = (
+                "platform service health",
+                "platform health",
+                "service health",
+                "core service",
+                "service errors",
+            )
+            if any(term in text for term in forbidden):
+                return False
+
+            allowed = (
+                "emqx",
+                "mqtt",
+                "iot-mqtt-client-adapter",
+                "rabbitmq",
+                "queue",
+                "broker",
+                "connection",
+                "k8s",
+                "kubernetes",
+                "pod",
+                "log",
+            )
+            return any(term in text for term in allowed)
+
+        if selected_tool not in {
+            "grafana_queue_backlog",
+            "query_rabbitmq_queue_detail",
+            "grafana_queue_trend",
+            "grafana_throughput",
+            "grafana_logs",
+        }:
+            return True
+
+        forbidden = (
+            "device",
+            "device_id",
+            "requested device",
+            "requested service",
+            "not specified",
+            "``",
+            "cin",
+            "content instance",
+            "onem2m",
+            "identity",
+            "subscription",
+            "uri_mapper",
+            "uri mapper",
+            "cnt_command",
+            "cnt_telemetry",
+            "ae document",
+            "telemetry flow",
+            "command flow",
+        )
+        if any(term in text for term in forbidden):
+            return False
+
+        allowed = (
+            "queue",
+            "rabbitmq",
+            "consumer",
+            "k8s",
+            "kubernetes",
+            "pod",
+            "service",
+            "log",
+            "throughput",
+            "backlog",
+            "<queue_id>",
+            "<pod>",
+        )
+        return any(term in text for term in allowed)
 
     def first_prometheus_value(self, result):
         items = self.prometheus_result_items(result)
@@ -1123,7 +2070,8 @@ class IOAV3LangGraphN8nAgent:
 
         return lines or ["- No metric values returned by Prometheus."]
 
-    def build_infrastructure_overview_answer(self, tool_outputs):
+    def build_infrastructure_overview_answer(self, tool_outputs, user_input=""):
+        language = self.primary_language(user_input)
         labels = {
             "grafana_k8s_health": "Kubernetes",
             "grafana_linux_health": "Linux node",
@@ -1195,6 +2143,18 @@ class IOAV3LangGraphN8nAgent:
             "",
             "## 7. Recommended Next Action",
             "- If any group is warning or unavailable, check the Prometheus datasource, related pods/services, recent error logs, and correlation with a concrete request or device before assigning root cause.",
+            *self.suggestion_section([
+                self.localized_text(
+                    language,
+                    "Check Kubernetes resource details",
+                    "Kiểm tra chi tiết Kubernetes resources",
+                ),
+                self.localized_text(
+                    language,
+                    "Check recent service error logs",
+                    "Kiểm tra service error logs gần đây",
+                ),
+            ], language=language, current_input=user_input),
         ])
 
     def prometheus_result_items(self, result):
@@ -1436,6 +2396,7 @@ class IOAV3LangGraphN8nAgent:
         return builder(result, user_input) if builder else None
 
     def build_queue_backlog_answer(self, result, _user_input):
+        language = self.primary_language(_user_input)
         request = result.get("request") or {}
         threshold = float(request.get("threshold") or 10000)
         queues = self.top_prometheus_series(result, "queue", limit=10)
@@ -1457,6 +2418,7 @@ class IOAV3LangGraphN8nAgent:
 
         top_name = top_queue.get("name", "unavailable")
         top_val_str = f"{top_value:.0f}" if top_value is not None else "unavailable"
+        namespace = request.get("namespace", "test")
 
         return "\n".join([
             "# RabbitMQ Queue Backlog Check Result",
@@ -1466,7 +2428,7 @@ class IOAV3LangGraphN8nAgent:
             f"**Highest backlog queue:** `{top_name}` — {top_val_str} messages | **Threshold:** {threshold:.0f}",
             "",
             "## 2. Input",
-            f"- **Namespace:** `{request.get('namespace', 'test')}`",
+            f"- **Namespace:** `{namespace}`",
             f"- **TopK:** {request.get('topk', 10)}",
             f"- **Issue type:** rabbitmq_queue_backlog",
             "",
@@ -1499,13 +2461,34 @@ class IOAV3LangGraphN8nAgent:
                 else "- Verify the RabbitMQ metric name, namespace label, scrape target, and datasource before checking consumers."
             ),
             *self.suggestion_section([
-                f"Chi tiết về queue {top_name}" if top_name != "unavailable" else "",
-                f"Queue {top_name} có đang tăng không? Check queue trend" if top_name != "unavailable" else "",
-                "Kiểm tra K8s pods xử lý queue này",
-            ]),
+                (
+                    self.localized_text(
+                        language,
+                        "Show details for queue <queue_id>",
+                        "Chi tiết về queue <queue_id>",
+                    )
+                    if top_name != "unavailable"
+                    else ""
+                ),
+                (
+                    self.localized_text(
+                        language,
+                        "Check whether queue <queue_id> is increasing",
+                        "Queue <queue_id> có đang tăng không? Check queue trend",
+                    )
+                    if top_name != "unavailable"
+                    else ""
+                ),
+                self.localized_text(
+                    language,
+                    f"Check K8s resources for consumer pods in namespace {namespace}",
+                    "Kiểm tra K8s pods xử lý queue này",
+                ),
+            ], language=language, current_input=_user_input),
         ])
 
     def build_queue_detail_answer(self, result, _user_input):
+        language = self.primary_language(_user_input)
         request = result.get("request") or {}
         queries = result.get("queries") or {}
 
@@ -1553,15 +2536,30 @@ class IOAV3LangGraphN8nAgent:
                 else "- Check queue trend and consumer pod logs if backlog keeps increasing."
             ),
             *self.suggestion_section([
-                f"Queue {queue_name} có đang tăng không? Check queue trend",
-                "Kiểm tra K8s resource của consumer pods",
+                self.localized_text(
+                    language,
+                    f"Check whether queue {queue_name} is increasing",
+                    f"Queue {queue_name} có đang tăng không? Check queue trend",
+                ),
+                self.localized_text(
+                    language,
+                    "Check K8s resources for consumer pods",
+                    "Kiểm tra K8s resource của consumer pods",
+                ),
                 "RabbitMQ throughput",
-            ]),
+            ], language=language, current_input=_user_input),
         ])
 
     def build_queue_trend_answer(self, result, _user_input):
+        language = self.primary_language(_user_input)
         request = result.get("request") or {}
+        requested_queue = request.get("queue")
         trends = self.range_trend_summary(result, "queue")
+        if requested_queue:
+            trends = [
+                row for row in trends
+                if row.get("name") == requested_queue
+            ]
         primary = trends[0] if trends else {}
         has_evidence = bool(trends)
         linear = bool(primary.get("linear_increase"))
@@ -1579,6 +2577,41 @@ class IOAV3LangGraphN8nAgent:
             trend_table = ["_No range samples returned in evidence._"]
 
         primary_name = primary.get("name", "unavailable")
+        followup_queue = requested_queue or primary_name
+        namespace = request.get("namespace", "test")
+        followups = []
+        if followup_queue and followup_queue != "unavailable":
+            followups.append(self.localized_text(
+                language,
+                f"Show details for queue {followup_queue}",
+                f"Chi tiết về queue này: Check queue {followup_queue}",
+            ))
+        if has_evidence:
+            followups.extend([
+                self.localized_text(
+                    language,
+                    f"Check K8s resources for consumer pods in namespace {namespace}",
+                    f"Kiểm tra K8s resource của consumer pods trong namespace {namespace}",
+                ),
+                self.localized_text(
+                    language,
+                    f"Check RabbitMQ throughput in namespace {namespace}",
+                    f"Kiểm tra RabbitMQ throughput trong namespace {namespace}",
+                ),
+            ])
+        else:
+            followups.extend([
+                self.localized_text(
+                    language,
+                    f"Check RabbitMQ queue backlog in namespace {namespace}",
+                    f"Kiểm tra RabbitMQ queue backlog trong namespace {namespace}",
+                ),
+                self.localized_text(
+                    language,
+                    "Check Prometheus RabbitMQ datasource health",
+                    "Kiểm tra health datasource Prometheus RabbitMQ",
+                ),
+            ])
 
         return "\n".join([
             "# RabbitMQ Queue Trend Check Result",
@@ -1590,7 +2623,11 @@ class IOAV3LangGraphN8nAgent:
                 else (
                     "No continuously linear queue growth found in the current evidence."
                     if has_evidence
-                    else "Prometheus returned no RabbitMQ queue range samples for the requested namespace."
+                    else (
+                        f"Prometheus returned no RabbitMQ queue range samples for `{requested_queue}` in the requested namespace."
+                        if requested_queue
+                        else "Prometheus returned no RabbitMQ queue range samples for the requested namespace."
+                    )
                 )
             ),
             "",
@@ -1619,7 +2656,11 @@ class IOAV3LangGraphN8nAgent:
                 else (
                     "There is not enough evidence to conclude continuous consumer congestion."
                     if has_evidence
-                    else "There is insufficient metric evidence to determine whether RabbitMQ queues are growing linearly."
+                    else (
+                        f"There is insufficient metric evidence to determine whether `{requested_queue}` is growing linearly."
+                        if requested_queue
+                        else "There is insufficient metric evidence to determine whether RabbitMQ queues are growing linearly."
+                    )
                 )
             ),
             "",
@@ -1629,10 +2670,11 @@ class IOAV3LangGraphN8nAgent:
                 if has_evidence
                 else "- Verify the RabbitMQ metric name, namespace label, range query, scrape target, and datasource before checking consumers."
             ),
-            *self.suggestion_section([
-                f"Chi tiết về queue này: Check queue {primary_name}" if linear and primary_name != "unavailable" else "",
-                "Kiểm tra K8s resource của consumer pods" if linear else "",
-            ]),
+            *self.suggestion_section(
+                followups,
+                language=language,
+                current_input=_user_input,
+            ),
         ])
 
     def build_emqx_health_answer(self, result, _user_input):
@@ -1742,6 +2784,7 @@ class IOAV3LangGraphN8nAgent:
         ])
 
     def build_emqx_dropped_answer(self, result, _user_input):
+        language = self.primary_language(_user_input)
         request = result.get("request") or {}
         trends = self.range_trend_summary(result, "instance")
         primary = trends[0] if trends else {}
@@ -1807,12 +2850,29 @@ class IOAV3LangGraphN8nAgent:
                 else "- Verify the EMQX dropped-message metric name, job label, scrape target, and datasource before assigning root cause."
             ),
             *self.suggestion_section([
-                "Kiểm tra K8s pods EMQX: Check K8s resources" if increased else "",
-                "Số lượng connection hiện tại: Current EMQX connection count" if increased else "",
-            ]),
+                (
+                    self.localized_text(
+                        language,
+                        "Check K8s resources for EMQX pods",
+                        "Kiểm tra K8s pods EMQX: Check K8s resources",
+                    )
+                    if increased
+                    else ""
+                ),
+                (
+                    self.localized_text(
+                        language,
+                        "Show current EMQX connection count",
+                        "Số lượng connection hiện tại: Current EMQX connection count",
+                    )
+                    if increased
+                    else ""
+                ),
+            ], language=language, current_input=_user_input),
         ])
 
     def build_emqx_connection_count_answer(self, result, _user_input):
+        language = self.primary_language(_user_input)
         queries = result.get("queries") or {}
 
         def scalar(key):
@@ -1855,10 +2915,11 @@ class IOAV3LangGraphN8nAgent:
                 "EMQX connect/disconnect rate",
                 "Check K8s resources for EMQX pods",
                 "Check logs for service iot-mqtt-client-adapter",
-            ]),
+            ], language=language, current_input=_user_input),
         ])
 
     def build_emqx_connection_answer(self, result, _user_input):
+        language = self.primary_language(_user_input)
         request = result.get("request") or {}
         queries = result.get("queries") or {}
         connected = self.range_trend_summary(queries.get("connected") or {}, "instance")
@@ -1934,17 +2995,43 @@ class IOAV3LangGraphN8nAgent:
             "",
             "## 7. Recommended Next Action",
             (
-                "- Check MQTT adapter logs, identify devices with repeated reconnects, verify device resources in DB, inspect error logs before reconnect events, and check the EMQX broker."
+                "- Check MQTT adapter logs for reconnect evidence, check EMQX logs for broker-side errors, and review EMQX broker health only if reconnect symptoms persist."
                 if has_evidence
                 else "- Verify the EMQX connected/disconnected metric names, job label, scrape target, and datasource before deriving device candidates from logs."
             ),
             *self.suggestion_section([
-                "Kiểm tra log MQTT adapter: Check logs for service iot-mqtt-client-adapter" if reconnect_loop else "",
-                "Kiểm tra K8s EMQX broker pods" if reconnect_loop else "",
-            ]),
+                (
+                    self.localized_text(
+                        language,
+                        "Check MQTT adapter logs for reconnect evidence",
+                        "Kiểm tra log MQTT adapter: Check logs for service iot-mqtt-client-adapter",
+                    )
+                    if has_evidence
+                    else ""
+                ),
+                (
+                    self.localized_text(
+                        language,
+                        "Check EMQX logs for errors or warnings",
+                        "Kiểm tra EMQX logs để tìm error/warning",
+                    )
+                    if has_evidence
+                    else ""
+                ),
+                (
+                    self.localized_text(
+                        language,
+                        "Check K8s resources for EMQX broker pods",
+                        "Kiểm tra K8s EMQX broker pods",
+                    )
+                    if reconnect_loop
+                    else ""
+                ),
+            ], language=language, current_input=_user_input),
         ])
 
     def build_http_health_answer(self, result, _user_input):
+        language = self.primary_language(_user_input)
         queries = result.get("queries") or {}
 
         def scalar(key):
@@ -2008,14 +3095,29 @@ class IOAV3LangGraphN8nAgent:
                 )
             ),
             *self.suggestion_section([
-                "Kiểm tra log iot-http-api: Check logs for service iot-http-api"
-                if error_rate is not None and error_rate > 0.5 else "",
-                "Kiểm tra K8s pods iot-http-api"
-                if error_rate is not None and error_rate > 0.5 else "",
-            ]),
+                (
+                    self.localized_text(
+                        language,
+                        "Check logs for service iot-http-api",
+                        "Kiểm tra log iot-http-api: Check logs for service iot-http-api",
+                    )
+                    if error_rate is not None and error_rate > 0.5
+                    else ""
+                ),
+                (
+                    self.localized_text(
+                        language,
+                        "Check K8s resources for iot-http-api pods",
+                        "Kiểm tra K8s pods iot-http-api",
+                    )
+                    if error_rate is not None and error_rate > 0.5
+                    else ""
+                ),
+            ], language=language, current_input=_user_input),
         ]))
 
     def build_throughput_answer(self, result, _user_input):
+        language = self.primary_language(_user_input)
         queries = result.get("queries") or {}
 
         def scalar(key):
@@ -2073,9 +3175,31 @@ class IOAV3LangGraphN8nAgent:
                 if issues
                 else "No action needed. Monitor periodically if telemetry freshness complaints recur."
             ),
+            *self.suggestion_section(
+                [
+                    self.localized_text(
+                        language,
+                        "Check RabbitMQ queue backlog in namespace test",
+                        "Kiểm tra RabbitMQ queue backlog trong namespace test",
+                    ),
+                    self.localized_text(
+                        language,
+                        "Check EMQX dropped messages trend",
+                        "Kiểm tra xu hướng EMQX dropped messages",
+                    ),
+                    self.localized_text(
+                        language,
+                        "Check logs for service iot-mqtt-client-adapter",
+                        "Kiểm tra logs service iot-mqtt-client-adapter",
+                    ),
+                ] if issues or not has_evidence else [],
+                language=language,
+                current_input=_user_input,
+            ),
         ])
 
     def build_k8s_resource_answer(self, result, _user_input, tool_outputs=None):
+        language = self.primary_language(_user_input)
         request = result.get("request") or {}
         queries = result.get("queries") or {}
         cpu = self.top_prometheus_series(queries.get("pod_cpu") or {}, "pod", limit=5)
@@ -2172,15 +3296,42 @@ class IOAV3LangGraphN8nAgent:
         else:
             conclusion = "Insufficient metric evidence. Verify scrape targets and datasource configuration."
 
-        next_action = (
-            "- Investigate pods listed in Critical Findings above.\n"
-            "- For OOMKilled pods: increase memory limit or profile memory usage.\n"
-            "- For CrashLoopBackOff: check pod logs for startup errors.\n"
-            "- For high node pressure: check if workloads need rescheduling.\n"
-            "- Correlate with error logs in Section 3."
-            if abnormal else
-            "- Verify Kubernetes metric scrape targets and namespace label if no data was returned."
-        )
+        if abnormal:
+            next_action = (
+                "- Investigate pods listed in Critical Findings above.\n"
+                "- For OOMKilled pods: increase memory limit or profile memory usage.\n"
+                "- For CrashLoopBackOff: check pod logs for startup errors.\n"
+                "- For high node pressure: check if workloads need rescheduling.\n"
+                "- Correlate with error logs in Section 3."
+            )
+        elif has_evidence:
+            next_action = "- No action needed for Kubernetes resources in the sampled evidence."
+        else:
+            next_action = "- Verify Kubernetes metric scrape targets and namespace label because no metric data was returned."
+        followups = []
+        if crashing_pod:
+            followups.append(self.localized_text(
+                language,
+                f"Show logs for failing pod {crashing_pod}",
+                f"Xem log pod đang lỗi: Show me logs for pod {crashing_pod}",
+            ))
+        if (
+            abnormal
+            and ("queue" in str(_user_input or "").lower() or "consumer" in str(_user_input or "").lower())
+        ):
+            namespace = request.get("namespace") or "test"
+            followups.extend([
+                self.localized_text(
+                    language,
+                    f"Check RabbitMQ throughput in namespace {namespace}",
+                    f"Kiểm tra RabbitMQ throughput trong namespace {namespace}",
+                ),
+                self.localized_text(
+                    language,
+                    f"Check RabbitMQ queue trend in namespace {namespace}",
+                    f"Kiểm tra RabbitMQ queue trend trong namespace {namespace}",
+                ),
+            ])
 
         lines = [
             "# Kubernetes Resource Check Result",
@@ -2240,10 +3391,11 @@ class IOAV3LangGraphN8nAgent:
             "",
             "## 7. Recommended Next Action",
             next_action,
-            *self.suggestion_section([
-                f"Xem log pod đang lỗi: Show me logs for pod {crashing_pod}"
-                if crashing_pod else "",
-            ]),
+            *self.suggestion_section(
+                followups,
+                language=language,
+                current_input=_user_input,
+            ),
         ]
 
         return "\n".join(lines)
@@ -2513,12 +3665,121 @@ class IOAV3LangGraphN8nAgent:
 
         return "en"
 
+    def localized_text(self, language, english, vietnamese):
+        return vietnamese if language == "vi" else english
+
     def normalize_followup_text(self, value):
         return re.sub(
             r"\s+",
             " ",
             re.sub(r"[`*_>#\-]", "", str(value or "").lower()),
         ).strip()
+
+    def completed_followup_signatures(self, conversation_context):
+        signatures = set()
+        if not isinstance(conversation_context, list):
+            return signatures
+
+        for message in conversation_context[-12:]:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "")
+            content = str(message.get("content") or "")
+            if not content:
+                continue
+
+            if role == "user":
+                signature = self.followup_action_signature(content)
+                if signature:
+                    signatures.add(signature)
+
+            for heading, mapped_signature in (
+                ("EMQX Broker Health Check Result", "emqx_broker_health"),
+                ("EMQX Connection Count", "emqx_connection_count"),
+                ("EMQX Dropped Messages Check Result", "emqx_dropped_messages"),
+                ("EMQX Connection Trend Check Result", "emqx_connection_trend"),
+                ("Grafana Log Check Result", None),
+                ("RabbitMQ Queue Backlog Check Result", "rabbitmq_queue_backlog"),
+                ("RabbitMQ Queue Trend Check Result", "rabbitmq_queue_trend"),
+                ("RabbitMQ Queue Detail", "rabbitmq_queue_detail"),
+                ("RabbitMQ Throughput Check Result", "rabbitmq_throughput"),
+                ("Kubernetes Resource Check Result", "k8s_resources"),
+            ):
+                if heading.lower() not in content.lower():
+                    continue
+                if mapped_signature:
+                    signatures.add(mapped_signature)
+                elif heading == "Grafana Log Check Result":
+                    service = self.extract_recent_log_service([message])
+                    signatures.add(f"logs:{service}" if service else "logs")
+
+        return signatures
+
+    def followup_action_signature(self, value):
+        text = self.normalize_followup_text(value)
+        if not text:
+            return None
+
+        service = self.extract_log_service_name(value)
+        if "log" in text or "loki" in text:
+            is_widen = any(term in text for term in (
+                "widen",
+                "wider",
+                "last 12 hour",
+                "last 24 hour",
+                "last 48 hour",
+                "last 72 hour",
+                "extend the time",
+                "increase the time",
+            ))
+            if service:
+                return f"logs:{service}:widen" if is_widen else f"logs:{service}"
+            if "mqtt adapter" in text or "mqttadapter" in text:
+                return "logs:iot-mqtt-client-adapter:widen" if is_widen else "logs:iot-mqtt-client-adapter"
+            if "emqx" in text:
+                return "logs:emqx:widen" if is_widen else "logs:emqx"
+            if "rabbitmq" in text:
+                return "logs:rabbitmq:widen" if is_widen else "logs:rabbitmq"
+            return "logs:widen" if is_widen else "logs"
+
+        queue = self.extract_queue_name(value)
+        if "rabbitmq" in text or "queue" in text:
+            if "throughput" in text or "publish" in text or re.search(r"\back\b", text):
+                return "rabbitmq_throughput"
+            if "trend" in text or "increasing" in text or "linear" in text:
+                return f"rabbitmq_queue_trend:{queue or 'any'}"
+            if "detail" in text or "consumer" in text:
+                return f"rabbitmq_queue_detail:{queue or 'any'}"
+            if "backlog" in text or "top 10" in text:
+                return "rabbitmq_queue_backlog"
+
+        if "emqx" in text or "broker" in text or "mqtt" in text:
+            if "dropped" in text or "drop" in text:
+                return "emqx_dropped_messages"
+            if "connect/disconnect" in text or "reconnect" in text:
+                return "emqx_connection_trend"
+            if (
+                "cpu" in text
+                or "memory" in text
+                or "broker health" in text
+                or "performance metric" in text
+                or "broker pod" in text
+                or "broker pods" in text
+            ):
+                return "emqx_broker_health"
+            if "connection count" in text or "current connection" in text:
+                return "emqx_connection_count"
+
+        if "k8s" in text or "kubernetes" in text or "pod" in text:
+            if "emqx" in text:
+                return "k8s:emqx"
+            if "rabbitmq" in text or "consumer" in text or "queue" in text:
+                return "k8s:rabbitmq_consumers"
+            if service:
+                return f"k8s:{service}"
+            return "k8s_resources"
+
+        return None
 
     def onem2m_followup_suggestions(
         self,
@@ -2791,13 +4052,26 @@ class IOAV3LangGraphN8nAgent:
             if self.normalize_followup_text(item) != self.normalize_followup_text(current_input)
         ]
 
-    def suggestion_section(self, suggestions, *, language="en", current_input=""):
+    def suggestion_section(
+        self,
+        suggestions,
+        *,
+        language="en",
+        current_input="",
+        selected_tool=None,
+    ):
         unique = []
         seen = set()
         current_normalized = self.normalize_followup_text(current_input)
         for item in suggestions:
+            item = self.format_followup_question(item)
             normalized = self.normalize_followup_text(item)
             if not item or not normalized:
+                continue
+            if selected_tool and not self.is_followup_compatible_with_tool(
+                item,
+                selected_tool,
+            ):
                 continue
             if normalized == current_normalized:
                 continue
@@ -2808,7 +4082,13 @@ class IOAV3LangGraphN8nAgent:
         if not unique:
             return []
         title = "Câu hỏi tiếp theo" if language == "vi" else "Follow-up Questions"
-        return ["", f"## {title}", *[f"- {item}" for item in unique[:4]]]
+        return ["", f"## {title}", *[f"- {item}" for item in unique[:MAX_FOLLOWUP_SUGGESTIONS]]]
+
+    def format_followup_question(self, item):
+        text = str(item or "").strip()
+        text = re.sub(r"`([^`]+)`", r"\1", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
 
     def build_onem2m_collection_answer(self, result):
         device_id = result.get("query_device_id") or "requested device"
@@ -2932,13 +4212,31 @@ class IOAV3LangGraphN8nAgent:
         for index, (kind, record) in enumerate(records[:MAX_ANSWER_RECORDS], start=1):
             decoded = self.decode_cin_content(record.get("con") if isinstance(record, dict) else None)
             lines.extend([
-                f"### {index}. {kind.upper()} CIN",
+                "",
+                f"**Record {index}: {kind.upper()} CIN**",
                 f"- rn: `{record.get('rn') if isinstance(record, dict) else 'unavailable'}`",
                 f"- parentContainer/pi: `{(record.get('parentContainer') or record.get('pi')) if isinstance(record, dict) else 'unavailable'}`",
                 f"- ct: `{self.format_onem2m_timestamp(record.get('ct') if isinstance(record, dict) else None)}`",
                 "- decoded `con`:",
                 self.json_block(decoded),
             ])
+        lines.extend([
+            "",
+            "## 3. Suggested Next Action",
+            (
+                "- Correlate these CIN timestamps and decoded statuses with "
+                "adapter/core logs, notify delivery logs, and AE online status "
+                "before assigning root cause."
+            ),
+            "",
+            "## 4. Evidence Gaps",
+            (
+                "- CIN records alone do not prove backend delivery or adapter/core "
+                "processing. Log and AE status evidence is still required."
+                if records
+                else "- No CIN samples were returned for this device in the bounded evidence."
+            ),
+        ])
         lines.extend(self.suggestion_section([
             *self.onem2m_followup_suggestions(
                 device_id,
@@ -2946,7 +4244,11 @@ class IOAV3LangGraphN8nAgent:
                 language=language,
                 context={"answer_kind": "cin_records"},
             )
-        ], language=language, current_input=result.get("current_user_input")))
+        ],
+            language=language,
+            current_input=result.get("current_user_input"),
+            selected_tool="query_onem2m_cin_records",
+        ))
         return "\n".join(lines)
 
     def build_onem2m_flow_answer(self, result, selected_tool, tool_outputs):
@@ -3423,6 +4725,238 @@ class IOAV3LangGraphN8nAgent:
             ),
         }
 
+    def resolve_contextual_user_input(self, user_input, conversation_context):
+        text = str(user_input or "").strip()
+        if not text:
+            return text
+
+        additions = []
+
+        if self.should_resolve_onem2m_context(text):
+            device_id = self.extract_recent_device_identifier(conversation_context)
+            if device_id and not self.extract_device_identifier(text):
+                additions.append(f"device {device_id}")
+
+        if self.should_resolve_log_context(text):
+            service = self.extract_recent_log_service(conversation_context)
+            contains = self.extract_recent_log_keyword(conversation_context)
+            hours_back = self.extract_requested_hours_back(text)
+            recent_hours_back = self.extract_recent_log_hours_back(conversation_context)
+            if hours_back is None and self.requests_wider_time_window(text):
+                hours_back = self.next_log_widen_hours(recent_hours_back or 6)
+            elif hours_back is None and recent_hours_back is not None:
+                hours_back = recent_hours_back
+
+            if service and not self.extract_log_service_name(text):
+                additions.append(f"service {service}")
+            if contains and "keyword" not in text.lower() and "contains" not in text.lower():
+                additions.append(f"contains {contains}")
+            if hours_back is not None:
+                additions.append(f"last {hours_back} hours")
+
+        if not additions:
+            return text
+
+        return f"{text} Context: {'; '.join(additions)}."
+
+    def should_resolve_onem2m_context(self, user_input):
+        text = str(user_input or "").lower()
+        if not text:
+            return False
+        if self.extract_device_identifier(text):
+            return False
+        return any(term in text for term in (
+            "onem2m",
+            "command",
+            "telemetry",
+            "cin",
+            "ae id",
+            "ae variants",
+            "identity",
+            "subscription",
+            "uri_mapper",
+            "uri mapper",
+            "missing resource",
+            "missing resources",
+            "registration",
+            "provisioning",
+            "resource check",
+            "adapter/core",
+            "latest cin",
+        ))
+
+    def should_resolve_log_context(self, user_input):
+        text = str(user_input or "").lower()
+        if not text:
+            return False
+        if self.is_context_dependent_followup(user_input):
+            return True
+        if any(term in text for term in (
+            "recent error",
+            "recent errors",
+            "errors for service",
+            "error for service",
+            "service error",
+            "service errors",
+            "broker-side error",
+            "broker-side errors",
+        )):
+            return True
+        return (
+            self.requests_wider_time_window(text)
+            and ("log" in text or "loki" in text)
+        )
+
+    def is_context_dependent_followup(self, user_input):
+        text = str(user_input or "").lower()
+        has_followup_signal = any(term in text for term in (
+            "widen",
+            "wider",
+            "increase the time",
+            "extend the time",
+            "check again",
+            "rerun",
+            "retry",
+            "log check",
+            "keyword",
+            "time range",
+            "mở rộng",
+            "mo rong",
+            "kiểm tra lại",
+            "kiem tra lai",
+        ))
+        has_log_scope = "log" in text or "loki" in text or "keyword" in text
+        has_concrete_target = bool(
+            self.extract_log_service_name(user_input)
+            or self.extract_device_identifier(user_input)
+            or self.extract_queue_name(user_input)
+        )
+        return has_followup_signal and has_log_scope and not has_concrete_target
+
+    def recent_context_text(self, conversation_context):
+        if not isinstance(conversation_context, list):
+            return ""
+
+        chunks = []
+        for message in conversation_context[-8:]:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "")
+            content = str(message.get("content") or "")
+            if content:
+                chunks.append(f"{role}: {content[:1600]}")
+        return "\n".join(chunks)
+
+    def extract_recent_log_service(self, conversation_context):
+        context_text = self.recent_context_text(conversation_context)
+        if not context_text:
+            return None
+
+        for pattern in (
+            r"Service:\s*([A-Za-z0-9_.-]+)",
+            r"\bservice\s*[=:]\s*([A-Za-z0-9_.-]+)",
+            r"Checked\s+([A-Za-z0-9_.-]+)\s+logs",
+            r"Check\s+([A-Za-z0-9_.-]+)\s+logs",
+            r"Check\s+([A-Za-z0-9_.\s-]+?)\s+logs",
+        ):
+            matches = list(re.finditer(pattern, context_text, flags=re.IGNORECASE))
+            for match in reversed(matches):
+                service = self.normalize_log_service_name(match.group(1))
+                if service and not self.is_placeholder_param(service):
+                    return service
+
+        return self.extract_log_service_name(context_text)
+
+    def extract_recent_log_keyword(self, conversation_context):
+        context_text = self.recent_context_text(conversation_context)
+        if not context_text:
+            return None
+
+        for pattern in (
+            r"Contains:\s*([^\n]+)",
+            r"\bcontains\s*[=:]\s*([^\s;,\n]+)",
+            r"filtered by\s+([A-Za-z0-9_.:/-]+)",
+        ):
+            matches = list(re.finditer(pattern, context_text, flags=re.IGNORECASE))
+            for match in reversed(matches):
+                value = self.normalize_identifier_value(match.group(1))
+                if value and value.lower() not in {"not specified", "none", "not-specified"}:
+                    return value
+        return None
+
+    def extract_recent_log_hours_back(self, conversation_context):
+        context_text = self.recent_context_text(conversation_context)
+        if not context_text:
+            return None
+
+        patterns = (
+            r"\bhours_back\s*[=:]\s*(\d+)",
+            r"\blast\s+(\d+)\s*hours?",
+            r"\bpast\s+(\d+)\s*hours?",
+        )
+        for pattern in patterns:
+            matches = list(re.finditer(pattern, context_text, flags=re.IGNORECASE))
+            for match in reversed(matches):
+                return min(int(match.group(1)), 72)
+        return None
+
+    def extract_recent_device_identifier(self, conversation_context):
+        context_text = self.recent_context_text(conversation_context)
+        if not context_text:
+            return None
+
+        patterns = (
+            r"Device ID:\s*`?([A-Za-z0-9_.:-]+)`?",
+            r"Device\s+`([A-Za-z0-9_.:-]+)`",
+            r"device\s+([SN][A-Za-z0-9_.:-]{8,})",
+            r"contains=([SN][A-Za-z0-9_.:-]{8,})",
+        )
+        for pattern in patterns:
+            matches = list(re.finditer(pattern, context_text, flags=re.IGNORECASE))
+            for match in reversed(matches):
+                value = self.normalize_identifier_value(match.group(1))
+                if self.is_plausible_device_identifier(value):
+                    return value
+        return self.extract_device_identifier(context_text)
+
+    def extract_requested_hours_back(self, text):
+        match = re.search(
+            r"\b(?:last|past|back|trong)\s+(\d+)\s*(?:h\b|hours?|giờ)"
+            r"|\b(\d+)\s*(?:h\b|hours?)\s*(?:back|ago|trước)"
+            r"|\bhours[_\s-]?back\s*[=:]\s*(\d+)",
+            str(text or ""),
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        value = next(group for group in match.groups() if group is not None)
+        return min(int(value), 72)
+
+    def next_log_widen_hours(self, current_hours):
+        try:
+            current = int(current_hours)
+        except (TypeError, ValueError):
+            current = 6
+        if current >= 72:
+            return None
+        if current < 24:
+            return 24
+        if current < 48:
+            return 48
+        return 72
+
+    def requests_wider_time_window(self, text):
+        lowered = str(text or "").lower()
+        return any(term in lowered for term in (
+            "widen",
+            "wider",
+            "increase the time",
+            "extend the time",
+            "time range",
+            "mở rộng",
+            "mo rong",
+        ))
+
     def plan_workflows(self, user_input):
         if self.semantic_planner_enabled():
             workflows, metadata = self.plan_workflows_semantically(user_input)
@@ -3596,6 +5130,9 @@ JSON schema:
             if not spec:
                 continue
 
+            if not self.is_workflow_compatible_with_prompt(tool_name, user_input):
+                continue
+
             confidence = self.coerce_confidence(item.get("confidence"))
 
             if confidence < MIN_SEMANTIC_CONFIDENCE:
@@ -3631,6 +5168,72 @@ JSON schema:
             user_input,
         )
         return self.ensure_k8s_resource_log_workflows(normalized, user_input)
+
+    def prompt_domain(self, user_input):
+        text = str(user_input or "").lower()
+
+        if (
+            "rabbitmq" in text
+            or "queue." in text
+            or "amq.gen-" in text
+            or "queue " in text
+            or "queues" in text
+            or "consumer" in text
+            or "consumers" in text
+            or "backlog" in text
+            or "throughput" in text
+        ):
+            return "rabbitmq"
+
+        if (
+            "onem2m" in text
+            or "device_id" in text
+            or self.extract_device_identifier(user_input)
+            or any(term in text for term in (
+                "identity", "cnt_command", "cnt_telemetry",
+                "uri_mapper", "uri mapper", "subscription",
+                "content instance",
+            ))
+        ):
+            return "onem2m"
+
+        if any(term in text for term in (
+            "k8s", "kubernetes", "pod", "namespace",
+        )):
+            return "kubernetes"
+
+        if any(term in text for term in ("emqx", "mqtt", "broker")):
+            return "emqx"
+
+        return "general"
+
+    def is_workflow_compatible_with_prompt(self, tool_name, user_input):
+        domain = self.prompt_domain(user_input)
+
+        rabbitmq_tools = {
+            "grafana_queue_backlog",
+            "query_rabbitmq_queue_detail",
+            "grafana_queue_trend",
+            "grafana_throughput",
+            "grafana_k8s_resources",
+            "grafana_logs",
+        }
+        onem2m_tools = {
+            "get_company_onem2m_device_resources",
+            "query_company_onem2m_collection",
+            "query_device_online_status",
+            "query_onem2m_cin_records",
+            "get_company_onem2m_command_flow",
+            "get_company_onem2m_telemetry_flow",
+        }
+
+        if domain == "rabbitmq":
+            return tool_name in rabbitmq_tools
+
+        if tool_name in onem2m_tools and domain not in {"onem2m", "general"}:
+            return False
+
+        return True
 
     def enrich_workflow_params(self, tool_name, params, user_input):
         enriched = dict(params or {})
@@ -3997,6 +5600,7 @@ JSON schema:
 
         placeholder_fragments = (
             "your_",
+            "requested",
             "requested_",
             "placeholder",
             "start_time",
@@ -4008,8 +5612,44 @@ JSON schema:
         )
         return any(fragment in text for fragment in placeholder_fragments)
 
+    def normalize_log_service_name(self, value):
+        text = self.normalize_identifier_value(value)
+        lowered = text.lower().replace("_", "-")
+        aliases = {
+            "mqtt-adapter": "iot-mqtt-client-adapter",
+            "mqtt-client-adapter": "iot-mqtt-client-adapter",
+            "iot-mqtt-adapter": "iot-mqtt-client-adapter",
+            "iot-mqtt-client-adapter": "iot-mqtt-client-adapter",
+            "http-api": "iot-http-api",
+            "iot-http-api": "iot-http-api",
+            "notify": "notify",
+            "emqx": "emqx",
+            "rabbitmq": "rabbitmq",
+        }
+        return aliases.get(lowered, text)
+
+    def extract_log_service_name(self, text):
+        normalized = str(text or "").lower().replace("_", "-")
+        patterns = (
+            ("iot-mqtt-client-adapter", "iot-mqtt-client-adapter"),
+            ("iot-mqtt-adapter", "iot-mqtt-client-adapter"),
+            ("mqtt-client-adapter", "iot-mqtt-client-adapter"),
+            ("mqtt-adapter", "iot-mqtt-client-adapter"),
+            ("mqtt adapter", "iot-mqtt-client-adapter"),
+            ("iot-http-api", "iot-http-api"),
+            ("http-api", "iot-http-api"),
+            ("http api", "iot-http-api"),
+            ("notify", "notify"),
+            ("emqx", "emqx"),
+            ("rabbitmq", "rabbitmq"),
+        )
+        for needle, canonical in patterns:
+            if needle in normalized:
+                return canonical
+        return None
+
     def normalize_identifier_value(self, value):
-        return str(value or "").strip().strip(".,;)]}\"'")
+        return str(value or "").strip().strip(".,;:)]}\"'")
 
     def onem2m_context_params(self, params):
         return {
@@ -4094,6 +5734,7 @@ JSON schema:
             "of",
             "on",
             "or",
+            "requested",
             "resource",
             "resources",
             "the",
@@ -4131,8 +5772,11 @@ JSON schema:
             "of",
             "on",
             "or",
+            "requested",
             "the",
             "to",
+            "variant",
+            "variants",
             "with",
         }
 
@@ -4273,9 +5917,75 @@ JSON schema:
     def classify_tool(self, user_input):
         text = user_input.lower()
         params = {}
+        queue_name = self.extract_queue_name(user_input)
 
         def has_any(keywords):
             return any(keyword in text for keyword in keywords)
+
+        def has_explicit_loki_log_intent():
+            return bool(re.search(
+                r"\b(?:logs?|loki)\b|error\s+logs?|recent\s+errors?|"
+                r"errors?\s+for\s+service|service\s+errors?|broker-side\s+errors?",
+                text,
+            ))
+
+        def has_metric_runbook_query_intent():
+            return any(term in text for term in (
+                "promql",
+                "use sum(",
+                "sum(rate",
+                "emqx_client_connected",
+                "emqx_client_disconnected",
+                "emqx_messages_dropped",
+                "rabbitmq_queue_messages",
+            ))
+
+        if queue_name and has_any((
+            "error",
+            "errors",
+            "exception",
+            "database connection",
+            "broker connection",
+            "connection error",
+            "connection errors",
+        )):
+            params["contains"] = queue_name
+            if "warn" in text or "warning" in text:
+                params["level"] = "error|warn"
+            return "grafana_logs", params, "queue_related_error_logs"
+
+        if queue_name and has_any((
+            "consumer",
+            "consumers",
+            "consumer count",
+            "detail",
+            "details",
+            "show details",
+            "check queue",
+            "chi tiết",
+            "chi tiet",
+            "xử lý",
+            "xu ly",
+        )):
+            params["queue_name"] = queue_name
+            return (
+                "query_rabbitmq_queue_detail",
+                params,
+                "rabbitmq_queue_detail_keywords",
+            )
+
+        if queue_name and has_any((
+            "trend",
+            "linear",
+            "increasing",
+            "tăng",
+            "tang",
+        )):
+            namespace = self.extract_param(text, "namespace")
+            if namespace:
+                params["namespace"] = namespace
+            params["queue"] = queue_name
+            return "grafana_queue_trend", params, "queue_trend_keywords"
 
         is_company_request = (
             "/company" in text
@@ -4490,6 +6200,10 @@ JSON schema:
             "/cmd",
             "kịch bản 5",
             "kich ban 5",
+            "command flow",
+            "command flow workflow",
+            "command or telemetry flow",
+            "command or telemetry flow workflow",
             "command downlink",
             "did not receive a command",
             "did not receive command",
@@ -4503,7 +6217,16 @@ JSON schema:
             "/telemetry",
             "kịch bản 6",
             "kich ban 6",
+            "telemetry flow",
+            "telemetry flow workflow",
             "telemetry uplink",
+            "backend delivery",
+            "backend delivery evidence",
+            "adapter-to-backend delivery",
+            "backend subscription",
+            "subscription notify",
+            "notify delivery",
+            "adapter receive",
             "did not reach the backend",
             "did not reach backend",
             "không tới backend",
@@ -4517,10 +6240,17 @@ JSON schema:
             "kịch bản 7",
             "kich ban 7",
             "registered on the platform",
+            "registration",
+            "provisioning",
+            "registration/provisioning",
             "required onem2m resources",
             "required resources",
             "resources exist",
             "resource check",
+            "missing resource",
+            "missing resources",
+            "lên hệ thống",
+            "len he thong",
             "which resources exist",
             "which resources are missing",
             "verify identity",
@@ -4553,18 +6283,38 @@ JSON schema:
                 "company_onem2m_telemetry_flow_keywords",
             )
 
-        if has_resource_check_terms:
+        if (
+            device_id
+            and str(user_input or "").strip() == device_id
+        ):
             return (
                 "get_company_onem2m_device_resources",
                 with_onem2m_identifiers(),
                 "company_onem2m_device_resource_keywords",
             )
 
-        if device_id and has_online_status_terms and not has_onem2m_resource_terms:
+        if device_id and has_online_status_terms and (
+            not has_onem2m_resource_terms
+            or has_any((
+                "operational status",
+                "ae status",
+                "ae online status",
+                "ae offline status",
+                "status of ae",
+                "online status",
+            ))
+        ):
             return (
                 "query_device_online_status",
                 with_onem2m_identifiers(),
                 "company_device_online_status_keywords",
+            )
+
+        if has_resource_check_terms:
+            return (
+                "get_company_onem2m_device_resources",
+                with_onem2m_identifiers(),
+                "company_onem2m_device_resource_keywords",
             )
 
         collection = self.extract_onem2m_collection_name(user_input)
@@ -4790,6 +6540,43 @@ JSON schema:
             )
 
         queue_name = self.extract_queue_name(user_input)
+        if (
+            has_any((
+                "namespace label",
+                "scrape target",
+                "scrape targets",
+                "metric scrape",
+                "prometheus target",
+                "prometheus targets",
+            ))
+            or (
+            ("k8s" in text or "kubernetes" in text or "pod" in text)
+            and has_any((
+                "consumer",
+                "consumers",
+                "process",
+                "processing",
+                "resource",
+                "resources",
+                "cpu",
+                "memory",
+                "restart",
+                "namespace",
+                "xử lý",
+                "xu ly",
+            ))
+            )
+        ):
+            namespace = self.extract_param(text, "namespace")
+            params["namespace"] = namespace or "test"
+            service = self.extract_param(text, "service")
+            if service:
+                params["service"] = service
+            pod = self.extract_param(text, "pod")
+            if pod and pod.lower() not in {"log", "logs"}:
+                params["pod"] = pod
+            return "grafana_k8s_resources", params, "kubernetes_resource_keywords"
+
         if queue_name and "queue" in text and has_any((
             "detail",
             "details",
@@ -4812,6 +6599,41 @@ JSON schema:
                 "rabbitmq_queue_detail_keywords",
             )
 
+        if has_explicit_loki_log_intent() and not has_metric_runbook_query_intent():
+            service = self.extract_param(text, "service")
+            if not service:
+                service = self.extract_log_service_name(user_input)
+            if not service and "reconnect" in text:
+                service = "iot-mqtt-client-adapter"
+            if service:
+                service = self.normalize_log_service_name(service)
+            if service:
+                params["service"] = service
+            contains = (
+                self.extract_param(user_input, "contains")
+                or self.extract_param(user_input, "keyword")
+            )
+            device_id = self.extract_device_identifier(user_input)
+            if contains:
+                params["contains"] = contains
+            elif device_id:
+                params["contains"] = device_id
+            elif queue_name:
+                params["contains"] = queue_name
+            _hours_match = re.search(
+                r"\b(?:last|past|back|trong)\s+(\d+)\s*(?:h\b|hours?|giờ)"
+                r"|\b(\d+)\s*(?:h\b|hours?)\s*(?:back|ago|trước)"
+                r"|\bhours[_\s-]?back\s*[=:]\s*(\d+)",
+                text,
+                re.IGNORECASE,
+            )
+            if _hours_match:
+                _val = next(g for g in _hours_match.groups() if g is not None)
+                params["hours_back"] = min(int(_val), 72)
+            if "warn" in text:
+                params["level"] = "error|warn"
+            return "grafana_logs", params, "logs_keywords"
+
         if ("emqx" in text or "mqtt" in text or "broker" in text) and (
             "disconnect" in text
             or "reconnect" in text
@@ -4826,10 +6648,7 @@ JSON schema:
                 "emqx_connection_trend_keywords",
             )
 
-        if (
-            "queue" not in text
-            and ("k8s" in text or "kubernetes" in text or "pod" in text)
-        ) and (
+        if ("k8s" in text or "kubernetes" in text or "pod" in text) and (
             "resource" in text
             or "cpu" in text
             or "memory" in text
@@ -4842,7 +6661,7 @@ JSON schema:
             if service:
                 params["service"] = service
             pod = self.extract_param(text, "pod")
-            if pod:
+            if pod and pod.lower() not in {"log", "logs"}:
                 params["pod"] = pod
             return "grafana_k8s_resources", params, "kubernetes_resource_keywords"
 
@@ -4859,8 +6678,9 @@ JSON schema:
             if namespace:
                 params["namespace"] = namespace
             queue = self.extract_param(text, "queue")
-            if queue:
-                params["queue"] = queue
+            queue_value = queue_name or queue
+            if queue_value and queue_value.lower() not in {"trend", "backlog", "health"}:
+                params["queue"] = queue_value
             return "grafana_queue_trend", params, "queue_trend_keywords"
 
         if "queue" in text and (
@@ -4868,6 +6688,8 @@ JSON schema:
             or "tồn" in text
             or "ton" in text
             or "top queue" in text
+            or "top queues" in text
+            or "top 10" in text
             or "message tồn" in text
             or "message ton" in text
         ):
@@ -4887,20 +6709,24 @@ JSON schema:
                 params["queue"] = queue
             return "grafana_throughput", params, "throughput_keywords"
 
-        if "log" in text or "loki" in text or "error log" in text:
+        if has_explicit_loki_log_intent():
             service = self.extract_param(text, "service")
             if not service:
-                if "iot-mqtt-client-adapter" in text:
-                    service = "iot-mqtt-client-adapter"
-                elif "iot-http-api" in text:
-                    service = "iot-http-api"
-                elif "notify" in text:
-                    service = "notify"
+                service = self.extract_log_service_name(user_input)
+            if not service and "reconnect" in text:
+                service = "iot-mqtt-client-adapter"
+            if service:
+                service = self.normalize_log_service_name(service)
             if service:
                 params["service"] = service
+            contains = self.extract_param(text, "contains") or self.extract_param(text, "keyword")
             device_id = self.extract_device_identifier(user_input)
-            if device_id:
+            if contains:
+                params["contains"] = contains
+            elif device_id:
                 params["contains"] = device_id
+            elif queue_name:
+                params["contains"] = queue_name
             _hours_match = re.search(
                 r"\b(?:last|past|back|trong)\s+(\d+)\s*(?:h\b|hours?|giờ)"
                 r"|\b(\d+)\s*(?:h\b|hours?)\s*(?:back|ago|trước)"
@@ -4992,11 +6818,34 @@ JSON schema:
         return self.classify_tool(user_input)
 
     def extract_param(self, text, name):
-        match = re.search(rf"{name}\s*[=:]\s*([A-Za-z0-9_.:-]+)", text)
-        return match.group(1) if match else None
+        if name == "namespace":
+            for pattern in (
+                r"\bnamespace\s*(?:[=:]\s*)([A-Za-z0-9_.:-]+)",
+                r"\bin\s+namespace\s+([A-Za-z0-9_.:-]+)",
+                r"\bfor\s+(?:the\s+)?([A-Za-z0-9_.:-]+)\s+namespace\b",
+                r"\b([A-Za-z0-9_.:-]+)\s+namespace\b",
+            ):
+                match = re.search(pattern, str(text or ""), flags=re.IGNORECASE)
+                if match:
+                    value = self.normalize_identifier_value(match.group(1))
+                    if value and value.lower() not in {"namespace", "label", "configuration", "config"}:
+                        return value
+
+        match = re.search(
+            rf"{name}\s*(?:[=:]\s*|\s+)([A-Za-z0-9_.:-]+)",
+            text,
+        )
+        if not match:
+            return None
+
+        value = self.normalize_identifier_value(match.group(1))
+        if name == "namespace" and str(value or "").lower() in {"label", "configuration", "config"}:
+            return None
+        return value
 
     def extract_queue_name(self, text):
         patterns = [
+            r"\b((?:queue|amq\.gen|emqx-[A-Za-z0-9_.-]*\.queue)[A-Za-z0-9_.:/%-]+)",
             r"\bqueue\s+([A-Za-z0-9_.:/-]+)",
             r"\bcheck\s+queue\s+([A-Za-z0-9_.:/-]+)",
             r"\bchi\s+tiết\s+(?:về\s+)?queue\s+([A-Za-z0-9_.:/-]+)",
@@ -5048,6 +6897,13 @@ JSON schema:
         return None
 
     def extract_device_identifier(self, text):
+        raw_value = self.normalize_identifier_value(str(text or ""))
+        if (
+            re.fullmatch(r"[SN][A-Za-z0-9_.:-]{8,}", raw_value)
+            and self.is_plausible_device_identifier(raw_value)
+        ):
+            return raw_value
+
         patterns = [
             r"device[_\s-]?id\s*[=:]\s*([A-Za-z0-9_.:-]+)",
             r"device[_\s-]?id\s+([A-Za-z0-9_.:-]+)",
@@ -5060,15 +6916,11 @@ JSON schema:
         ]
 
         for pattern in patterns:
-            match = re.search(pattern, str(text or ""), flags=re.IGNORECASE)
-
-            if not match:
-                continue
-
-            candidate = self.normalize_identifier_value(match.group(1))
-
-            if self.is_plausible_device_identifier(candidate):
-                return candidate
+            matches = list(re.finditer(pattern, str(text or ""), flags=re.IGNORECASE))
+            for match in reversed(matches):
+                candidate = self.normalize_identifier_value(match.group(1))
+                if self.is_plausible_device_identifier(candidate):
+                    return candidate
 
         return None
 
@@ -5587,6 +7439,7 @@ Workflow evidence:
         selected_source="simulator",
         source_resolution=None,
         user_id=None,
+        conversation_context=None,
     ):
         result = self.graph.invoke(
             self.initial_state(
@@ -5594,6 +7447,7 @@ Workflow evidence:
                 selected_source,
                 source_resolution,
                 user_id,
+                conversation_context,
             )
         )
         return {
@@ -5622,12 +7476,14 @@ Workflow evidence:
         selected_source="simulator",
         source_resolution=None,
         user_id=None,
+        conversation_context=None,
     ):
         state = self.initial_state(
             user_input,
             selected_source,
             source_resolution,
             user_id,
+            conversation_context,
         )
 
         for node in (

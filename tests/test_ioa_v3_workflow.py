@@ -1,4 +1,5 @@
 import os
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -288,6 +289,25 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertEqual(workflows[0]["tool"], "grafana_emqx_connection_trend")
         self.assertEqual(workflows[0]["planner"], "runbook_keyword_override")
 
+    def test_ioa_v3_reconnect_runbook_with_log_next_actions_stays_metric_first(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        prompt = (
+            "Check EMQX client connected and disconnected rates to detect "
+            "onboarding spikes or reconnect loops. Do not require a device_id "
+            "from the operator; derive affected device candidates from EMQX or "
+            "MQTT adapter evidence when available. Use "
+            "sum(rate(emqx_client_connected{namespace=\"emqx\",job=\"emqx\"}[1m])) "
+            "and sum(rate(emqx_client_disconnected{namespace=\"emqx\",job=\"emqx\"}[1m])). "
+            "Then suggest MQTT adapter log, device resource, previous-error-log, "
+            "and EMQX broker follow-up."
+        )
+
+        tool, params, reason = agent.classify_tool(prompt)
+
+        self.assertEqual(tool, "grafana_emqx_connection_trend")
+        self.assertEqual(params, {})
+        self.assertEqual(reason, "emqx_connection_trend_keywords")
+
     def test_ioa_v3_executes_runbook_metric_tools_through_mcp(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
         workflow = {
@@ -512,6 +532,892 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("## 5. System Metrics", answer)
         self.assertIn("queue.telemetry.ingest", answer)
         self.assertIn("**Status:** abnormal", answer)
+
+    def test_queue_backlog_followups_follow_english_prompt_language(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_queue_backlog_answer(
+            {
+                "request": {
+                    "namespace": "test",
+                    "topk": 10,
+                    "threshold": 10000,
+                },
+                "promql_query": "topk(10, rabbitmq_queue_messages)",
+                "result": {
+                    "data": {
+                        "result": [{
+                            "metric": {
+                                "queue": "amq.gen-Hfwxk4whD_ROGgw6hkYYTA",
+                            },
+                            "value": [1710000000, "0"],
+                        }]
+                    }
+                },
+            },
+            "Find the top 10 RabbitMQ queues by message backlog in namespace test.",
+        )
+
+        self.assertIn(
+            "Show details for queue <queue_id>",
+            answer,
+        )
+        self.assertIn(
+            "Check whether queue <queue_id> is increasing",
+            answer,
+        )
+        self.assertIn("Check K8s resources for consumer pods in namespace test", answer)
+        self.assertNotIn("Chi tiết", answer)
+        self.assertNotIn("Kiểm tra", answer)
+        self.assertNotIn("có đang", answer)
+
+    def test_queue_consumer_k8s_followup_routes_to_k8s_resources(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, _ = agent.classify_tool(
+            "Check K8s resources for consumer pods in namespace test"
+        )
+
+        self.assertEqual(tool, "grafana_k8s_resources")
+        self.assertEqual(params.get("namespace"), "test")
+
+    def test_k8s_namespace_label_followup_routes_to_resource_formatter(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, _ = agent.classify_tool(
+            "Check the Kubernetes metric scrape targets for the test namespace."
+        )
+
+        self.assertEqual(tool, "grafana_k8s_resources")
+        self.assertEqual(params.get("namespace"), "test")
+
+        tool, params, _ = agent.classify_tool(
+            "Check the namespace label configuration for the test namespace."
+        )
+
+        self.assertEqual(tool, "grafana_k8s_resources")
+        self.assertEqual(params.get("namespace"), "test")
+
+    def test_k8s_normal_resource_answer_does_not_suggest_scrape_followup(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        answer = agent.build_k8s_resource_answer(
+            {
+                "request": {"namespace": "test"},
+                "queries": {
+                    "pod_cpu": {
+                        "data": {
+                            "result": [{
+                                "metric": {"pod": "rabbitmq-0"},
+                                "value": [1, "0.08"],
+                            }]
+                        }
+                    },
+                    "pod_memory": {
+                        "data": {
+                            "result": [{
+                                "metric": {"pod": "rabbitmq-0"},
+                                "value": [1, str(266 * 1024 * 1024)],
+                            }]
+                        }
+                    },
+                    "pod_restarts": {
+                        "data": {
+                            "result": [{
+                                "metric": {"pod": "rabbitmq-0"},
+                                "value": [1, "0"],
+                            }]
+                        }
+                    },
+                    "node_memory": {
+                        "data": {
+                            "result": [{
+                                "metric": {"instance": "node-a"},
+                                "value": [1, "68"],
+                            }]
+                        }
+                    },
+                },
+            },
+            "Monitor CPU and memory usage for the consumer pods.",
+        )
+
+        self.assertIn("## 7. Recommended Next Action", answer)
+        self.assertIn("No action needed", answer)
+        self.assertNotIn("Verify Kubernetes metric scrape targets", answer)
+        self.assertNotIn("## Follow-up Questions", answer)
+
+    def test_specific_queue_trend_followup_keeps_queue_and_continues_drilldown(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        prompt = "check if queue amq.gen-_3a1nCYXQe43CHK8JXHSSg is increasing?"
+
+        tool, params, _ = agent.classify_tool(prompt)
+
+        self.assertEqual(tool, "grafana_queue_trend")
+        self.assertEqual(params.get("queue"), "amq.gen-_3a1nCYXQe43CHK8JXHSSg")
+
+        answer = agent.build_queue_trend_answer(
+            {
+                "request": {
+                    "namespace": "test",
+                    "queue": "amq.gen-_3a1nCYXQe43CHK8JXHSSg",
+                    "start": 1784601302,
+                    "end": 1784604902,
+                    "step": 300,
+                },
+                "promql_query": "sum by (queue) (rabbitmq_queue_messages)",
+                "result": {
+                    "data": {
+                        "result": [{
+                            "metric": {
+                                "queue": "amq.gen-_3a1nCYXQe43CHK8JXHSSg",
+                            },
+                            "values": [
+                                [1784601302, "0"],
+                                [1784604902, "0"],
+                            ],
+                        }]
+                    }
+                },
+            },
+            prompt,
+        )
+
+        self.assertIn("Show details for queue amq.gen-_3a1nCYXQe43CHK8JXHSSg", answer)
+        self.assertIn("Check K8s resources for consumer pods in namespace test", answer)
+        self.assertIn("Check RabbitMQ throughput in namespace test", answer)
+
+    def test_specific_queue_trend_answer_does_not_show_other_queue_rows(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        requested_queue = "amq.gen-WweYSoCJiV6Tc00Hl7rQNg"
+
+        answer = agent.build_queue_trend_answer(
+            {
+                "request": {
+                    "namespace": "test",
+                    "queue": requested_queue,
+                    "start": 1784703734,
+                    "end": 1784707334,
+                    "step": 300,
+                },
+                "promql_query": "sum by (queue) (rabbitmq_queue_messages)",
+                "result": {
+                    "data": {
+                        "result": [{
+                            "metric": {"queue": "amq.gen-3kobT6PQt9MOg3rNMvoJ1Q"},
+                            "values": [
+                                [1784703734, "0"],
+                                [1784707334, "0"],
+                            ],
+                        }]
+                    }
+                },
+            },
+            f"Check whether queue {requested_queue} is increasing",
+        )
+
+        self.assertIn(f"no RabbitMQ queue range samples for `{requested_queue}`", answer)
+        self.assertIn("_No range samples returned in evidence._", answer)
+        self.assertNotIn("amq.gen-3kobT6PQt9MOg3rNMvoJ1Q", answer)
+
+    def test_mcp_specific_queue_trend_query_filters_promql_by_queue(self):
+        with patch.object(
+            mcp_observability_service,
+            "_query_prometheus_range",
+            return_value={"start": 1, "end": 2, "step": 300, "result": {"data": {"result": []}}},
+        ) as query_range:
+            evidence = mcp_observability_service.query_iot_platform_metric_via_mcp(
+                "grafana_queue_trend",
+                {
+                    "namespace": "test",
+                    "queue": "amq.gen-WweYSoCJiV6Tc00Hl7rQNg",
+                },
+            )
+
+        promql = query_range.call_args.args[0]
+        self.assertIn('queue="amq.gen-WweYSoCJiV6Tc00Hl7rQNg"', promql)
+        self.assertEqual(
+            evidence["request"]["queue"],
+            "amq.gen-WweYSoCJiV6Tc00Hl7rQNg",
+        )
+
+    def test_queue_related_error_followup_routes_to_loki_keyword(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, reason = agent.classify_tool(
+            "Check for database connection errors related to queue "
+            "amq.gen-kCkv6qO7vrYrylIcFfhXsw."
+        )
+
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params.get("contains"), "amq.gen-kCkv6qO7vrYrylIcFfhXsw")
+        self.assertEqual(reason, "queue_related_error_logs")
+
+    def test_consumer_pod_logs_followup_does_not_parse_logs_as_pod_name(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, _ = agent.classify_tool("Show details for consumer pod logs.")
+
+        self.assertEqual(tool, "grafana_k8s_resources")
+        self.assertEqual(params.get("namespace"), "test")
+        self.assertNotEqual(params.get("pod"), "logs")
+        self.assertNotIn("pod", params)
+
+    def test_followup_planner_rewrites_consumer_pod_logs_to_k8s_resources(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Planner used vague consumer pod logs wording.",
+            "questions": [
+                "Show details for consumer pod logs.",
+            ],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# RabbitMQ Queue Trend Check Result",
+                "",
+                "## 7. Recommended Next Action",
+                "- Check consumer pods, queue-processing service logs, CPU/memory, and database or broker connection errors.",
+            ]),
+            {
+                "selected_tool": "grafana_queue_trend",
+                "user_input": "Check whether queue amq.gen-kCkv6qO7vrYrylIcFfhXsw is increasing.",
+                "conversation_context": [],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Check K8s resources for consumer pods in namespace test", followups)
+        self.assertNotIn("consumer pod logs", followups)
+
+    def test_emqx_reconnect_answer_uses_concrete_log_followups(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_emqx_connection_answer(
+            {
+                "request": {
+                    "start": 1,
+                    "end": 2,
+                    "step": 300,
+                },
+                "queries": {
+                    "connected": {
+                        "promql_query": "connected",
+                        "data": {
+                            "result": [{
+                                "metric": {"instance": "emqx-0"},
+                                "values": [[1, "0"], [2, "0"]],
+                            }]
+                        },
+                    },
+                    "disconnected": {
+                        "promql_query": "disconnected",
+                        "data": {
+                            "result": [{
+                                "metric": {"instance": "emqx-0"},
+                                "values": [[1, "0"], [2, "0"]],
+                            }]
+                        },
+                    },
+                },
+            },
+            "Check EMQX client connected and disconnected rates",
+        )
+
+        self.assertIn("Check MQTT adapter logs for reconnect evidence", answer)
+        self.assertIn("Check EMQX logs for errors or warnings", answer)
+        self.assertNotIn("inspect error logs before reconnect events", answer.lower())
+
+    def test_metric_prompt_next_action_terms_do_not_block_mqtt_followup(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Planner omitted MQTT even though the answer recommended it.",
+            "questions": [
+                "Check EMQX logs for errors or warnings",
+                "Review broker CPU/memory usage and connection count",
+            ],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# EMQX Connect/Disconnect Check Result",
+                "",
+                "## 6. Conclusion",
+                "No reconnect loop or onboarding spike detected in current metric evidence.",
+                "",
+                "## 7. Recommended Next Action",
+                "Check MQTT adapter logs for reconnect evidence, check EMQX logs "
+                "for broker-side errors, and review EMQX broker health only if "
+                "reconnect symptoms persist.",
+            ]),
+            {
+                "selected_tool": "grafana_emqx_connection_trend",
+                "user_input": (
+                    "Check EMQX client connected and disconnected rates to detect "
+                    "onboarding spikes or reconnect loops. Then suggest MQTT "
+                    "adapter log, device resource, previous-error-log, and EMQX "
+                    "broker follow-up."
+                ),
+                "conversation_context": [],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Check MQTT adapter logs for reconnect evidence", followups)
+        self.assertIn("Check EMQX logs for errors or warnings", followups)
+        self.assertIn("Review broker CPU/memory usage and connection count", followups)
+
+    def test_queue_detail_and_throughput_answers_continue_drilldown(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        detail_answer = agent.build_queue_detail_answer(
+            {
+                "request": {
+                    "queue_name": "amq.gen-KcepRTvyR1eqjJ6h-WFpNg",
+                },
+                "queries": {
+                    "messages": {"data": {"result": [{"value": [1, "0"]}]}},
+                    "consumers": {"data": {"result": [{"value": [1, "1"]}]}},
+                },
+            },
+            "Show details for queue amq.gen-KcepRTvyR1eqjJ6h-WFpNg",
+        )
+
+        self.assertIn("## Follow-up Questions", detail_answer)
+        self.assertIn(
+            "Check whether queue amq.gen-KcepRTvyR1eqjJ6h-WFpNg is increasing",
+            detail_answer,
+        )
+        self.assertIn("RabbitMQ throughput", detail_answer)
+
+        throughput_answer = agent.build_throughput_answer(
+            {
+                "source": "mcp_server",
+                "mcp_tool": "grafana_query",
+                "queries": {
+                    "publish_rate": {"data": {"result": [{"value": [1, "0"]}]}},
+                    "ack_rate": {"data": {"result": [{"value": [1, "5.53"]}]}},
+                    "delivery_rate": {"data": {"result": [{"value": [1, "5.53"]}]}},
+                    "queue_depth": {"data": {"result": [{"value": [1, "0"]}]}},
+                },
+            },
+            "RabbitMQ throughput",
+        )
+
+        self.assertNotIn("## Follow-up Questions", throughput_answer)
+        self.assertIn("No action needed", throughput_answer)
+
+    def test_followup_planner_replaces_static_queue_followups_with_placeholder(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Queue candidates were listed and details are the next drilldown.",
+            "questions": [
+                "Show details for queue <queue_id>",
+                "Check whether queue <queue_id> is increasing",
+            ],
+        })
+        response.response_metadata = {
+            "token_usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 4,
+                "total_tokens": 14,
+            }
+        }
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, usage = agent.apply_followup_planner(
+            "\n".join([
+                "# RabbitMQ Queue Backlog Check Result",
+                "",
+                "## 7. Recommended Next Action",
+                "Check consumers if backlog continues to grow.",
+                "",
+                "## Follow-up Questions",
+                "- Show details for queue amq.gen-old",
+            ]),
+            {
+                "user_input": "Find the top 10 RabbitMQ queues by message backlog.",
+                "selected_tool": "grafana_queue_backlog",
+                "tool_outputs": [],
+            },
+        )
+
+        self.assertIn("Show details for queue <queue_id>", answer)
+        self.assertIn("Check whether queue <queue_id> is increasing", answer)
+        self.assertNotIn("amq.gen-old", answer)
+        self.assertEqual(usage["total_tokens"], 14)
+
+    def test_followup_planner_parameterizes_fixed_queue_candidates(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "The planner chose one queue, but the answer listed candidates.",
+            "questions": [
+                "Check consumers for queue `amq.gen-3kobT6PQt9MOg3rNMvoJ1Q`.",
+                "Review error logs associated with queue `amq.gen-3kobT6PQt9MOg3rNMvoJ1Q`.",
+            ],
+        })
+        response.response_metadata = {}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# RabbitMQ Queue Backlog Check Result",
+                "",
+                "## 5. System Metrics",
+                "| Queue | Messages |",
+                "|---|---|",
+                "| `amq.gen-3kobT6PQt9MOg3rNMvoJ1Q` | 0 |",
+                "| `queue.onem2m.httpapi` | 0 |",
+                "",
+                "## 7. Recommended Next Action",
+                "Check consumers, queue-processing services, related error logs, and throughput if backlog continues to grow.",
+            ]),
+            {
+                "user_input": "Find the top 10 RabbitMQ queues by message backlog.",
+                "selected_tool": "grafana_queue_backlog",
+                "tool_outputs": [],
+            },
+        )
+
+        self.assertIn("Check consumers for queue <queue_id>.", answer)
+        self.assertIn("Review error logs associated with queue <queue_id>.", answer)
+        self.assertNotIn("amq.gen-3kobT6PQt9MOg3rNMvoJ1Q", answer.split("## Follow-up Questions")[-1])
+
+    def test_followup_planner_rewrites_generic_service_logs_to_concrete_checks(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "The answer asks for service log evidence.",
+            "questions": [
+                "Review queue-processing service logs for errors.",
+                "Correlate with adjacent service logs for `requested service`.",
+            ],
+        })
+        response.response_metadata = {}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# RabbitMQ Queue Trend Check Result",
+                "",
+                "## 6. Conclusion",
+                "There is not enough evidence to conclude continuous consumer congestion.",
+                "",
+                "## 7. Recommended Next Action",
+                "Check consumer pods, queue-processing service logs, CPU/memory, and database or broker connection errors.",
+            ]),
+            {
+                "user_input": "Check whether RabbitMQ queue messages are increasing linearly.",
+                "selected_tool": "grafana_queue_trend",
+                "tool_outputs": [],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Check RabbitMQ throughput", followups)
+        self.assertNotIn("requested service", followups)
+        self.assertNotIn("<service>", followups)
+
+    def test_followup_planner_suppresses_no_action_needed_followups(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": False,
+            "reason": "The answer says no action is needed.",
+            "questions": [],
+        })
+        response.response_metadata = {}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# RabbitMQ Throughput Check Result",
+                "",
+                "## 4. Recommended Next Action",
+                "No action needed. Monitor periodically if telemetry freshness complaints recur.",
+                "",
+                "## Follow-up Questions",
+                "- Check RabbitMQ queue backlog in namespace test",
+            ]),
+            {
+                "user_input": "RabbitMQ throughput",
+                "selected_tool": "grafana_throughput",
+                "tool_outputs": [],
+            },
+        )
+
+        self.assertIn("No action needed", answer)
+        self.assertNotIn("Follow-up Questions", answer)
+        self.assertNotIn("Check RabbitMQ queue backlog", answer)
+
+    def test_followup_planner_suppresses_completed_action_paraphrases(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Move to unresolved evidence branches only.",
+            "questions": [
+                "Review broker CPU/memory usage metrics in detail.",
+                "Review the EMQX broker pods for performance metrics.",
+                "Check MQTT adapter logs for any issues.",
+                "Check RabbitMQ queue backlog.",
+            ],
+        })
+        response.response_metadata = {}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# EMQX Broker Health Check Result",
+                "",
+                "## 6. Conclusion",
+                "Broker is showing signs of stress.",
+                "",
+                "## 7. Recommended Next Action",
+                "Check EMQX logs, MQTT adapter logs, broker CPU/memory, "
+                "connection count, queue backlog, and core service error logs.",
+            ]),
+            {
+                "user_input": "Review broker CPU/memory usage and connection count.",
+                "selected_tool": "grafana_emqx_health",
+                "tool_outputs": [],
+                "conversation_context": [
+                    {
+                        "role": "user",
+                        "content": "Review broker CPU/memory usage and connection count.",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "# EMQX Broker Health Check Result\nBroker status: abnormal",
+                    },
+                ],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertNotIn("CPU/memory", followups)
+        self.assertNotIn("broker pods", followups)
+        self.assertIn("Check MQTT adapter logs for any issues", followups)
+
+    def test_followup_planner_fills_required_emqx_runbook_branches(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Planner omitted log branches.",
+            "questions": [
+                "Review broker CPU/memory usage during the specified time range.",
+                "Check RabbitMQ throughput.",
+            ],
+        })
+        response.response_metadata = {}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# EMQX Dropped Messages Check Result",
+                "",
+                "## 6. Conclusion",
+                "Delta=0 — no new drops in this window.",
+                "",
+                "## 7. Recommended Next Action",
+                "Check EMQX logs, MQTT adapter logs, broker CPU/memory, "
+                "connection count, queue backlog, and core service error logs.",
+            ]),
+            {
+                "user_input": (
+                    "Check whether EMQX messages dropped increased over the requested time range."
+                ),
+                "selected_tool": "grafana_emqx_dropped_trend",
+                "tool_outputs": [],
+                "conversation_context": [],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Check EMQX logs for errors or warnings", followups)
+        self.assertIn("Check MQTT adapter logs for any issues", followups)
+        self.assertIn("Review broker CPU/memory usage", followups)
+
+    def test_followup_planner_can_return_four_emqx_branches(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Required EMQX branches are still open.",
+            "questions": [],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# EMQX Dropped Messages Check Result",
+                "",
+                "## 7. Recommended Next Action",
+                "Check EMQX logs, MQTT adapter logs, broker CPU/memory, "
+                "connection count, queue backlog, and core service error logs.",
+            ]),
+            {
+                "selected_tool": "grafana_emqx_dropped_trend",
+                "user_input": (
+                    "Check whether EMQX messages dropped increased over the requested time range."
+                ),
+                "conversation_context": [],
+            },
+        )
+
+        followup_lines = [
+            line for line in answer.splitlines()
+            if line.startswith("- ")
+        ]
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertEqual(len(followup_lines), 4)
+        self.assertIn("Check EMQX logs for errors or warnings", followups)
+        self.assertIn("Check MQTT adapter logs for any issues", followups)
+        self.assertIn("Review broker CPU/memory usage and connection count", followups)
+        self.assertIn("Check RabbitMQ queue backlog", followups)
+        self.assertNotIn("Show current EMQX connection count", followups)
+
+    def test_followup_planner_does_not_pad_to_three_questions(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Only one concrete branch remains.",
+            "questions": [
+                "Check Redis health",
+            ],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# Platform Service Health Check Result",
+                "",
+                "## 7. Recommended Next Action",
+                "Check Redis health.",
+            ]),
+            {
+                "selected_tool": "grafana_platform_service_health",
+                "user_input": "Check platform service health",
+                "conversation_context": [],
+            },
+        )
+
+        followup_lines = [
+            line for line in answer.splitlines()
+            if line.startswith("- ")
+        ]
+        self.assertEqual(followup_lines, ["- Check Redis health"])
+
+    def test_followup_planner_blocks_generic_platform_health_for_emqx(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Continue EMQX runbook investigation.",
+            "questions": [
+                "Check platform service health",
+                "Check MQTT adapter logs for any issues",
+                "Check RabbitMQ queue backlog",
+            ],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# EMQX Broker Health Check Result",
+                "",
+                "## 7. Recommended Next Action",
+                "Check EMQX logs, MQTT adapter logs, broker CPU/memory, "
+                "connection count, queue backlog, and core service error logs.",
+            ]),
+            {
+                "selected_tool": "grafana_emqx_health",
+                "user_input": "Review broker CPU/memory usage and connection count",
+                "conversation_context": [],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertNotIn("platform service health", followups.lower())
+        self.assertIn("Check MQTT adapter logs for any issues", followups)
+
+    def test_followup_planner_treats_broker_cpu_memory_as_completed(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Continue unresolved EMQX investigation.",
+            "questions": [
+                "Check EMQX logs for errors or warnings",
+                "Check RabbitMQ queue backlog",
+                "Review broker CPU/memory usage in detail.",
+            ],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# EMQX Broker Health Check Result",
+                "",
+                "## 7. Recommended Next Action",
+                "Check EMQX logs, MQTT adapter logs, broker CPU/memory, "
+                "connection count, queue backlog, and core service error logs.",
+            ]),
+            {
+                "selected_tool": "grafana_emqx_health",
+                "user_input": "Review broker CPU/memory usage and connection count",
+                "conversation_context": [{
+                    "role": "user",
+                    "content": "Review broker CPU/memory usage and connection count",
+                }],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Check MQTT adapter logs for any issues", followups)
+        self.assertNotIn("broker CPU/memory usage in detail", followups)
+
+    def test_followup_planner_keeps_uncompleted_mqtt_adapter_branch(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Continue unresolved log correlation.",
+            "questions": [
+                "Widen EMQX logs to the last 24 hours.",
+                "Check RabbitMQ throughput.",
+            ],
+        })
+        response.response_metadata = {}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# Grafana Log Check Result",
+                "",
+                "## 1. Summary",
+                "Checked emqx logs without a keyword filter in the last 6 hours. Status: no_entries.",
+                "",
+                "## 4. Suggested Next Action",
+                "Widen the time range or correlate with adjacent service logs and DB resource evidence before assigning root cause.",
+            ]),
+            {
+                "user_input": "Check EMQX logs for errors or warnings.",
+                "selected_tool": "grafana_logs",
+                "tool_outputs": [],
+                "conversation_context": [
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "# EMQX Dropped Messages Check Result\n"
+                            "Recommended Next Action\n"
+                            "Check EMQX logs, MQTT adapter logs, broker CPU/memory, "
+                            "connection count, queue backlog, and core service error logs."
+                        ),
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "# EMQX Broker Health Check Result\nBroker status: abnormal",
+                    },
+                ],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Check MQTT adapter logs for any issues", followups)
+        self.assertIn("Widen EMQX logs", followups)
+        self.assertNotIn("RabbitMQ", followups)
+
+    def test_queue_prompt_rejects_semantic_onem2m_tool_choice(self):
+        response = MagicMock()
+        response.content = json.dumps({
+            "confidence": 0.9,
+            "reason": "wrong domain",
+            "workflows": [{
+                "tool": "get_company_onem2m_device_resources",
+                "params": {},
+                "reason": "incorrectly treated queue as device",
+                "confidence": 0.9,
+            }],
+        })
+        response.response_metadata = {}
+        model = MagicMock()
+        model.invoke.return_value = response
+        agent = IOAV3LangGraphN8nAgent(model=model)
+
+        workflows, _metadata = agent.plan_workflows(
+            "Check consumers for queue.onem2m.httpapi."
+        )
+
+        self.assertEqual(workflows[0]["tool"], "query_rabbitmq_queue_detail")
+        self.assertEqual(
+            workflows[0]["params"].get("queue_name"),
+            "queue.onem2m.httpapi",
+        )
+
+    def test_queue_followup_planner_rejects_device_domain_questions(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "bad domain jump",
+            "questions": [
+                "What are the latest CIN records for device `requested device`?",
+                "Can you provide adapter/core logs to correlate with CIN records?",
+                "Check RabbitMQ throughput in namespace test",
+            ],
+        })
+        response.response_metadata = {}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# RabbitMQ Queue Detail",
+                "",
+                "## 3. Suggested Next Action",
+                "Check queue trend and consumer pod logs if backlog keeps increasing.",
+            ]),
+            {
+                "user_input": "Check consumers for queue.onem2m.httpapi.",
+                "selected_tool": "query_rabbitmq_queue_detail",
+                "tool_outputs": [],
+            },
+        )
+
+        self.assertIn("Check RabbitMQ throughput in namespace test", answer)
+        self.assertNotIn("CIN", answer)
+        self.assertNotIn("requested device", answer)
 
     def test_prompt_catalog_for_mongo_prod_keeps_runbooks_first(self):
         with patch("services.prompt_service.company_db_type", return_value="mongodb"), patch(
@@ -764,6 +1670,8 @@ class IOAV3WorkflowTests(unittest.TestCase):
 
         self.assertIn('"command": "restart"', answer)
         self.assertIn("2024-03-09T16:00:00Z", answer)
+        self.assertIn("**Record 1: COMMAND CIN**", answer)
+        self.assertNotIn("### 1. COMMAND CIN", answer)
         self.assertIn("## Follow-up Questions", answer)
 
     def test_ioa_v3_device_online_builder_reads_ae_poast_and_poa(self):
@@ -1154,7 +2062,98 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("Is device S3e1 online?", answer)
         self.assertIn("Check notify logs for device S3e1", answer)
         self.assertIn("Show the AE document for device S3e1", answer)
+        self.assertIn("## 3. Suggested Next Action", answer)
+        self.assertIn("adapter/core logs", answer)
         self.assertNotIn("Debug telemetry uplink for device S3e1", answer)
+
+    def test_onem2m_cin_followups_survive_false_planner_response(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": False,
+            "reason": "Planner incorrectly stopped after evidence view.",
+            "questions": [],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer = agent.build_cin_records_answer({
+            "query_device_id": "S3e1",
+            "cin_type": "telemetry",
+            "resource_summary": {
+                "AE": {"present": True, "matched_count": 1},
+                "CIN": {
+                    "present": True,
+                    "telemetry_samples": [
+                        {"con": "{\"status\": \"disconnected\"}"},
+                    ],
+                },
+            },
+        })
+
+        planned, _ = agent.apply_followup_planner(
+            answer,
+            {
+                "selected_tool": "query_onem2m_cin_records",
+                "user_input": "Correlate latest CIN records with adapter/core logs.",
+                "conversation_context": [],
+            },
+        )
+
+        self.assertIn("## 3. Suggested Next Action", planned)
+        self.assertIn("## Follow-up Questions", planned)
+        self.assertIn("Is device S3e1 online?", planned)
+        self.assertNotIn("<queue_id>", planned)
+
+    def test_onem2m_followup_planner_rejects_queue_placeholders(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "bad mixed-domain suggestions",
+            "questions": [
+                "Show CNT containers for device S3e1",
+                "Show details for queue <queue_id>",
+            ],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# OneM2M CIN Records",
+                "",
+                "## 1. Summary",
+                "Found 2 bounded CIN sample(s) for device S3e1.",
+            ]),
+            {
+                "selected_tool": "query_onem2m_cin_records",
+                "user_input": "Correlate latest CIN records with adapter/core logs.",
+                "conversation_context": [],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Show CNT containers for device S3e1", followups)
+        self.assertNotIn("<queue_id>", followups)
+        self.assertNotIn("queue", followups.lower())
+
+    def test_onem2m_suggestion_section_filters_queue_domain(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        section = agent.suggestion_section(
+            [
+                "Show CNT containers for device S3e1",
+                "Show details for queue <queue_id>",
+            ],
+            selected_tool="query_onem2m_cin_records",
+        )
+
+        text = "\n".join(section)
+        self.assertIn("Show CNT containers for device S3e1", text)
+        self.assertNotIn("<queue_id>", text)
 
     def test_onem2m_collection_followups_do_not_repeat_current_question(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
@@ -1208,11 +2207,379 @@ class IOAV3WorkflowTests(unittest.TestCase):
             "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f",
             answer,
         )
+        self.assertIn("Checked notify logs filtered by S3e1c21c3", answer)
+        self.assertIn("- Service: notify", answer)
+        self.assertNotIn("`notify`", answer)
         self.assertNotIn(
             "- Check notify logs for device "
             "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f in the last 3 hours",
             answer,
         )
+
+    def test_emqx_log_answer_keeps_reconnect_drilldown_on_mqtt_path(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_grafana_logs_answer({
+            "answer_language": "en",
+            "current_user_input": "Check EMQX logs for errors or warnings",
+            "request": {
+                "service_name": "emqx",
+                "contains": None,
+                "hours_back": 6,
+            },
+            "logs": [],
+        })
+
+        self.assertIn("Check MQTT adapter logs for reconnect evidence", answer)
+        self.assertIn("Widen EMQX logs", answer)
+        self.assertNotIn("Check RabbitMQ throughput", answer)
+
+    def test_grafana_log_answer_displays_decoded_time_range(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_grafana_logs_answer({
+            "answer_language": "en",
+            "current_user_input": "Check EMQX logs in the last 6 hours",
+            "request": {
+                "service_name": "emqx",
+                "contains": None,
+                "hours_back": 6,
+                "start": 1784620000,
+                "end": 1784641600,
+            },
+            "logs": [],
+        })
+
+        self.assertIn("Time range: 1784620000 → 1784641600 (last 6 hours)", answer)
+
+    def test_grafana_log_answer_handles_missing_target_without_fake_service(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        answer = agent.build_grafana_logs_answer({
+            "answer_language": "en",
+            "current_user_input": "Review queue-processing service logs for errors.",
+            "level": "needs_target",
+            "request": {
+                "service_name": None,
+                "contains": None,
+                "hours_back": 6,
+            },
+            "logs": [],
+        })
+
+        self.assertIn("Status: **needs_target**", answer)
+        self.assertIn("No Loki query was executed", answer)
+        self.assertIn("Check EMQX logs", answer)
+        self.assertIn("Check MQTT adapter logs", answer)
+        self.assertIn("Check RabbitMQ queue backlog", answer)
+        self.assertNotIn("requested service", answer)
+        self.assertNotIn("for ``", answer)
+        self.assertNotIn("<service>", answer)
+
+    def test_reconnect_error_logs_route_to_mqtt_adapter(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, _ = agent.classify_tool(
+            "Inspect error logs before reconnect events"
+        )
+
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params.get("service"), "iot-mqtt-client-adapter")
+
+    def test_mqtt_adapter_reconnect_log_followup_routes_to_loki(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        tool, params, _ = agent.classify_tool(
+            "Check MQTT adapter logs for reconnect evidence"
+        )
+
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params.get("service"), "iot-mqtt-client-adapter")
+
+    def test_emqx_log_no_entries_suggests_concrete_widen_and_mqtt_adjacent(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Planner returned a generic branch.",
+            "questions": [
+                "Check RabbitMQ throughput",
+            ],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# Grafana Log Check Result",
+                "",
+                "## 1. Summary",
+                "Checked emqx logs filtered by reconnect in the last 6 hours. Status: no_entries.",
+                "",
+                "## 4. Suggested Next Action",
+                "- Widen the time range or correlate with adjacent service logs and DB resource evidence before assigning root cause.",
+            ]),
+            {
+                "selected_tool": "grafana_logs",
+                "user_input": "Check EMQX logs for errors or warnings",
+                "conversation_context": [{
+                    "role": "assistant",
+                    "content": (
+                        "# EMQX Connect/Disconnect Check Result\n"
+                        "## 7. Recommended Next Action\n"
+                        "Check MQTT adapter logs for reconnect evidence, "
+                        "check EMQX logs for broker-side errors, and review EMQX broker health."
+                    ),
+                }],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Widen EMQX logs to last 24 hours", followups)
+        self.assertIn("Check MQTT adapter logs for reconnect evidence", followups)
+        self.assertNotIn("RabbitMQ throughput", followups)
+
+    def test_queue_log_followups_use_queue_as_loki_keyword_not_service_target(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        for prompt, expected_hours in (
+            ("Review related error logs for queue queue.api.subNnotif", None),
+            ("Widen queue.api.subNnotif logs to last 24 hours", 24),
+        ):
+            with self.subTest(prompt=prompt):
+                tool, params, _ = agent.classify_tool(prompt)
+                self.assertEqual(tool, "grafana_logs")
+                self.assertNotIn("service", params)
+                self.assertEqual(params.get("contains"), "queue.api.subNnotif")
+                if expected_hours:
+                    self.assertEqual(params.get("hours_back"), expected_hours)
+
+    def test_log_answer_with_keyword_target_does_not_claim_missing_service(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        answer = agent.build_grafana_logs_answer({
+            "answer_language": "en",
+            "current_user_input": "Widen queue.api.subNnotif logs to last 24 hours",
+            "request": {
+                "service_name": None,
+                "contains": "queue.api.subNnotif",
+                "hours_back": 24,
+            },
+            "logs": [],
+        })
+
+        self.assertIn("Checked logs filtered by queue.api.subNnotif", answer)
+        self.assertIn("Status: **no_entries**", answer)
+        self.assertNotIn("not-yet-specified service", answer)
+        self.assertNotIn("needs_target", answer)
+
+    def test_log_followup_widen_advances_from_answer_time_window(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Planner repeated the old widen window.",
+            "questions": [
+                "Widen EMQX logs to last 24 hours",
+            ],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        planned, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# Grafana Log Check Result",
+                "",
+                "## 1. Summary",
+                "Checked emqx logs without a keyword filter in the last 24 hours. Status: no_entries.",
+                "",
+                "## 4. Suggested Next Action",
+                "- Widen the time range or correlate with adjacent service logs and DB resource evidence before assigning root cause.",
+            ]),
+            {
+                "selected_tool": "grafana_logs",
+                "user_input": "Check EMQX logs for broker-side errors",
+                "conversation_context": [],
+            },
+        )
+
+        followups = planned.split("## Follow-up Questions")[-1]
+        self.assertIn("Widen EMQX logs to last 48 hours", followups)
+        self.assertNotIn("Widen EMQX logs to last 24 hours", followups)
+
+    def test_drilldown_question_routing_table_tools_are_covered(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+        cases = [
+            (f"Kiểm tra thiết bị {device_id} có lên hệ thống chưa", "get_company_onem2m_device_resources"),
+            (f"Thiết bị {device_id} có online không?", "query_device_online_status"),
+            (f"Cho tôi xem AE document của thiết bị {device_id}", "query_company_onem2m_collection"),
+            (f"Show me all CNT containers for device {device_id}", "query_company_onem2m_collection"),
+            (f"Lệnh gần nhất gửi đến thiết bị {device_id}", "query_onem2m_cin_records"),
+            (f"Latest telemetry from device {device_id}", "query_onem2m_cin_records"),
+            (f"Debug command downlink for device {device_id}", "get_company_onem2m_command_flow"),
+            (f"Debug telemetry uplink for device {device_id}", "get_company_onem2m_telemetry_flow"),
+            ("Top 10 RabbitMQ queues", "grafana_queue_backlog"),
+            ("Chi tiết về queue queue.onem2m.datamgmt", "query_rabbitmq_queue_detail"),
+            ("Check RabbitMQ queue trend", "grafana_queue_trend"),
+            ("EMQX dropped messages", "grafana_emqx_dropped_trend"),
+            ("Current EMQX connection count", "query_emqx_connection_count"),
+            ("EMQX connect/disconnect rate", "grafana_emqx_connection_trend"),
+            ("K8s resource usage", "grafana_k8s_resources"),
+            ("Check HTTP API success rate", "grafana_http_health"),
+            ("RabbitMQ throughput", "grafana_throughput"),
+            ("Check MQTT adapter logs for reconnect evidence", "grafana_logs"),
+        ]
+
+        for prompt, expected_tool in cases:
+            with self.subTest(prompt=prompt):
+                tool, _, _ = agent.classify_tool(prompt)
+                self.assertEqual(tool, expected_tool)
+
+    def test_onem2m_followups_keep_recent_device_context(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+        context = [{
+            "role": "assistant",
+            "content": (
+                "# OneM2M Device Resource Check Result\n"
+                f"Device ID: {device_id}\n"
+                "## 7. Suggested Next Action\n"
+                "Continue with the command or telemetry flow workflow and correlate latest CIN records."
+            ),
+        }]
+        cases = [
+            (
+                "Continue with the command or telemetry flow workflow.",
+                "get_company_onem2m_command_flow",
+            ),
+            (
+                "Correlate latest command CIN with adapter logs for device requested device.",
+                "get_company_onem2m_command_flow",
+            ),
+            (
+                "Investigate AE ID variants for device requested.",
+                "get_company_onem2m_device_resources",
+            ),
+            (
+                "Re-run the registration/provisioning trace for the missing resources.",
+                "get_company_onem2m_device_resources",
+            ),
+        ]
+
+        for prompt, expected_tool in cases:
+            with self.subTest(prompt=prompt):
+                resolved = agent.resolve_contextual_user_input(prompt, context)
+                tool, params, _ = agent.classify_tool(resolved)
+                self.assertEqual(tool, expected_tool)
+                self.assertEqual(params.get("device_id"), device_id)
+                self.assertNotIn("requested", str(params))
+
+    def test_onem2m_delivery_and_status_followups_route_to_bounded_tools(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b"
+        cases = [
+            (
+                f"Verify the operational status of AE for device {device_id}.",
+                "query_device_online_status",
+            ),
+            (
+                f"Verify AE online status for device {device_id}.",
+                "query_device_online_status",
+            ),
+            (
+                f"Search for backend delivery evidence related to device {device_id}.",
+                "get_company_onem2m_telemetry_flow",
+            ),
+            (
+                device_id,
+                "get_company_onem2m_device_resources",
+            ),
+        ]
+
+        for prompt, expected_tool in cases:
+            with self.subTest(prompt=prompt):
+                tool, params, _ = agent.classify_tool(prompt)
+                self.assertEqual(tool, expected_tool)
+                self.assertEqual(params.get("device_id"), device_id)
+
+    def test_reconnect_log_followup_prunes_unrelated_rabbitmq(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": True,
+            "reason": "Continue reconnect drilldown.",
+            "questions": [
+                "Check RabbitMQ throughput",
+                "Check MQTT adapter logs for reconnect evidence",
+            ],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer, _ = agent.apply_followup_planner(
+            "\n".join([
+                "# Grafana Log Check Result",
+                "",
+                "## 1. Summary",
+                "Checked emqx logs without a keyword filter in the last 6 hours. Status: no_entries.",
+                "",
+                "## 4. Suggested Next Action",
+                "- Widen the time range or correlate with adjacent service logs.",
+            ]),
+            {
+                "selected_tool": "grafana_logs",
+                "user_input": "Check EMQX logs for errors or warnings",
+                "conversation_context": [{
+                    "role": "assistant",
+                    "content": (
+                        "# EMQX Connect/Disconnect Check Result\n"
+                        "Recommended Next Action\n"
+                        "Check MQTT adapter logs for reconnect evidence and check EMQX logs."
+                    ),
+                }],
+            },
+        )
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Check MQTT adapter logs for reconnect evidence", followups)
+        self.assertNotIn("RabbitMQ throughput", followups)
+
+    def test_log_next_action_fallback_survives_false_planner_response(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        response = MagicMock()
+        response.content = json.dumps({
+            "needs_followup": False,
+            "reason": "Planner incorrectly stopped despite open log next action.",
+            "questions": [],
+        })
+        response.response_metadata = {"token_usage": {}}
+        agent.model = MagicMock()
+        agent.model.invoke.return_value = response
+
+        answer = agent.build_grafana_logs_answer({
+            "answer_language": "en",
+            "current_user_input": "Check EMQX logs for errors or warnings",
+            "request": {
+                "service_name": "emqx",
+                "contains": None,
+                "hours_back": 6,
+            },
+            "logs": [],
+        })
+
+        planned, _ = agent.apply_followup_planner(
+            answer,
+            {
+                "selected_tool": "grafana_logs",
+                "user_input": "Check EMQX logs for errors or warnings",
+                "conversation_context": [],
+            },
+        )
+
+        followups = planned.split("## Follow-up Questions")[-1]
+        self.assertIn("Check MQTT adapter logs for reconnect evidence", followups)
+        self.assertIn("Widen EMQX logs", followups)
 
     def test_onem2m_telemetry_answer_marks_failed_log_source_as_gap(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
@@ -1355,6 +2722,167 @@ class IOAV3WorkflowTests(unittest.TestCase):
             "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b",
         )
         self.assertEqual(params["hours_back"], 3)
+
+    def test_log_followup_normalizes_mqtt_adapter_alias(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        for prompt in (
+            "Check MQTT adapter logs for any issues.",
+            "Widen the time range for the `mqtt_adapter` logs and check again.",
+        ):
+            tool, params, _ = agent.classify_tool(prompt)
+            self.assertEqual(tool, "grafana_logs")
+            self.assertEqual(params["service"], "iot-mqtt-client-adapter")
+
+    def test_vague_log_followup_resolves_previous_log_target(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        resolved = agent.resolve_contextual_user_input(
+            "Widen the time range for the log check.",
+            [
+                {
+                    "role": "user",
+                    "content": "Check MQTT adapter logs for any issues.",
+                },
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Grafana Log Check Result\n"
+                        "Checked iot-mqtt-client-adapter logs without a keyword "
+                        "filter in the last 6 hours.\n"
+                        "Service: iot-mqtt-client-adapter\n"
+                        "Contains: not specified"
+                    ),
+                },
+            ],
+        )
+
+        self.assertIn("service iot-mqtt-client-adapter", resolved)
+        self.assertIn("last 24 hours", resolved)
+        tool, params, _ = agent.classify_tool(resolved)
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params["service"], "iot-mqtt-client-adapter")
+        self.assertEqual(params["hours_back"], 24)
+
+    def test_concrete_widen_log_followup_keeps_previous_keyword_filter(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        resolved = agent.resolve_contextual_user_input(
+            "Widen MQTT adapter logs to last 24 hours",
+            [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "# Grafana Log Check Result\n"
+                        "Checked iot-mqtt-client-adapter logs filtered by reconnect "
+                        "in the last 6 hours. Status: no_entries.\n"
+                        "Service: iot-mqtt-client-adapter\n"
+                        "Contains: reconnect"
+                    ),
+                },
+            ],
+        )
+
+        self.assertIn("contains reconnect", resolved)
+        tool, params, _ = agent.classify_tool(resolved)
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params["service"], "iot-mqtt-client-adapter")
+        self.assertEqual(params["contains"], "reconnect")
+        self.assertEqual(params["hours_back"], 24)
+
+    def test_widen_log_followup_stays_on_resolved_log_target(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        agent.model = MagicMock()
+
+        answer = agent.build_grafana_logs_answer({
+            "answer_language": "en",
+            "current_user_input": "Widen the time range for the log check.",
+            "request": {
+                "service": "iot-mqtt-client-adapter",
+                "hours_back": 24,
+            },
+            "logs": [],
+        })
+
+        planned, _ = agent.apply_followup_planner(
+            answer,
+            {
+                "selected_tool": "grafana_logs",
+                "user_input": "Widen the time range for the log check.",
+                "conversation_context": [{
+                    "role": "assistant",
+                    "content": (
+                        "# Grafana Log Check Result\n"
+                        "Checked iot-mqtt-client-adapter logs without a keyword "
+                        "filter in the last 6 hours. Status: no_entries."
+                    ),
+                }],
+            },
+        )
+
+        agent.model.invoke.assert_not_called()
+        followups = planned.split("## Follow-up Questions")[-1]
+        self.assertNotIn("Check RabbitMQ queue backlog", followups)
+        self.assertNotIn("Check RabbitMQ throughput", followups)
+
+    def test_wider_log_search_keeps_device_filter_from_flow_evidence_line(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b"
+
+        resolved = agent.resolve_contextual_user_input(
+            "Try a wider time range for the log search.",
+            [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "# OneM2M Telemetry Uplink Flow Check Result\n"
+                        "## 3. Logs / Grafana Evidence\n"
+                        "grafana_logs: queried MCP loki_query_range; "
+                        f"service=notify; contains={device_id}; hours_back=6; "
+                        "0 entries matched\n"
+                    ),
+                },
+            ],
+        )
+
+        self.assertIn("service notify", resolved)
+        self.assertIn(f"contains {device_id}", resolved)
+        self.assertIn("last 24 hours", resolved)
+        tool, params, _ = agent.classify_tool(resolved)
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params["service"], "notify")
+        self.assertEqual(params["contains"], device_id)
+        self.assertEqual(params["hours_back"], 24)
+
+    def test_recent_errors_log_followup_keeps_previous_keyword_and_window(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "Sc71f749c-9fd5-4ee6-93fa-c14ee9e5871b"
+
+        resolved = agent.resolve_contextual_user_input(
+            "Check recent errors for service notify",
+            [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "# Grafana Log Check Result\n"
+                        f"Checked notify logs filtered by {device_id} "
+                        "in the last 48 hours. Status: no_entries.\n"
+                        "Service: notify\n"
+                        f"Contains: {device_id}\n"
+                        "Time range: 1784532044 -> 1784704844 "
+                        "(last 48 hours)"
+                    ),
+                },
+            ],
+        )
+
+        self.assertIn(f"contains {device_id}", resolved)
+        self.assertIn("last 48 hours", resolved)
+        tool, params, _ = agent.classify_tool(resolved)
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params["service"], "notify")
+        self.assertEqual(params["contains"], device_id)
+        self.assertEqual(params["hours_back"], 48)
 
     def test_ioa_v3_filters_placeholder_planner_params(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
@@ -1980,6 +3508,35 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("Core service-quality signals first", prompt)
         self.assertIn("Infrastructure as diagnostic supporting evidence", prompt)
         self.assertIn("company DB evidence as preview/test data", prompt)
+
+    def test_platform_service_health_uses_deterministic_answer_format(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        answer = agent.build_deterministic_answer({
+            "user_input": "Check platform service health",
+            "selected_tool": "grafana_platform_service_health",
+            "tool_outputs": [{
+                "tool": "grafana_platform_service_health",
+                "result": {
+                    "level": "warning",
+                    "body": {
+                        "dashboards": {
+                            "http": "warning",
+                            "k8s": "good",
+                            "rabbitmq": "good",
+                            "redis": "warning",
+                        },
+                        "overall_verdict": "warning",
+                    },
+                },
+            }],
+        })
+
+        self.assertIn("# Platform Service Health Check Result", answer)
+        self.assertIn("## 1. Summary", answer)
+        self.assertIn("## 7. Recommended Next Action", answer)
+        self.assertIn("| http | warning |", answer)
+        self.assertNotIn("\nSummary\n", answer)
 
     def test_ioa_v3_answer_prompt_preserves_user_language(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)

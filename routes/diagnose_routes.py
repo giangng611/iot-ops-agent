@@ -146,6 +146,24 @@ def create_diagnose_blueprint(runtime):
         data["message"] = user_input
         return data, None
 
+    def sanitize_conversation_context(value):
+        if not isinstance(value, list):
+            return []
+
+        context = []
+        for item in value[-8:]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "")
+            content = str(item.get("content") or "").strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+            context.append({
+                "role": role,
+                "content": content[:4000],
+            })
+        return context
+
     @diagnose_bp.route("/api/diagnose", methods=["POST"])
     def diagnose():
         if not login_required():
@@ -176,6 +194,9 @@ def create_diagnose_blueprint(runtime):
                 else "simulator"
             )
             start_time = time.time()
+            conversation_context = sanitize_conversation_context(
+                data.get("conversation_context")
+            )
 
             if mode == "ioa_v1_custom":
                 result = (
@@ -375,6 +396,7 @@ def create_diagnose_blueprint(runtime):
                     selected_source=data_source,
                     source_resolution=source_resolution,
                     user_id=session.get("user_id"),
+                    conversation_context=conversation_context,
                 )
 
                 latency_seconds = round(
@@ -483,6 +505,9 @@ def create_diagnose_blueprint(runtime):
         start_time = time.time()
         app_logger = current_app.logger
         session_user_id = session.get("user_id")
+        conversation_context = sanitize_conversation_context(
+            data.get("conversation_context")
+        )
 
         def generate():
             try:
@@ -761,6 +786,7 @@ def create_diagnose_blueprint(runtime):
                             selected_source=data_source,
                             source_resolution=source_resolution,
                             user_id=session_user_id,
+                            conversation_context=conversation_context,
                         ):
                             if event.get("type") == "final":
                                 event["token_usage"] = add_runtime_metadata(

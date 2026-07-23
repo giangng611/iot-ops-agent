@@ -1516,6 +1516,9 @@ Rules:
 - Do not repeat, rephrase, or slightly rename an action that already appears in
   completed_actions. Move to a different branch of the investigation.
 - Do not ask broad questions when a concrete entity is present.
+- Log follow-up questions must include a concrete log source/service such as
+  iot-http-api, iot-mqtt-client-adapter, notify, EMQX, or RabbitMQ. Never return
+  vague questions like "query logs for device" or "check device logs".
 - Use placeholders only for selectable entities that are explicitly listed as
   candidates in the answer, such as <queue_id>, <pod>, <device_id>, or
   <request_id>. Do not use placeholders for broad concepts like service/log
@@ -1681,6 +1684,8 @@ Evidence summary:
             )
 
         for item in followups or []:
+            if not self.is_followup_compatible_with_tool(item, selected_tool):
+                continue
             self.add_followup_candidate(
                 existing,
                 seen,
@@ -1961,7 +1966,14 @@ Evidence summary:
                 "k8s",
                 "kubernetes",
             )
-            return not any(term in text for term in forbidden)
+            if any(term in text for term in forbidden):
+                return False
+            if (
+                ("log" in text or "logs" in text)
+                and not self.extract_log_service_name(question)
+            ):
+                return False
+            return True
 
         if selected_tool in {
             "grafana_emqx_dropped_trend",
@@ -3830,6 +3842,13 @@ Evidence summary:
                 else f"Check iot-mqtt-client-adapter logs for device {device_id} in the last 3 hours"
             )
 
+        def http_log_question():
+            return (
+                f"Kiểm tra iot-http-api logs cho thiết bị {device_id} trong 3 giờ gần nhất"
+                if is_vi
+                else f"Check iot-http-api logs for device {device_id} in the last 3 hours"
+            )
+
         def ae_document_question():
             return (
                 f"Cho tôi xem AE document của thiết bị {device_id}"
@@ -3846,6 +3865,15 @@ Evidence summary:
             return suggestions
 
         if context.get("answer_kind") == "cin_records":
+            cin_type = str(context.get("cin_type") or "").lower()
+            if cin_type == "command":
+                suggestions.extend([
+                    http_log_question(),
+                    adapter_log_question(),
+                    ae_document_question(),
+                    online_question(),
+                ])
+                return suggestions
             suggestions.extend([
                 online_question(),
                 notify_log_question()
@@ -3858,7 +3886,7 @@ Evidence summary:
         suggestions.append(online_question())
 
         if not ae_present:
-            suggestions.append(f"Check logs for device {device_id}")
+            suggestions.append(adapter_log_question())
         if flow == "command":
             if not int(cin.get("command_count") or 0):
                 suggestions.append(
@@ -4220,29 +4248,53 @@ Evidence summary:
                 "- decoded `con`:",
                 self.json_block(decoded),
             ])
-        lines.extend([
-            "",
-            "## 3. Suggested Next Action",
-            (
+        has_command_records = any(kind == "command" for kind, _ in records)
+        has_telemetry_records = any(kind == "telemetry" for kind, _ in records)
+        if has_command_records and not cin_type == "telemetry":
+            next_action = (
+                "- Correlate the latest command CIN timestamp and URI mapper target "
+                "with iot-http-api/core logs and iot-mqtt-client-adapter send logs "
+                "before assigning root cause."
+            )
+            evidence_gap = (
+                "- CIN records alone do not prove that the command was delivered "
+                "to the adapter, broker, or device. Adapter/core log evidence is "
+                "still required."
+            )
+        elif has_telemetry_records:
+            next_action = (
                 "- Correlate these CIN timestamps and decoded statuses with "
                 "adapter/core logs, notify delivery logs, and AE online status "
                 "before assigning root cause."
-            ),
-            "",
-            "## 4. Evidence Gaps",
-            (
+            )
+            evidence_gap = (
                 "- CIN records alone do not prove backend delivery or adapter/core "
                 "processing. Log and AE status evidence is still required."
-                if records
-                else "- No CIN samples were returned for this device in the bounded evidence."
-            ),
+            )
+        else:
+            next_action = (
+                "- Correlate any returned CIN timestamps with adapter/core logs "
+                "before assigning root cause."
+            )
+            evidence_gap = "- No CIN samples were returned for this device in the bounded evidence."
+
+        lines.extend([
+            "",
+            "## 3. Suggested Next Action",
+            next_action,
+            "",
+            "## 4. Evidence Gaps",
+            evidence_gap,
         ])
         lines.extend(self.suggestion_section([
             *self.onem2m_followup_suggestions(
                 device_id,
                 resource_summary,
                 language=language,
-                context={"answer_kind": "cin_records"},
+                context={
+                    "answer_kind": "cin_records",
+                    "cin_type": "command" if has_command_records and not cin_type == "telemetry" else cin_type,
+                },
             )
         ],
             language=language,
@@ -4393,8 +4445,9 @@ Evidence summary:
             next_action = (
                 result.get("next_diagnostic_step")
                 or (
-                    "Correlate the missing resource checks with adapter/core logs "
-                    "and the latest CIN records before assigning root cause."
+                    "Correlate the latest command CIN, URI mapper target, "
+                    "and AE point-of-access status with iot-http-api/core logs "
+                    "and iot-mqtt-client-adapter send logs before assigning root cause."
                 )
             )
 
@@ -4734,11 +4787,15 @@ Evidence summary:
 
         if self.should_resolve_onem2m_context(text):
             device_id = self.extract_recent_device_identifier(conversation_context)
-            if device_id and not self.extract_device_identifier(text):
+            if device_id and (
+                not self.extract_device_identifier(text)
+                or "requested device" in text.lower()
+            ):
                 additions.append(f"device {device_id}")
 
         if self.should_resolve_log_context(text):
             service = self.extract_recent_log_service(conversation_context)
+            requested_service = self.extract_log_service_name(text)
             contains = self.extract_recent_log_keyword(conversation_context)
             hours_back = self.extract_requested_hours_back(text)
             recent_hours_back = self.extract_recent_log_hours_back(conversation_context)
@@ -4749,7 +4806,19 @@ Evidence summary:
 
             if service and not self.extract_log_service_name(text):
                 additions.append(f"service {service}")
-            if contains and "keyword" not in text.lower() and "contains" not in text.lower():
+            should_inherit_contains = True
+            if (
+                requested_service in {"emqx", "rabbitmq"}
+                and self.is_plausible_device_identifier(contains)
+                and not self.extract_device_identifier(text)
+            ):
+                should_inherit_contains = False
+            if (
+                contains
+                and should_inherit_contains
+                and "keyword" not in text.lower()
+                and "contains" not in text.lower()
+            ):
                 additions.append(f"contains {contains}")
             if hours_back is not None:
                 additions.append(f"last {hours_back} hours")
@@ -4772,6 +4841,9 @@ Evidence summary:
             "cin",
             "ae id",
             "ae variants",
+            "operational status",
+            "point-of-access",
+            "point of access",
             "identity",
             "subscription",
             "uri_mapper",
@@ -4782,7 +4854,16 @@ Evidence summary:
             "provisioning",
             "resource check",
             "adapter/core",
+            "adapter receive",
+            "delivery logs",
+            "notify",
+            "notify delivery",
+            "iot-mqtt-client-adapter",
             "latest cin",
+            "relevant timestamp",
+            "relevant timestamps",
+            "same time window",
+            "requested device",
         ))
 
     def should_resolve_log_context(self, user_input):
@@ -4906,6 +4987,8 @@ Evidence summary:
             return None
 
         patterns = (
+            r'"deviceId"\s*:\s*"([A-Za-z0-9_.:-]+)"',
+            r"'deviceId'\s*:\s*'([A-Za-z0-9_.:-]+)'",
             r"Device ID:\s*`?([A-Za-z0-9_.:-]+)`?",
             r"Device\s+`([A-Za-z0-9_.:-]+)`",
             r"device\s+([SN][A-Za-z0-9_.:-]{8,})",
@@ -5631,16 +5714,18 @@ JSON schema:
     def extract_log_service_name(self, text):
         normalized = str(text or "").lower().replace("_", "-")
         patterns = (
+            ("emqx", "emqx"),
             ("iot-mqtt-client-adapter", "iot-mqtt-client-adapter"),
             ("iot-mqtt-adapter", "iot-mqtt-client-adapter"),
             ("mqtt-client-adapter", "iot-mqtt-client-adapter"),
             ("mqtt-adapter", "iot-mqtt-client-adapter"),
             ("mqtt adapter", "iot-mqtt-client-adapter"),
+            ("mqtt logs", "iot-mqtt-client-adapter"),
+            ("mqtt log", "iot-mqtt-client-adapter"),
             ("iot-http-api", "iot-http-api"),
             ("http-api", "iot-http-api"),
             ("http api", "iot-http-api"),
             ("notify", "notify"),
-            ("emqx", "emqx"),
             ("rabbitmq", "rabbitmq"),
         )
         for needle, canonical in patterns:
@@ -5708,6 +5793,24 @@ JSON schema:
                     break
 
         return identifiers
+
+    def extract_ae_id_candidate(self, text):
+        raw_text = str(text or "")
+        match = re.search(
+            r"\bae\s+id\s+candidates?\s*:\s*([^\n.]+)",
+            raw_text,
+            flags=re.IGNORECASE,
+        )
+        search_text = match.group(1) if match else raw_text
+        for candidate in re.findall(r"\b[SN][A-Za-z0-9_.:-]{8,}\b", search_text):
+            value = self.normalize_identifier_value(candidate)
+            if self.is_plausible_device_identifier(value):
+                return value
+        for candidate in re.findall(r"\bN[A-Za-z0-9_.:-]{8,}\b", search_text):
+            value = self.normalize_identifier_value(candidate)
+            if not self.is_placeholder_param(value):
+                return value
+        return None
 
     def is_plausible_device_identifier(self, value):
         if self.is_placeholder_param(value):
@@ -6138,6 +6241,30 @@ JSON schema:
                 identifiers.setdefault("device_id", device_id)
             return identifiers
 
+        if has_explicit_loki_log_intent() and (
+            "ae id candidate" in text
+            or "ae id candidates" in text
+        ):
+            service = self.extract_log_service_name(user_input)
+            if service:
+                params["service"] = self.normalize_log_service_name(service)
+            contains = (
+                self.extract_param(user_input, "contains")
+                or self.extract_param(user_input, "keyword")
+                or self.extract_device_identifier(user_input)
+                or self.extract_ae_id_candidate(user_input)
+            )
+            if contains:
+                params["contains"] = contains
+            hours_back = self.extract_requested_hours_back(user_input)
+            if hours_back is not None:
+                params["hours_back"] = hours_back
+            elif self.requests_wider_time_window(text):
+                params["hours_back"] = 24
+            if any(term in text for term in ("warn", "error", "errors", "exception")):
+                params["level"] = "error|warn"
+            return "grafana_logs", params, "onem2m_related_log_keywords"
+
         has_onem2m_resource_terms = has_any((
             "onem2m",
             "oneM2M",
@@ -6177,6 +6304,7 @@ JSON schema:
             "trạng thái",
             "trang thai",
             "status",
+            "point-of-access",
             "point of access",
             "poa",
         ))
@@ -6268,6 +6396,54 @@ JSON schema:
             and not has_command_flow_terms
             and not has_telemetry_flow_terms
         )
+        has_device_config_change_terms = has_any((
+            "configuration",
+            "config",
+            "recent changes",
+            "recent change",
+            "changed recently",
+            "configuration change",
+            "configuration changes",
+            "config change",
+            "config changes",
+            "cấu hình",
+            "cau hinh",
+            "thay đổi cấu hình",
+            "thay doi cau hinh",
+        ))
+
+        if (
+            device_id
+            and has_explicit_loki_log_intent()
+            and (
+                (
+                    "correlate" in text
+                    and self.extract_log_service_name(user_input)
+                    and has_any((
+                        "latest command cin",
+                        "latest telemetry cin",
+                        "command cin",
+                        "telemetry cin",
+                        "cin timestamp",
+                    ))
+                )
+                or has_any((
+                    "cin timestamp",
+                    "command cin timestamp",
+                    "telemetry cin timestamp",
+                    "point-of-access",
+                    "point of access",
+                ))
+            )
+        ):
+            service = self.extract_log_service_name(user_input)
+            if service:
+                params["service"] = self.normalize_log_service_name(service)
+            params["contains"] = device_id
+            hours_back = self.extract_requested_hours_back(user_input)
+            if hours_back is not None:
+                params["hours_back"] = hours_back
+            return "grafana_logs", params, "onem2m_cin_timestamp_log_keywords"
 
         if has_command_flow_terms:
             return (
@@ -6302,6 +6478,8 @@ JSON schema:
                 "ae offline status",
                 "status of ae",
                 "online status",
+                "point-of-access",
+                "point of access",
             ))
         ):
             return (
@@ -6318,6 +6496,15 @@ JSON schema:
             )
 
         collection = self.extract_onem2m_collection_name(user_input)
+        if device_id and has_device_config_change_terms:
+            collection_params = with_onem2m_identifiers()
+            collection_params["collection"] = "AE"
+            return (
+                "query_company_onem2m_collection",
+                collection_params,
+                "company_onem2m_device_config_keywords",
+            )
+
         if device_id and collection and has_raw_document_terms:
             collection_params = with_onem2m_identifiers()
             collection_params["collection"] = collection
@@ -6630,7 +6817,14 @@ JSON schema:
             if _hours_match:
                 _val = next(g for g in _hours_match.groups() if g is not None)
                 params["hours_back"] = min(int(_val), 72)
-            if "warn" in text:
+            if any(term in text for term in (
+                "warn",
+                "error",
+                "errors",
+                "exception",
+                "broker-side error",
+                "broker-side errors",
+            )):
                 params["level"] = "error|warn"
             return "grafana_logs", params, "logs_keywords"
 

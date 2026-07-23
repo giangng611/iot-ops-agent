@@ -82,6 +82,9 @@ def create_diagnose_blueprint(runtime):
 
         return usage
 
+    def sse_event(payload):
+        return f"data: {json.dumps(payload)}\n\n"
+
     def get_rate_limit_key():
         user_id = session.get("user_id")
 
@@ -543,7 +546,7 @@ def create_diagnose_blueprint(runtime):
                     return
 
                 if mode == "ioa_v2_langchain":
-                    yield f"data: {json.dumps({
+                    yield sse_event({
                         'type': 'thought',
                         'iteration': 1,
                         'thought': 'Using LangChain as the orchestration runtime.',
@@ -553,9 +556,9 @@ def create_diagnose_blueprint(runtime):
                             'node_id': 'create_agent',
                             'node_label': 'Create agent'
                         }
-                    })}\n\n"
+                    })
 
-                    yield f"data: {json.dumps({
+                    yield sse_event({
                         'type': 'observation',
                         'iteration': 1,
                         'observation': {
@@ -566,9 +569,9 @@ def create_diagnose_blueprint(runtime):
                                 'note': 'LangChain create_agent is initialized with IoT telemetry tools.'
                             }
                         }
-                    })}\n\n"
+                    })
 
-                    yield f"data: {json.dumps({
+                    yield sse_event({
                         'type': 'thought',
                         'iteration': 2,
                         'thought': 'LangChain is running its framework-managed tool-calling loop.',
@@ -578,7 +581,7 @@ def create_diagnose_blueprint(runtime):
                             'node_id': 'agent_loop',
                             'node_label': 'Agent loop'
                         }
-                    })}\n\n"
+                    })
 
                     result = langchain_agent.run(
                         user_input,
@@ -602,15 +605,15 @@ def create_diagnose_blueprint(runtime):
                         notes="Automatic benchmark capture from streamed UI execution."
                     )
 
-                    yield f"data: {json.dumps({
+                    yield sse_event({
                         'type': 'observation',
                         'iteration': 2,
                         'observation': {
                             'output': result['steps'][0]['output']
                         }
-                    })}\n\n"
+                    })
 
-                    yield f"data: {json.dumps({
+                    yield sse_event({
                         'type': 'thought',
                         'iteration': 3,
                         'thought': 'LangChain returned a final operational diagnosis.',
@@ -620,9 +623,9 @@ def create_diagnose_blueprint(runtime):
                             'node_id': 'final_answer',
                             'node_label': 'Final answer'
                         }
-                    })}\n\n"
+                    })
 
-                    yield f"data: {json.dumps({
+                    yield sse_event({
                         'type': 'observation',
                         'iteration': 3,
                         'observation': {
@@ -631,22 +634,22 @@ def create_diagnose_blueprint(runtime):
                                 'status': 'final_answer_ready'
                             }
                         }
-                    })}\n\n"
+                    })
 
-                    yield f"data: {json.dumps({
+                    yield sse_event({
                         'type': 'final',
                         'final_answer': result['final_answer'],
                         'token_usage': add_runtime_metadata(
                             result.get('token_usage'),
                             mode
                         )
-                    })}\n\n"
+                    })
 
                     return
 
                 if mode == "ioa_v2_n8n":
                     try:
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'thought',
                             'iteration': 1,
                             'thought': 'The request should be delegated to n8n for workflow-based orchestration.',
@@ -656,9 +659,9 @@ def create_diagnose_blueprint(runtime):
                                 'node_id': 'webhook',
                                 'node_label': 'Webhook'
                             }
-                        })}\n\n"
+                        })
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'observation',
                             'iteration': 1,
                             'observation': {
@@ -668,9 +671,9 @@ def create_diagnose_blueprint(runtime):
                                     'webhook_url_configured': True
                                 }
                             }
-                        })}\n\n"
+                        })
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'thought',
                             'iteration': 2,
                             'thought': 'n8n should now execute the configured workflow and LLM chain.',
@@ -680,7 +683,7 @@ def create_diagnose_blueprint(runtime):
                                 'node_id': 'workflow',
                                 'node_label': 'Basic LLM Chain'
                             }
-                        })}\n\n"
+                        })
 
                         result = call_n8n_agent(
                             user_input,
@@ -697,7 +700,7 @@ def create_diagnose_blueprint(runtime):
                             step_count=len(normalized_steps)
                         )
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'observation',
                             'iteration': 2,
                             'observation': {
@@ -712,13 +715,13 @@ def create_diagnose_blueprint(runtime):
                                     'answer_preview': result['final_answer'][:300]
                                 }
                             }
-                        })}\n\n"
+                        })
 
                         for iteration, step in enumerate(
                             normalized_steps[1:],
                             start=3
                         ):
-                            yield f"data: {json.dumps({
+                            yield sse_event({
                                 'type': 'thought',
                                 'iteration': iteration,
                                 'thought': step['thought'],
@@ -728,24 +731,24 @@ def create_diagnose_blueprint(runtime):
                                     'node_id': 'code',
                                     'node_label': 'Code in JavaScript'
                                 }
-                            })}\n\n"
+                            })
 
-                            yield f"data: {json.dumps({
+                            yield sse_event({
                                 'type': 'observation',
                                 'iteration': iteration,
                                 'observation': {
                                     'output': step['output']
                                 }
-                            })}\n\n"
+                            })
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'final',
                             'final_answer': result['final_answer'],
                             'token_usage': add_runtime_metadata(
                                 result.get('token_usage'),
                                 mode
                             )
-                        })}\n\n"
+                        })
                     except Exception as e:
                         latency_seconds = round(time.time() - start_time, 2)
 
@@ -757,7 +760,7 @@ def create_diagnose_blueprint(runtime):
                             error=str(e)
                         )
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'observation',
                             'iteration': 1,
                             'observation': {
@@ -767,12 +770,12 @@ def create_diagnose_blueprint(runtime):
                                     'error': public_runtime_error,
                                 }
                             }
-                        })}\n\n"
+                        })
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'error',
                             'error': public_runtime_error,
-                        })}\n\n"
+                        })
 
                     return
 
@@ -816,7 +819,7 @@ def create_diagnose_blueprint(runtime):
                             "IOA v3 stream runtime failed: %s",
                             exc,
                         )
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'observation',
                             'iteration': 1,
                             'observation': {
@@ -826,18 +829,18 @@ def create_diagnose_blueprint(runtime):
                                     'error': public_runtime_error,
                                 }
                             }
-                        })}\n\n"
+                        })
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'error',
                             'error': public_runtime_error,
-                        })}\n\n"
+                        })
 
                     return
 
                 if mode == "ioa_v2_dify":
                     try:
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'thought',
                             'iteration': 1,
                             'thought': 'The request should be delegated to Dify for app-based agent orchestration.',
@@ -847,7 +850,7 @@ def create_diagnose_blueprint(runtime):
                                 'node_id': 'chat_api',
                                 'node_label': 'Chat API'
                             }
-                        })}\n\n"
+                        })
 
                         result = call_dify_agent(
                             user_input,
@@ -866,38 +869,38 @@ def create_diagnose_blueprint(runtime):
 
                         first_step = steps[0]
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'observation',
                             'iteration': first_step['iteration'],
                             'observation': {
                                 'output': first_step['output']
                             }
-                        })}\n\n"
+                        })
 
                         for step in steps[1:]:
-                            yield f"data: {json.dumps({
+                            yield sse_event({
                                 'type': 'thought',
                                 'iteration': step['iteration'],
                                 'thought': step['thought'],
                                 'action': step['action']
-                            })}\n\n"
+                            })
 
-                            yield f"data: {json.dumps({
+                            yield sse_event({
                                 'type': 'observation',
                                 'iteration': step['iteration'],
                                 'observation': {
                                     'output': step['output']
                                 }
-                            })}\n\n"
+                            })
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'final',
                             'final_answer': result['final_answer'],
                             'token_usage': add_runtime_metadata(
                                 result.get('token_usage'),
                                 mode
                             )
-                        })}\n\n"
+                        })
                     except Exception as e:
                         latency_seconds = round(time.time() - start_time, 2)
 
@@ -909,7 +912,7 @@ def create_diagnose_blueprint(runtime):
                             error=str(e)
                         )
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'observation',
                             'iteration': 1,
                             'observation': {
@@ -919,12 +922,12 @@ def create_diagnose_blueprint(runtime):
                                     'error': public_runtime_error,
                                 }
                             }
-                        })}\n\n"
+                        })
 
-                        yield f"data: {json.dumps({
+                        yield sse_event({
                             'type': 'error',
                             'error': public_runtime_error,
-                        })}\n\n"
+                        })
 
                     return
 
@@ -937,14 +940,14 @@ def create_diagnose_blueprint(runtime):
                         if company_context is not None
                         else ioa_v1_agent.run(user_input)
                     )
-                    yield f"data: {json.dumps({
+                    yield sse_event({
                         'type': 'final',
                         'final_answer': result['final_answer'],
                         'token_usage': add_runtime_metadata(
                             result.get('token_usage'),
                             mode
                         )
-                    })}\n\n"
+                    })
                     return
 
                 stream = (
@@ -986,10 +989,10 @@ def create_diagnose_blueprint(runtime):
                     "Diagnose stream runtime failed: %s",
                     exc,
                 )
-                yield f"data: {json.dumps({
+                yield sse_event({
                     'type': 'error',
                     'error': public_runtime_error,
-                })}\n\n"
+                })
 
         return Response(generate(), mimetype="text/event-stream")
 

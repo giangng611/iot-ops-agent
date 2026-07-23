@@ -2155,6 +2155,51 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("Show CNT containers for device S3e1", text)
         self.assertNotIn("<queue_id>", text)
 
+    def test_onem2m_suggestion_section_filters_generic_log_followups(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        section = agent.suggestion_section(
+            [
+                "Query logs for device S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f",
+                "Check logs for device S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f",
+                "Check iot-http-api logs for device S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f in the last 3 hours",
+                "Check iot-mqtt-client-adapter logs for device S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f in the last 3 hours",
+            ],
+            selected_tool="get_company_onem2m_command_flow",
+        )
+
+        text = "\n".join(section)
+        self.assertNotIn("Query logs for device", text)
+        self.assertNotIn("Check logs for device", text)
+        self.assertIn("iot-http-api logs", text)
+        self.assertIn("iot-mqtt-client-adapter logs", text)
+
+    def test_command_cin_answer_suggests_concrete_log_sources(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+
+        answer = agent.build_cin_records_answer({
+            "answer_language": "en",
+            "query_device_id": device_id,
+            "cin_type": "command",
+            "current_user_input": f"CIN records for device {device_id}",
+            "resource_summary": {
+                "CIN": {
+                    "command_samples": [{
+                        "rn": "cin_28d0d7c0d94d",
+                        "pi": "cnt-command",
+                        "ct": 1783473109665,
+                        "con": "{\"commandId\":\"ota_2_0_0\"}",
+                    }],
+                },
+            },
+        })
+
+        followups = answer.split("## Follow-up Questions")[-1]
+        self.assertIn("Check iot-http-api logs for device", followups)
+        self.assertIn("Check iot-mqtt-client-adapter logs for device", followups)
+        self.assertNotIn("Query logs for device", followups)
+
     def test_onem2m_collection_followups_do_not_repeat_current_question(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
         answer = agent.build_onem2m_collection_answer({
@@ -2501,6 +2546,214 @@ class IOAV3WorkflowTests(unittest.TestCase):
                 tool, params, _ = agent.classify_tool(prompt)
                 self.assertEqual(tool, expected_tool)
                 self.assertEqual(params.get("device_id"), device_id)
+
+    def test_ae_operational_status_followup_keeps_context_device(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+
+        resolved = agent.resolve_contextual_user_input(
+            "Check the operational status of AE point-of-access for any updates.",
+            [{
+                "role": "assistant",
+                "content": (
+                    "# OneM2M Command Downlink Flow Check Result\n"
+                    f"Device ID: {device_id}\n"
+                    "AE point-of-access status is OFFLINE."
+                ),
+            }],
+        )
+
+        self.assertIn(f"device {device_id}", resolved)
+        tool, params, _ = agent.classify_tool(resolved)
+        self.assertEqual(tool, "query_device_online_status")
+        self.assertEqual(params.get("device_id"), device_id)
+
+    def test_command_cin_timestamp_log_followup_routes_to_loki(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+
+        for prompt, expected_service in (
+            (
+                "Correlate the latest command CIN timestamp with iot-http-api/core logs.",
+                "iot-http-api",
+            ),
+            (
+                "Correlate the latest command CIN with iot-http-api logs.",
+                "iot-http-api",
+            ),
+            (
+                "Correlate the latest command CIN timestamp with iot-mqtt-client-adapter send logs.",
+                "iot-mqtt-client-adapter",
+            ),
+        ):
+            with self.subTest(prompt=prompt):
+                resolved = agent.resolve_contextual_user_input(
+                    prompt,
+                    [{
+                        "role": "assistant",
+                        "content": (
+                            "# OneM2M CIN Records\n"
+                            f"Found 3 bounded CIN sample(s) for device {device_id}.\n"
+                            "Record 1: COMMAND CIN\n"
+                            "rn: cin_28d0d7c0d94d"
+                        ),
+                    }],
+                )
+
+                self.assertIn(f"device {device_id}", resolved)
+                tool, params, _ = agent.classify_tool(resolved)
+                self.assertEqual(tool, "grafana_logs")
+                self.assertEqual(params.get("service"), expected_service)
+                self.assertEqual(params.get("contains"), device_id)
+                self.assertNotIn("collection", params)
+
+    def test_ae_point_of_access_core_logs_route_to_loki(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+
+        resolved = agent.resolve_contextual_user_input(
+            "Check AE point-of-access status in core logs.",
+            [{
+                "role": "assistant",
+                "content": (
+                    "# OneM2M Command Downlink Flow Check Result\n"
+                    f"Device ID: {device_id}\n"
+                    "AE point-of-access status is OFFLINE."
+                ),
+            }],
+        )
+
+        self.assertIn(f"device {device_id}", resolved)
+        tool, params, _ = agent.classify_tool(resolved)
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params.get("contains"), device_id)
+        self.assertNotIn("collection", params)
+
+    def test_ae_point_of_access_without_logs_routes_to_online_status(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+
+        tool, params, _ = agent.classify_tool(
+            f"Check AE point-of-access for device {device_id}"
+        )
+
+        self.assertEqual(tool, "query_device_online_status")
+        self.assertEqual(params.get("device_id"), device_id)
+
+    def test_recent_mqtt_logs_mean_mqtt_adapter_logs(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+
+        tool, params, _ = agent.classify_tool(
+            f"Review recent MQTT logs for device {device_id}"
+        )
+
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params.get("service"), "iot-mqtt-client-adapter")
+        self.assertEqual(params.get("contains"), device_id)
+
+    def test_onem2m_timestamp_log_followups_keep_device_from_cin_answer(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+        context = [{
+            "role": "assistant",
+            "content": (
+                "# OneM2M CIN Records\n"
+                "## 2. Records\n"
+                "Record 1: TELEMETRY CIN\n"
+                "decoded con:\n"
+                "{ "
+                f'"deviceId": "{device_id}", '
+                f'"deviceName": "{device_id}", '
+                '"status": "disconnected"'
+                " }\n"
+                "## 3. Suggested Next Action\n"
+                "Correlate these CIN timestamps and decoded statuses with "
+                "adapter/core logs, notify delivery logs, and AE online status "
+                "before assigning root cause."
+            ),
+        }]
+        cases = [
+            "Check notify delivery logs for the relevant timestamps.",
+            "Check iot-mqtt-client-adapter receive logs for device requested device.",
+        ]
+
+        for prompt in cases:
+            with self.subTest(prompt=prompt):
+                resolved = agent.resolve_contextual_user_input(prompt, context)
+                self.assertIn(f"device {device_id}", resolved)
+                tool, params, _ = agent.classify_tool(resolved)
+                self.assertEqual(tool, "get_company_onem2m_telemetry_flow")
+                self.assertEqual(params.get("device_id"), device_id)
+                self.assertNotIn("requested", str(params))
+
+    def test_device_configuration_change_followup_uses_bounded_onem2m_collection(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+
+        tool, params, reason = agent.classify_tool(
+            f"Investigate any recent changes to the configuration of device {device_id}"
+        )
+
+        self.assertEqual(tool, "query_company_onem2m_collection")
+        self.assertEqual(params["device_id"], device_id)
+        self.assertEqual(params["collection"], "AE")
+        self.assertEqual(reason, "company_onem2m_device_config_keywords")
+
+    def test_command_flow_next_action_does_not_claim_missing_resource_checks(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+
+        answer = agent.build_onem2m_flow_answer(
+            {
+                "answer_language": "en",
+                "query_device_id": "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f",
+                "flow_name": "command",
+                "device_status": "resource_matches_found",
+                "resource_summary": {
+                    "IDENTITY": {"status": "Present", "matched_count": 1},
+                    "AE": {"status": "Present", "matched_count": 1},
+                    "CNT": {"status": "Present", "matched_count": 1},
+                    "CIN": {"status": "Present", "matched_count": 1},
+                    "SUBSCRIPTION": {"status": "Present", "matched_count": 1},
+                    "URI_MAPPER": {"status": "Present", "matched_count": 1},
+                },
+                "flow_checks": {
+                    "required_input_complete": True,
+                    "identity_present": True,
+                    "ae_present": True,
+                    "command_container_present": True,
+                    "subscription_present": True,
+                    "uri_mapper_present": True,
+                    "latest_command_cin_present": True,
+                },
+                "log_evidence": [],
+            },
+            "get_company_onem2m_command_flow",
+            [],
+        )
+
+        self.assertIn("latest command CIN", answer)
+        self.assertIn("iot-mqtt-client-adapter send logs", answer)
+        self.assertNotIn("missing resource checks", answer)
+
+    def test_onem2m_related_log_followups_route_to_loki_not_resource_check(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+
+        tool, params, _ = agent.classify_tool(
+            f"Correlate the latest command CIN with adapter logs for device {device_id}."
+        )
+        self.assertEqual(tool, "get_company_onem2m_command_flow")
+        self.assertEqual(params.get("device_id"), device_id)
+
+        tool, params, _ = agent.classify_tool(
+            "Check wider time range for logs related to AE ID candidates: "
+            "N1deb6685-493c-431f-8be0-577f61ab9368, "
+            "N946df3c8-5c7f-4f62-a00c-0de297f13956, "
+            f"{device_id}."
+        )
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params.get("contains"), "N1deb6685-493c-431f-8be0-577f61ab9368")
 
     def test_reconnect_log_followup_prunes_unrelated_rabbitmq(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
@@ -2883,6 +3136,37 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertEqual(params["service"], "notify")
         self.assertEqual(params["contains"], device_id)
         self.assertEqual(params["hours_back"], 48)
+
+    def test_broker_side_log_followup_keeps_window_without_device_filter(self):
+        agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
+        device_id = "S3e1c21c3-7aad-415a-a1cd-03d3d0c6a73f"
+
+        resolved = agent.resolve_contextual_user_input(
+            "Check EMQX logs for broker-side errors",
+            [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "# Grafana Log Check Result\n"
+                        "Checked iot-mqtt-client-adapter logs filtered by "
+                        f"{device_id} in the last 24 hours. Status: no_entries.\n"
+                        "Service: iot-mqtt-client-adapter\n"
+                        f"Contains: {device_id}\n"
+                        "Time range: 1784687354 -> 1784773754 "
+                        "(last 24 hours)"
+                    ),
+                },
+            ],
+        )
+
+        self.assertNotIn(f"contains {device_id}", resolved)
+        self.assertIn("last 24 hours", resolved)
+        tool, params, _ = agent.classify_tool(resolved)
+        self.assertEqual(tool, "grafana_logs")
+        self.assertEqual(params["service"], "emqx")
+        self.assertEqual(params["hours_back"], 24)
+        self.assertEqual(params["level"], "error|warn")
+        self.assertNotIn("contains", params)
 
     def test_ioa_v3_filters_placeholder_planner_params(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)

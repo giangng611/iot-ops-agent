@@ -114,6 +114,43 @@ http://127.0.0.1:5001
 
 See [Setup](docs/SETUP.md) for the full environment contract.
 
+## Docker Quick Start
+
+For a containerized Flask/MCP runtime that uses your existing `.env`,
+`mcp_server/.env`, and shared company databases/services:
+
+```bash
+docker-compose --env-file /dev/null up --build
+```
+
+Open:
+
+```text
+http://127.0.0.1:5001
+```
+
+The access code, OpenAI key, MySQL URL, MongoDB URL, n8n/Dify URLs, and MCP
+credentials come from your existing env files:
+
+```text
+.env
+mcp_server/.env
+```
+
+The Compose file intentionally does not start MySQL or company MongoDB by
+default. It packages the app services and connects them to the same external
+databases/services that your local `.env` already uses. Localhost URLs inside
+the container are rewritten to `host.docker.internal` at startup.
+
+If you prefer an isolated MySQL container instead of the existing host MySQL:
+
+```bash
+docker-compose --env-file /dev/null \
+  -f docker-compose.yml \
+  -f docker-compose.local-db.yml \
+  up --build
+```
+
 ## Operational Runbooks
 
 Implemented MCP-backed runbooks:

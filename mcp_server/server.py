@@ -9,6 +9,7 @@ if REPO_ROOT not in sys.path:
 
 from dotenv import load_dotenv  # noqa: E402
 from mcp.server.fastmcp import FastMCP  # noqa: E402
+from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
 import uvicorn  # noqa: E402
 
 from mcp_server.auth import BearerAuthMiddleware  # noqa: E402
@@ -16,7 +17,34 @@ from mcp_server.tools.mongo_tools import register_mongo_tools  # noqa: E402
 
 load_dotenv(os.path.join(MCP_SERVER_DIR, ".env"))
 
-mcp = FastMCP("iot-ops-mcp-server", stateless_http=True)
+default_allowed_hosts = [
+    "127.0.0.1",
+    "127.0.0.1:*",
+    "localhost",
+    "localhost:*",
+    "host.docker.internal",
+    "host.docker.internal:*",
+    "mcp",
+    "mcp:*",
+]
+configured_allowed_hosts = [
+    host.strip()
+    for host in os.getenv("MCP_ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+]
+
+mcp = FastMCP(
+    "iot-ops-mcp-server",
+    stateless_http=True,
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=configured_allowed_hosts or default_allowed_hosts,
+        allowed_origins=[
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://host.docker.internal:*",
+        ],
+    ),
+)
 
 register_mongo_tools(mcp)
 

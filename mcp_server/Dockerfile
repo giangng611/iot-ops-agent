@@ -27,4 +27,4 @@ EXPOSE 8000
 
 # All real config (COMPANY_MONGODB_URI, MCP_API_KEYS_JSON, GRAFANA_*, ...) is
 # injected at runtime via env vars / --env-file, never baked into the image.
-CMD ["python", "mcp_server/server.py"]
+CMD ["sh", "mcp_server/docker_entrypoint.sh"]

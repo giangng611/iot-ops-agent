@@ -8,7 +8,21 @@ from collections import OrderedDict
 import requests
 
 from services.chat_service import save_chat_message
-from storage.relational_store import create_chat
+from services.company_data_service import get_company_telemetry_coverage_context
+from services.prompt_service import (
+    DEFAULT_PROMPTS,
+    PROMPT_SHORTCUTS,
+    SIMULATOR_PROMPTS,
+    get_default_prompt_command,
+    list_prompts,
+)
+from services.telegram_link_service import consume_link_code, unlink_telegram_identity
+from storage.relational_store import (
+    chat_belongs_to_user,
+    create_chat,
+    get_chats,
+    get_telegram_identity,
+)
 
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -16,30 +30,198 @@ MAX_TELEGRAM_MESSAGE_CHARS = 3900
 _telegram_update_lock = threading.Lock()
 _telegram_updates_inflight = set()
 _telegram_updates_processed = OrderedDict()
-TELEGRAM_COMMANDS = [
-    {"command": "overview", "description": "Summarize system health"},
-    {"command": "unhealthy", "description": "List unhealthy devices"},
-    {"command": "alarms", "description": "Show devices with alarms"},
+_telegram_active_history = {}
+TELEGRAM_STATIC_COMMANDS = [
     {"command": "diagnose", "description": "Diagnose the system or a device"},
-    {"command": "heartbeat", "description": "Check delayed heartbeats"},
-    {"command": "companyfleet", "description": "Company fleet snapshot"},
-    {"command": "coverage", "description": "Company telemetry coverage"},
-    {"command": "pocalerts", "description": "Provisional company PoC alerts"},
-    {"command": "disconnected", "description": "Disconnected company devices"},
-    {"command": "ruleready", "description": "Company rule integration readiness"},
+    {"command": "link", "description": "Link Telegram to your IoT Ops Agent account"},
+    {"command": "unlink", "description": "Unlink this Telegram account"},
     {"command": "help", "description": "Show available commands"},
 ]
-TELEGRAM_COMMAND_PROMPTS = {
-    "overview": "overview system health",
-    "unhealthy": "check all unhealthy devices",
-    "alarms": "show devices with alarms",
-    "heartbeat": "check devices with delayed heartbeat",
-    "companyfleet": "company fleet snapshot",
-    "coverage": "company telemetry coverage and unmapped records",
-    "pocalerts": "company provisional alerts with evidence",
-    "disconnected": "company disconnected devices",
-    "ruleready": "company rule readiness and Grafana gaps",
+
+TELEGRAM_LEGACY_PROMPT_ALIASES = {
+    "overview": "default-1",
+    "unhealthy": "default-2",
+    "alarms": "default-6",
+    "companyfleet": "company-1",
+    "coverage": "company-3",
+    "pocalerts": "company-4",
+    "disconnected": "company-5",
+    "ruleready": "company-7",
 }
+
+TELEGRAM_PROMPT_COMMAND_ALIASES = {
+    "apihealth": "api-health",
+    "companyfleet": "company-fleet",
+    "companyinventory": "company-inventory",
+    "companycoverage": "company-coverage",
+    "companyalerts": "company-alerts",
+    "companydisconnected": "company-disconnected",
+    "companytemperature": "company-temperature",
+    "companyrules": "company-rules",
+    "companydevice": "company-device",
+    "companyredishttp": "company-redis-http",
+    "companyplatform": "company-platform",
+    "queuetrend": "queue-trend",
+    "emqxdropped": "emqx-dropped",
+    "simfleet": "sim-fleet",
+    "simdevice": "sim-device",
+    "simalarms": "sim-alarms",
+    "simstress": "sim-stress",
+    "simsmoke": "sim-smoke",
+}
+
+
+def telegram_command_name(shortcut):
+    return re.sub(r"[^a-z0-9_]", "", str(shortcut or "").lstrip("/").lower())
+
+
+def normalize_telegram_command_name(command):
+    normalized = str(command or "").strip().lower().lstrip("/")
+    alias = TELEGRAM_PROMPT_COMMAND_ALIASES.get(normalized)
+
+    if alias:
+        return alias
+
+    return normalized
+
+
+def build_telegram_command_prompt_map():
+    return build_telegram_command_prompt_map_for_source()
+
+
+def get_telegram_prompt_catalog(user_id=None, selected_source=None):
+    if selected_source in {"simulator", "company"}:
+        return list_prompts(user_id or 0, selected_source)
+
+    prompts = DEFAULT_PROMPTS + SIMULATOR_PROMPTS
+    return [
+        {
+            **prompt,
+            "shortcut": PROMPT_SHORTCUTS.get(prompt["id"]),
+        }
+        for prompt in prompts
+    ]
+
+
+def build_telegram_command_prompt_map_for_source(
+    user_id=None,
+    selected_source=None,
+):
+    prompt_map = {}
+
+    for prompt in get_telegram_prompt_catalog(user_id, selected_source):
+        shortcut = prompt.get("shortcut")
+        prompt_command = prompt.get("command")
+
+        if not shortcut or not prompt_command:
+            continue
+
+        prompt_map[str(shortcut).lstrip("/").lower()] = prompt_command
+        prompt_map[telegram_command_name(shortcut)] = prompt_command
+
+    if selected_source is None:
+        for alias, prompt_id in TELEGRAM_LEGACY_PROMPT_ALIASES.items():
+            prompt_command = get_default_prompt_command(prompt_id)
+
+            if prompt_command:
+                prompt_map.setdefault(alias, prompt_command)
+
+    return prompt_map
+
+
+def build_telegram_prompt_commands(user_id=None, selected_source="company"):
+    commands = []
+    seen = set()
+
+    for prompt in get_telegram_prompt_catalog(user_id, selected_source):
+        shortcut = prompt.get("shortcut")
+        command = telegram_command_name(shortcut)
+
+        if not command or command in seen:
+            continue
+
+        commands.append({
+            "command": command,
+            "description": str(prompt.get("title") or command)[:256],
+        })
+        seen.add(command)
+
+    return commands
+
+
+def get_telegram_commands(user_id=None, selected_source="company"):
+    return (
+        build_telegram_prompt_commands(user_id, selected_source)
+        + TELEGRAM_STATIC_COMMANDS
+    )
+
+
+def get_telegram_device_suggestions(limit=5):
+    try:
+        context = get_company_telemetry_coverage_context(limit=limit)
+    except Exception:
+        return []
+
+    if context.get("source") != "company_mongodb":
+        return []
+
+    suggestions = []
+
+    for device in context.get("sample_devices_with_telemetry") or []:
+        device_id = str(device.get("device_id") or "").strip()
+
+        if not device_id:
+            continue
+
+        suggestions.append({
+            "device_id": device_id,
+            "device_name": str(device.get("device_name") or "").strip(),
+            "status": str(device.get("status") or "").strip(),
+            "telemetry_record_count": device.get("telemetry_record_count"),
+        })
+
+        if len(suggestions) >= limit:
+            break
+
+    return suggestions
+
+
+def build_missing_device_id_text(command, device_suggestions=None):
+    command_label = f"/{command}" if command else "this command"
+    lines = [
+        f"{command_label} needs a device ID.",
+        "",
+        "Send it like one of these:",
+        f"{command_label} SmartAsset_9b47fedc",
+    ]
+
+    for device in device_suggestions or []:
+        device_id = device.get("device_id")
+
+        if not device_id:
+            continue
+
+        details = []
+
+        if device.get("device_name") and device["device_name"] != device_id:
+            details.append(device["device_name"])
+
+        if device.get("status"):
+            details.append(f"status={device['status']}")
+
+        if device.get("telemetry_record_count") is not None:
+            details.append(
+                f"telemetry={device['telemetry_record_count']}"
+            )
+
+        suffix = f" ({', '.join(details)})" if details else ""
+        lines.append(f"{command_label} {device_id}{suffix}")
+
+    return "\n".join(lines)
+
+
+def fill_prompt_device_id(prompt, device_id):
+    return str(prompt or "").replace("<device_id>", str(device_id or "").strip())
 
 
 def claim_telegram_update(update):
@@ -158,34 +340,95 @@ def telegram_user_is_allowed(telegram_user_id):
     return str(telegram_user_id) in allowed_user_ids
 
 
-def build_help_text():
+def resolve_telegram_identity(message):
+    telegram_user_id = message.get("telegram_user_id")
+
+    if telegram_user_id is None:
+        return None, "missing_telegram_user_id"
+
+    if not telegram_user_is_allowed(telegram_user_id):
+        return None, "telegram_user_not_allowlisted"
+
+    identity = get_telegram_identity(telegram_user_id)
+
+    if not identity:
+        return None, "telegram_identity_not_mapped"
+
+    if not identity.get("is_active"):
+        return None, "telegram_identity_inactive"
+
+    return identity, None
+
+
+def data_source_is_allowed(identity, data_source):
+    allowed_sources = set(identity.get("allowed_data_sources") or [])
+    return data_source in allowed_sources
+
+
+def build_help_text(user_id=None, selected_source=None):
+    prompt_lines = []
+
+    for prompt in get_telegram_prompt_catalog(user_id, selected_source):
+        shortcut = prompt.get("shortcut")
+
+        if not shortcut:
+            continue
+
+        title = prompt.get("title") or shortcut
+        telegram_alias = telegram_command_name(shortcut)
+        display_shortcut = str(shortcut)
+
+        if telegram_alias and f"/{telegram_alias}" != display_shortcut:
+            display_shortcut = f"{display_shortcut} or /{telegram_alias}"
+
+        prompt_lines.append(f"{display_shortcut} - {title}")
+
     return "\n".join([
         "What would you like to check?",
         "",
-        "/overview - System health summary",
-        "/unhealthy - Devices needing attention",
-        "/alarms - Current device alarms",
-        "/heartbeat - Delayed heartbeat check",
-        "/companyfleet - Company inventory and telemetry snapshot",
-        "/coverage - Company telemetry coverage",
-        "/pocalerts - Provisional PoC alerts with evidence",
-        "/disconnected - Company devices reporting disconnected",
-        "/ruleready - Company rule and Grafana integration gaps",
+        *prompt_lines,
+        "/link CODE - Link Telegram to your IoT Ops Agent account",
+        "/unlink - Revoke this Telegram account link",
         "/diagnose - Diagnose the whole system",
         "/diagnose gateway-001 - Diagnose one simulator device",
         "/diagnose SmartAsset_9b47fedc - Inspect one company device",
     ])
 
 
-def normalize_telegram_prompt(text):
+def normalize_telegram_prompt(
+    text,
+    include_device_suggestions=False,
+    user_id=None,
+    selected_source=None,
+):
     if text in {"/", "/start", "/help"}:
-        return None, build_help_text()
+        return None, build_help_text(user_id, selected_source)
 
     command_text, _, arguments = text.partition(" ")
-    command = command_text.split("@", 1)[0].lstrip("/").lower()
+    command = normalize_telegram_command_name(
+        command_text.split("@", 1)[0].lstrip("/").lower()
+    )
+    command_prompts = build_telegram_command_prompt_map_for_source(
+        user_id,
+        selected_source,
+    )
 
-    if command in TELEGRAM_COMMAND_PROMPTS:
-        return TELEGRAM_COMMAND_PROMPTS[command], None
+    if command in command_prompts:
+        prompt = command_prompts[command]
+        target = arguments.strip()
+
+        if "<device_id>" in prompt:
+            if not target:
+                suggestions = (
+                    get_telegram_device_suggestions()
+                    if include_device_suggestions
+                    else []
+                )
+                return None, build_missing_device_id_text(command, suggestions)
+
+            return fill_prompt_device_id(prompt, target), None
+
+        return prompt, None
 
     if command == "diagnose":
         target = arguments.strip()
@@ -195,6 +438,118 @@ def normalize_telegram_prompt(text):
         )
 
     return text, None
+
+
+def telegram_message_starts_new_topic(text):
+    command_text = str(text or "").strip().partition(" ")[0]
+
+    if not command_text.startswith("/"):
+        return False
+
+    command = command_text.split("@", 1)[0].lstrip("/").lower()
+    return command not in {"", "start", "help", "link", "unlink"}
+
+
+def parse_link_command(text):
+    command_text, _, arguments = str(text or "").partition(" ")
+    command = command_text.split("@", 1)[0].lstrip("/").lower()
+
+    if command != "link":
+        return None
+
+    return arguments.strip()
+
+
+def is_unlink_command(text):
+    command_text, _, _ = str(text or "").partition(" ")
+    command = command_text.split("@", 1)[0].lstrip("/").lower()
+    return command == "unlink"
+
+
+def handle_telegram_link_command(message):
+    code = parse_link_command(message["text"])
+
+    if code is None:
+        return None
+
+    if message.get("telegram_user_id") is None:
+        send_telegram_message(
+            message["chat_id"],
+            "Telegram could not identify your user ID for account linking.",
+        )
+        return {"status": "link_failed", "reason": "missing_telegram_user_id"}
+
+    success, reason = consume_link_code(
+        code,
+        message["telegram_user_id"],
+        telegram_username=message.get("telegram_username"),
+    )
+
+    if success:
+        identity = get_telegram_identity(message["telegram_user_id"]) or {}
+        allowed_sources = set(identity.get("allowed_data_sources") or [])
+        access_note = (
+            "Company DB access is enabled for this linked account."
+            if "company" in allowed_sources
+            else "Default access is simulator only."
+        )
+        send_telegram_message(
+            message["chat_id"],
+            (
+                "Telegram is linked to your IoT Ops Agent account. "
+                f"{access_note}"
+            ),
+        )
+        return {"status": "linked"}
+
+    messages = {
+        "invalid_code": "Invalid Telegram link code.",
+        "code_expired": "This Telegram link code has expired.",
+        "code_already_used": "This Telegram link code was already used.",
+        "telegram_already_linked": (
+            "This Telegram account is already linked to another "
+            "IoT Ops Agent account."
+        ),
+    }
+    send_telegram_message(
+        message["chat_id"],
+        messages.get(reason, "Unable to link this Telegram account."),
+    )
+    return {"status": "link_failed", "reason": reason}
+
+
+def handle_telegram_unlink_command(message):
+    if not is_unlink_command(message["text"]):
+        return None
+
+    success, reason = unlink_telegram_identity(message.get("telegram_user_id"))
+
+    if success:
+        send_telegram_message(
+            message["chat_id"],
+            (
+                "Telegram has been unlinked from your IoT Ops Agent account. "
+                "Use a new link code from the platform to link it again."
+            ),
+        )
+        return {"status": "unlinked"}
+
+    messages = {
+        "missing_telegram_user_id": (
+            "Telegram could not identify your user ID for unlinking."
+        ),
+        "telegram_identity_not_mapped": (
+            "This Telegram account is not linked to an IoT Ops Agent account."
+        ),
+        "telegram_identity_inactive": (
+            "This Telegram account link is already inactive."
+        ),
+    }
+    send_telegram_message(
+        message["chat_id"],
+        messages.get(reason, "Unable to unlink this Telegram account."),
+    )
+    return {"status": "unlink_failed", "reason": reason}
 
 
 def format_conversational_text(text):
@@ -211,6 +566,95 @@ def format_conversational_text(text):
     return value.strip()
 
 
+def _split_markdown_table_row(line):
+    stripped = line.strip()
+
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+
+    return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+
+def _is_markdown_separator_row(cells):
+    return bool(cells) and all(
+        re.fullmatch(r":?-{3,}:?", str(cell or "").strip())
+        for cell in cells
+    )
+
+
+def _plain_table_cell(value):
+    value = re.sub(r"`([^`\n]+)`", r"\1", str(value or "").strip())
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _format_markdown_table_for_telegram(table_lines):
+    rows = [
+        _split_markdown_table_row(line)
+        for line in table_lines
+    ]
+    rows = [row for row in rows if row]
+
+    if len(rows) < 2:
+        return table_lines
+
+    headers = [_plain_table_cell(cell) for cell in rows[0]]
+    body_rows = [
+        row
+        for row in rows[1:]
+        if not _is_markdown_separator_row(row)
+    ]
+    formatted = []
+
+    for row in body_rows:
+        cells = [_plain_table_cell(cell) for cell in row]
+        pairs = [
+            (headers[index], cell)
+            for index, cell in enumerate(cells)
+            if index < len(headers) and cell
+        ]
+
+        if not pairs:
+            continue
+
+        label_header, label = pairs[0]
+        rest = pairs[1:]
+
+        if rest:
+            details = "; ".join(
+                f"{header}: {cell}" if header else cell
+                for header, cell in rest
+            )
+            formatted.append(f"• {label_header}: {label} — {details}")
+        else:
+            formatted.append(f"• {label_header}: {label}")
+
+    return formatted or table_lines
+
+
+def format_telegram_answer_text(text):
+    lines = str(text or "").replace("\r\n", "\n").split("\n")
+    output = []
+    table_lines = []
+
+    def flush_table():
+        if not table_lines:
+            return
+
+        output.extend(_format_markdown_table_for_telegram(table_lines))
+        table_lines.clear()
+
+    for line in lines:
+        if _split_markdown_table_row(line):
+            table_lines.append(line)
+            continue
+
+        flush_table()
+        output.append(line)
+
+    flush_table()
+    return "\n".join(output).strip()
+
+
 def split_telegram_text(text):
     if len(text) <= MAX_TELEGRAM_MESSAGE_CHARS:
         return [text]
@@ -225,18 +669,96 @@ def split_telegram_text(text):
     return chunks
 
 
+def _md_to_telegram_html(text):
+    """Convert GFM-style markdown to Telegram HTML (parse_mode=HTML).
+    - Table rows that remain at this stage → <pre> monospace blocks
+    - # / ## headers → <b>
+    - **bold** → <b>, `code` → <code>
+    - ``` fenced blocks → <pre>
+    - Bullet dashes → • prefix
+    """
+
+    def _esc(s):
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def _inline(s):
+        parts = re.split(r"(`[^`\n]+`)", s)
+        out = []
+        for p in parts:
+            if p.startswith("`") and p.endswith("`") and len(p) > 2:
+                out.append(f"<code>{_esc(p[1:-1])}</code>")
+            else:
+                sub = re.split(r"(\*\*[^*\n]+\*\*)", p)
+                for s2 in sub:
+                    if s2.startswith("**") and s2.endswith("**") and len(s2) > 4:
+                        out.append(f"<b>{_esc(s2[2:-2])}</b>")
+                    else:
+                        out.append(_esc(s2))
+        return "".join(out)
+
+    lines = text.split("\n")
+    out = []
+    table_buf = []
+    in_fence = False
+    fence_buf = []
+
+    def flush_table():
+        if table_buf:
+            out.append("<pre>" + "\n".join(table_buf) + "</pre>")
+            table_buf.clear()
+
+    for raw in lines:
+        stripped = raw.strip()
+
+        # ``` fenced code blocks
+        if stripped.startswith("```"):
+            if not in_fence:
+                in_fence = True
+                fence_buf = []
+            else:
+                in_fence = False
+                flush_table()
+                out.append("<pre>" + "\n".join(fence_buf) + "</pre>")
+            continue
+        if in_fence:
+            fence_buf.append(raw)
+            continue
+
+        # Table rows
+        if raw.startswith("|"):
+            table_buf.append(raw)
+            continue
+        flush_table()
+
+        if raw.startswith("# "):
+            out.append(f"<b>{_esc(raw[2:])}</b>")
+        elif raw.startswith("## "):
+            out.append(f"<b>{_esc(raw[3:])}</b>")
+        elif re.match(r"^\s*[-*]\s+", raw):
+            # bullet: replace leading dash/asterisk with •
+            body = re.sub(r"^\s*[-*]\s+", "", raw)
+            out.append("• " + _inline(body))
+        else:
+            out.append(_inline(raw))
+
+    flush_table()
+    return "\n".join(out)
+
+
 def send_telegram_message(chat_id, text):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 
     if not bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured.")
 
-    for chunk in split_telegram_text(text):
+    html = _md_to_telegram_html(format_telegram_answer_text(text))
+    for chunk in split_telegram_text(html):
         response = requests.post(
             f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMessage",
             json={
                 "chat_id": chat_id,
                 "text": chunk,
+                "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
             timeout=20,
@@ -265,21 +787,69 @@ def make_chat_title(message):
     return f"Telegram: {compact_message or 'New request'}"
 
 
-def start_telegram_history(message):
-    user_id = get_history_user_id()
+def telegram_history_key(message):
+    return (
+        str(message.get("telegram_user_id") or ""),
+        str(message.get("chat_id") or ""),
+    )
 
-    if user_id is None:
-        return None, None
 
-    chat_id = create_chat(user_id, make_chat_title(message["text"]))
-    save_chat_message(
+def latest_telegram_history_chat_id(user_id):
+    try:
+        chats = get_chats(user_id)
+    except Exception:
+        return None
+
+    telegram_chats = [
+        chat
+        for chat in chats
+        if str(chat.get("title") or "").startswith("Telegram:")
+    ]
+
+    if not telegram_chats:
+        return None
+
+    return max(telegram_chats, key=lambda chat: int(chat.get("id") or 0))["id"]
+
+
+def start_telegram_history(user_id, message, new_topic=True):
+    key = telegram_history_key(message)
+    chat_id = None
+    created = False
+
+    if not new_topic:
+        chat_id = _telegram_active_history.get(key)
+
+        if chat_id and not chat_belongs_to_user(chat_id, user_id):
+            chat_id = None
+
+        if chat_id is None:
+            chat_id = latest_telegram_history_chat_id(user_id)
+
+    if chat_id is None:
+        chat_id = create_chat(user_id, make_chat_title(message["text"]))
+        _telegram_active_history[key] = chat_id
+        created = True
+
+    saved, _, _ = save_chat_message(
         chat_id=chat_id,
         user_id=user_id,
         role="user",
         content=message["text"],
     )
 
-    return user_id, chat_id
+    if not saved and not created:
+        chat_id = create_chat(user_id, make_chat_title(message["text"]))
+        _telegram_active_history[key] = chat_id
+        save_chat_message(
+            chat_id=chat_id,
+            user_id=user_id,
+            role="user",
+            content=message["text"],
+        )
+        created = True
+
+    return user_id, chat_id, created
 
 
 def finish_telegram_history(user_id, chat_id, result):
@@ -332,8 +902,8 @@ def merge_stream_event(steps, event):
 
 def add_telegram_runtime_metadata(token_usage):
     usage = dict(token_usage or {})
-    usage["runtime_label"] = "IOA v2 · LangGraph"
-    usage["model_name"] = "gpt-4o-mini"
+    usage["runtime_label"] = "IOA v3 · Ops Graph"
+    usage["model_name"] = "gpt-4o-mini + operational workflow"
     return usage
 
 
@@ -345,11 +915,24 @@ def handle_telegram_update(update, langgraph_agent, emit_user_event=None):
     )
 
 
+def get_telegram_failure_user_id(update):
+    message = extract_message(update)
+
+    if message is not None:
+        identity, deny_reason = resolve_telegram_identity(message)
+
+        if not deny_reason:
+            return identity["user_id"]
+
+    return get_history_user_id()
+
+
 def process_telegram_update(
     update,
     langgraph_agent,
     emit_user_event=None,
     get_user_data_source=None,
+    resolve_source_context=None,
 ):
     message = extract_message(update)
 
@@ -362,109 +945,176 @@ def process_telegram_update(
         return {"status": "duplicate"}
 
     try:
-        if not telegram_user_is_allowed(message["telegram_user_id"]):
-            send_telegram_message(
-                message["chat_id"],
-                "You are not allowed to use this IoT Ops Agent bot.",
-            )
-            result = {"status": "forbidden"}
+        link_result = handle_telegram_link_command(message)
+
+        if link_result is not None:
+            result = link_result
         else:
-            prompt, help_text = normalize_telegram_prompt(message["text"])
+            unlink_result = handle_telegram_unlink_command(message)
 
-            if help_text:
-                send_telegram_message(message["chat_id"], help_text)
-                result = {"status": "help_sent"}
+            if unlink_result is not None:
+                result = unlink_result
             else:
-                history_user_id, history_chat_id = start_telegram_history(
-                    message
-                )
-                title = make_chat_title(message["text"])
+                identity, deny_reason = resolve_telegram_identity(message)
 
-                if (
-                    emit_user_event
-                    and history_user_id is not None
-                    and history_chat_id is not None
-                ):
-                    emit_user_event(
-                        history_user_id,
-                        "telegram_chat_started",
-                        {
-                            "chat_id": history_chat_id,
-                            "title": title,
-                            "message": message["text"],
-                        },
+                if deny_reason:
+                    send_telegram_message(
+                        message["chat_id"],
+                        "You are not allowed to use this IoT Ops Agent bot.",
+                    )
+                    result = {"status": "forbidden", "reason": deny_reason}
+                else:
+                    history_user_id = identity["user_id"]
+                    data_source = (
+                        get_user_data_source(history_user_id)
+                        if get_user_data_source
+                        else "simulator"
                     )
 
-                steps = []
-                final_answer = "No answer was generated."
-                token_usage = None
-                data_source = (
-                    get_user_data_source(history_user_id)
-                    if get_user_data_source
-                    else "simulator"
-                )
-
-                for stream_event in langgraph_agent.run_stream(
-                    prompt,
-                    data_source=data_source,
-                ):
-                    merge_stream_event(steps, stream_event)
-
-                    if stream_event.get("type") == "final":
-                        final_answer = format_conversational_text(
-                            stream_event.get("final_answer") or final_answer
+                    if not data_source_is_allowed(identity, data_source):
+                        send_telegram_message(
+                            message["chat_id"],
+                            (
+                                "You are not allowed to use the selected "
+                                "IoT Ops Agent data source."
+                            ),
                         )
-                        token_usage = add_telegram_runtime_metadata(
-                            stream_event.get("token_usage")
+                        result = {
+                            "status": "forbidden",
+                            "reason": "data_source_not_allowed",
+                            "data_source": data_source,
+                        }
+                        complete_telegram_update(update_key)
+                        return result
+
+                    prompt, help_text = normalize_telegram_prompt(
+                        message["text"],
+                        include_device_suggestions=True,
+                        user_id=history_user_id,
+                        selected_source=data_source,
+                    )
+
+                    if help_text:
+                        send_telegram_message(message["chat_id"], help_text)
+                        result = {"status": "help_sent"}
+                    else:
+                        history_chat_id = None
+                        title = make_chat_title(message["text"])
+
+                        steps = []
+                        final_answer = "No answer was generated."
+                        token_usage = None
+                        new_topic = telegram_message_starts_new_topic(
+                            message["text"]
+                        )
+                        history_user_id, history_chat_id, history_created = (
+                            start_telegram_history(
+                                history_user_id,
+                                message,
+                                new_topic=new_topic,
+                            )
                         )
 
-                    if (
-                        emit_user_event
-                        and history_user_id is not None
-                        and history_chat_id is not None
-                    ):
-                        emit_user_event(
-                            history_user_id,
-                            "telegram_reasoning_event",
+                        if emit_user_event:
+                            emit_user_event(
+                                history_user_id,
+                                "telegram_chat_started",
+                                {
+                                    "chat_id": history_chat_id,
+                                    "title": title,
+                                    "message": message["text"],
+                                    "telegram_user_id": identity["telegram_user_id"],
+                                    "telegram_role": identity["role"],
+                                    "is_new_topic": new_topic,
+                                    "created": history_created,
+                                },
+                            )
+
+                        source_resolution = (
+                            resolve_source_context(data_source)
+                            if resolve_source_context
+                            else {
+                                "selected_source": data_source,
+                                "active_source": (
+                                    "company_mongodb"
+                                    if data_source == "company"
+                                    else "simulator"
+                                ),
+                            }
+                        )
+
+                        stream_kwargs = (
                             {
-                                "chat_id": history_chat_id,
-                                "event": stream_event,
-                            },
+                                "selected_source": data_source,
+                                "source_resolution": source_resolution,
+                                "user_id": history_user_id,
+                            }
+                            if hasattr(langgraph_agent, "plan_workflows")
+                            else {"data_source": data_source}
                         )
 
-                agent_result = {
-                    "final_answer": final_answer,
-                    "steps": steps,
-                    "token_usage": token_usage,
-                }
-                finish_telegram_history(
-                    history_user_id,
-                    history_chat_id,
-                    agent_result,
-                )
+                        for stream_event in langgraph_agent.run_stream(
+                            prompt,
+                            **stream_kwargs,
+                        ):
+                            merge_stream_event(steps, stream_event)
 
-                if (
-                    emit_user_event
-                    and history_user_id is not None
-                    and history_chat_id is not None
-                ):
-                    emit_user_event(
-                        history_user_id,
-                        "telegram_chat_completed",
-                        {
-                            "chat_id": history_chat_id,
+                            if stream_event.get("type") == "final":
+                                final_answer = (
+                                    stream_event.get("final_answer") or final_answer
+                                )
+                                token_usage = add_telegram_runtime_metadata(
+                                    stream_event.get("token_usage")
+                                )
+
+                            if (
+                                emit_user_event
+                                and history_user_id is not None
+                                and history_chat_id is not None
+                            ):
+                                emit_user_event(
+                                    history_user_id,
+                                    "telegram_reasoning_event",
+                                    {
+                                        "chat_id": history_chat_id,
+                                        "event": stream_event,
+                                    },
+                                )
+
+                        agent_result = {
                             "final_answer": final_answer,
                             "steps": steps,
                             "token_usage": token_usage,
-                        },
-                    )
+                        }
+                        finish_telegram_history(
+                            history_user_id,
+                            history_chat_id,
+                            agent_result,
+                        )
 
-                send_telegram_message(message["chat_id"], final_answer)
-                result = {
-                    "status": "answered",
-                    "history_chat_id": history_chat_id,
-                    "step_count": len(agent_result.get("steps", [])),
-                }
+                        if (
+                            emit_user_event
+                            and history_user_id is not None
+                            and history_chat_id is not None
+                        ):
+                            emit_user_event(
+                                history_user_id,
+                                "telegram_chat_completed",
+                                {
+                                    "chat_id": history_chat_id,
+                                    "final_answer": final_answer,
+                                    "steps": steps,
+                                    "token_usage": token_usage,
+                                },
+                            )
+
+                        send_telegram_message(message["chat_id"], final_answer)
+                        result = {
+                            "status": "answered",
+                            "history_chat_id": history_chat_id,
+                            "history_chat_created": history_created,
+                            "step_count": len(agent_result.get("steps", [])),
+                        }
     except Exception:
         release_telegram_update(update_key)
         raise
@@ -478,6 +1128,7 @@ def process_telegram_update_in_background(
     langgraph_agent,
     emit_user_event=None,
     get_user_data_source=None,
+    resolve_source_context=None,
 ):
     def run():
         try:
@@ -486,10 +1137,25 @@ def process_telegram_update_in_background(
                 langgraph_agent,
                 emit_user_event=emit_user_event,
                 get_user_data_source=get_user_data_source,
+                resolve_source_context=resolve_source_context,
             )
         except Exception as exc:
             print(f"Telegram background processing failed: {exc}")
-            history_user_id = get_history_user_id()
+            history_user_id = get_telegram_failure_user_id(update)
+            message = extract_message(update)
+
+            if message is not None:
+                try:
+                    send_telegram_message(
+                        message["chat_id"],
+                        (
+                            "Telegram request failed before the IoT Ops Agent "
+                            "could finish processing it. Please try again in a "
+                            "moment or check the server logs."
+                        ),
+                    )
+                except Exception as send_exc:
+                    print(f"Telegram failure notification failed: {send_exc}")
 
             if emit_user_event and history_user_id is not None:
                 emit_user_event(
@@ -522,7 +1188,7 @@ def build_set_webhook_payload(public_base_url):
     return payload
 
 
-def build_set_commands_payload():
+def build_set_commands_payload(user_id=None, selected_source="company"):
     return {
-        "commands": json.dumps(TELEGRAM_COMMANDS),
+        "commands": json.dumps(get_telegram_commands(user_id, selected_source)),
     }

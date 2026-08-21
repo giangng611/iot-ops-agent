@@ -1,6 +1,8 @@
 # Features
 
-IoT Ops Agent combines realtime IoT monitoring, AI-assisted diagnostics, persistent chat workflows, operational alert handling, prompt management, and user workspace controls into a single platform.
+IoT Ops Agent combines realtime IoT monitoring, AI-assisted diagnostics,
+persistent chat workflows, operational alert handling, prompt management,
+Telegram interaction, and source-aware workflow routing into a single platform.
 
 ---
 
@@ -11,6 +13,7 @@ with either simulator telemetry or the read-only Company DB source.
 
 Features include:
 
+- IOA v3 Ops Graph policy/runtime mode
 - IOA v1 single-step diagnosis
 - IOA v2 multi-step reasoning agent
 - LangChain runtime mode
@@ -26,6 +29,7 @@ Features include:
 - pinned and searchable conversations
 - busy-state protection during agent execution
 - explicit source selection and visible simulator fallback
+- Company DB mode with explicit simulator fallback when evidence is unavailable
 
 <p align="center">
   <img src="../screenshots/dashboard.png" width="1000">
@@ -33,9 +37,32 @@ Features include:
 
 ---
 
+## IOA v3 Ops Graph
+
+IOA v3 is the controlled operational workflow runtime for company-style
+incident triage.
+
+Features include:
+
+- LangGraph policy gates before tool execution
+- hybrid semantic planner with deterministic taxonomy fallback
+- MCP tools for Company DB, Loki, Grafana, and Prometheus evidence
+- allowlisted operational tool families and params
+- multi-workflow answers for mixed Company DB, log, and metric requests
+- KPI rule attachment from `config/grafana_kpi_rules.json`
+- visible planner decisions, authorization decisions, tool calls, and bounded
+  evidence in the reasoning trace
+
+The Grafana/Prometheus path runs through MCP. Human Grafana dashboard URLs are
+used for mapping and review, not direct tool calls.
+
+---
+
 ## ReAct-Style Reasoning Trace
 
-IOA v2 streams intermediate reasoning steps using a ReAct-style workflow.
+IOA v2 streams intermediate reasoning steps using a ReAct-style workflow. IOA
+v3 extends the same trace surface with planner, authorization, MCP tool
+execution, and KPI rule-attachment steps.
 
 The reasoning drawer displays:
 
@@ -224,7 +251,8 @@ The simulation powers:
 
 ## Runtime Benchmarking
 
-The project includes a benchmark workflow for comparing orchestration runtimes against the same IoT telemetry environment and prompt set.
+The project includes a benchmark workflow for comparing orchestration runtimes
+against the same IoT telemetry environment and prompt set.
 
 Currently evaluated runtimes include:
 
@@ -249,13 +277,13 @@ app-level reasoning steps when the Chatflow returns them.
 
 ---
 
-## Deployment-Ready Demo Architecture
+## Deployment-Ready Architecture
 
-The project is structured as a deployable full-stack demo application.
+The project is structured as a deployable full-stack application.
 
 Current deployment architecture includes Flask, Flask-SocketIO, OpenAI,
-optional MongoDB telemetry, optional Supabase/Postgres app data, SQLite local
-fallback, Render support, and environment-based secrets.
+MySQL app data after Supabase/Postgres migration, MCP-backed operational evidence, optional MongoDB
+simulator telemetry, and environment-based secrets.
 
-Company MongoDB access is network-dependent and is normally exercised from a
-local or VPN-connected runtime rather than the public demo.
+Company MongoDB, Loki, Grafana, and Prometheus access is network-dependent and
+is exercised through the MCP server.

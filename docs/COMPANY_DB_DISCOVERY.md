@@ -1,213 +1,106 @@
-# Company DB Discovery
+# Company Operational Data Discovery
 
-This project keeps the company operational DB separate from the app-data DB.
+This project keeps company operational data separate from app-owned data.
 
-`SUPABASE_DB_URL` stores IoT Ops Agent platform data such as users, chats, messages, and prompts.
+- Supabase/Postgres stores IoT Ops Agent app data: users, chats, messages,
+  prompts, Telegram identities, and source policy.
+- Company MongoDB is operational evidence and is reached through the MCP
+  server only.
+- Flask must not hold `COMPANY_MONGODB_URI` or direct Grafana/Loki/Prometheus
+  credentials.
 
-`COMPANY_DB_URL` or `COMPANY_MONGODB_URI` is reserved for the real operational
-data source. The current unified device adapter uses MongoDB; Company Postgres
-remains a schema-probing path.
+## MCP Boundary
 
-## Environment
+```text
+Flask app
+  -> MCP_SERVER_URL + MCP_BEARER_KEY
+  -> MCP server
+  -> company MongoDB / Loki / Grafana / Prometheus
+```
 
-Use a read-only database user.
+Company MongoDB credentials belong in the environment of the
+company-provided MCP service. The public template includes
+[`../mcp_server/.env.example`](../mcp_server/.env.example) only as a contract:
 
 ```env
-COMPANY_DB_URL=postgresql://readonly_user:[PASSWORD]@company-db-host:5432/company_db
-COMPANY_MONGODB_URI=mongodb://readonly_user:[PASSWORD]@company-mongo-host:27017/?authSource=admin
-COMPANY_MONGODB_DB=
-COMPANY_DB_CONNECT_TIMEOUT_SECONDS=5
-COMPANY_DB_STATEMENT_TIMEOUT_MS=5000
-COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS=120
-COMPANY_MONGO_PROXY_RATE_LIMIT_WINDOW_SECONDS=60
+COMPANY_MONGODB_URI=replace_me
+COMPANY_MONGO_ALLOWED_NAMESPACES=authorization.IDENTITY,subNNotif.AE,subNNotif.SUB,datamgmt.CNT,datamgmt.CIN,datamgmt.DEVICE_TELEMETRY,datamgmt.RULE,devicemgmt.NODE,orchestration.URI_MAPPER
 ```
 
-Do not commit real connection strings. Set them in `.env` locally or Render environment variables only.
+The Flask `.env` only needs:
 
-If both Postgres and MongoDB variables are present, the probe uses MongoDB first.
+```env
+COMPANY_DATA_ACCESS_MODE=mcp
+MCP_SERVER_URL=http://127.0.0.1:8000/mcp
+MCP_BEARER_KEY=replace_me
+```
 
-## Company MongoDB Read Proxy
+## Mongo Read Guardrails
 
-All Company MongoDB reads pass through `services/company_mongo_proxy.py`.
-The proxy exposes only bounded read operations:
+MCP Mongo tools should expose bounded read operations only:
 
 - `find`
-- database and collection discovery
-- collection statistics
+- database/collection discovery when allowed
+- collection statistics when allowed
 
 It does not expose insert, update, delete, aggregation, or arbitrary database
-commands. Queries always apply a document limit and `maxTimeMS`; server-side
-JavaScript and write-stage operators such as `$where`, `$function`, `$out`,
-and `$merge` are rejected.
+commands. Queries always apply limits and `maxTimeMS`; unsafe operators such
+as `$where`, `$function`, `$out`, and `$merge` are rejected.
 
-The proxy rate limit is process-local and counts MongoDB read operations by
-caller. API reads and LLM tool reads use separate caller keys. One unified
-device-model load currently performs six bounded reads.
-For a multi-instance deployment, enforce an additional shared rate limit at
-the API gateway or replace the in-memory limiter with Redis.
+Database and collection access is restricted by
+`COMPANY_MONGO_ALLOWED_NAMESPACES`. A syntactically valid MongoDB namespace is
+not enough by itself.
 
-The proxy is an application guardrail, not a substitute for MongoDB
-authorization. `COMPANY_MONGODB_URI` must use a MongoDB account with the
-built-in `read` role only on the required databases. Do not grant `readWrite`,
-`dbAdmin`, or cluster administration roles to the application account.
+## Unified OneM2M Read Model
 
-## Probe Schema
-
-```bash
-python -m scripts.probe_company_db --table-limit 20
-```
-
-If no company DB URL is present or the company DB is unavailable, the script returns a simulator fallback snapshot.
-
-## Preview A Table
-
-Use low limits only:
-
-```bash
-python -m scripts.probe_company_db --preview public.devices --preview-limit 5
-```
-
-For MongoDB, use `database.collection`:
-
-```bash
-python -m scripts.probe_company_db --preview operations.devices --preview-limit 5
-```
-
-To inspect MongoDB field paths without printing values:
-
-```bash
-python -m scripts.probe_company_db --inspect datamgmt.CNT --preview-limit 10
-python -m scripts.probe_company_db --inspect datamgmt.CIN --preview-limit 10
-```
-
-To inspect a JSON payload field such as oneM2M `CIN.con` without printing
-payload values:
-
-```bash
-python -m scripts.probe_company_db --inspect-payload datamgmt.CIN --payload-field con --preview-limit 20
-```
-
-Guardrails:
-
-- read-only transaction
-- read-only Company MongoDB proxy
-- Company MongoDB operation rate limit
-- statement timeout
-- table and row limits
-- MongoDB `maxTimeMS`
-- identifier validation
-- long text truncation
-
-## Tool Direction
-
-Do not expose a generic SQL tool to the LLM.
-
-Prefer narrow operational tools:
-
-```text
-get_device_status(device_id)
-get_gateway_health(gateway_id)
-get_active_alarms(site_id)
-get_recent_device_logs(device_id, time_range)
-```
-
-Each tool should apply explicit filters, limits, and output shaping before data reaches the model.
-
-## Platform Source Switch
-
-The Devices screen can switch between:
-
-```text
-Simulator
-Company DB
-```
-
-When Company DB is selected and reachable, the backend reports:
-
-```json
-{
-  "source": "company_mongodb",
-  "rules_status": "provisional_poc",
-  "official_rules_status": "discovered_unmapped"
-}
-```
-
-Warning and critical counts come only from the isolated `company-poc-v1`
-fallback ruleset and are labeled non-official. Discovered company rules are
-not executed or reinterpreted.
-
-If the company database is unavailable, the API returns an explicit simulator fallback state instead of silently pretending the data is real.
-
-Manual threshold prompts are supported as evidence scans over raw payloads, not official company alerts.
-
-## Unified Device And Telemetry Read Model
-
-The company preview now builds a bounded, read-only model from:
+The company read model is built from bounded evidence in these resource
+families:
 
 ```text
 devicemgmt.NODE.childDeviceInfoEntities  -> device inventory
 authorization.IDENTITY                  -> identity metadata
 datamgmt.CNT                            -> container ownership
-datamgmt.CIN.con                        -> status and telemetry values
+datamgmt.CIN                            -> latest command/telemetry CINs
 datamgmt.DEVICE_TELEMETRY               -> metric names and units
-datamgmt.RULE                           -> device rule references
+datamgmt.RULE                           -> rule references
+subNNotif.AE                            -> application entity resources
+subNNotif.SUB                           -> subscription resources
+orchestration.URI_MAPPER                -> URI/resource mapping
 ```
 
-Devices are joined by normalized platform identifiers or names. Telemetry
-without an explicit identity is joined only when its `CIN`/`CNT` ownership
-resolves to a known device. Unresolved telemetry is counted but never assigned
-by guesswork. Command content is counted separately and excluded from telemetry
-history.
+Devices are joined by normalized platform identifiers or names. Telemetry is
+assigned to a device only when DB/log evidence supports the relationship.
+Unresolved telemetry is counted but not guessed.
 
-`CIN.con` remains application-defined content. The adapter displays primitive
-measurement and event fields that actually exist, and uses a unit only when the
-telemetry catalog provides one unambiguous value.
+## Source Behavior
 
-The database contains company rules in `datamgmt.RULE`. The PoC exposes rule
-counts per matched device but does not execute or reinterpret their business
-semantics. Raw connection status is telemetry evidence, not alert severity.
+When company data is selected and MCP evidence is reachable, the app reports
+company source metadata. If MCP or company data is unavailable, the app must
+return an explicit `simulator_fallback` state. Fallback data must never be
+presented as company evidence.
 
-Before this becomes an operational dashboard, confirm:
+## Discovery Checklist
 
-- which timestamp represents event time versus ingestion time
-- tenant and site ownership rules
-- rule status, severity, trigger, and filter enum semantics
-- whether Grafana remains the authoritative alert execution source
+Before treating a company scenario as production-ready, confirm:
 
-Until that contract exists, official company rule evaluation remains pending.
-Any warning or critical count shown by the PoC comes only from the provisional
-local ruleset described below.
+- allowed MongoDB namespaces
+- required OneM2M resource ownership for `IDENTITY`, `AE`, `CNT`, `CIN`,
+  `SUBSCRIPTION`, and `URI_MAPPER`
+- authoritative timestamp fields
+- tenant/site ownership rules
+- service names that may be searched in Loki
+- official KPI/rule owners and thresholds
+- Prometheus metric names and required labels
+- Grafana datasource used by MCP queries
 
-## Provisional PoC Alert Flow
+## Verification
 
-For demonstrations, the platform runs a separate fallback ruleset named
-`company-poc-v1`. These findings are deliberately isolated from the discovered
-company rules and are always marked `official: false`.
+Run MCP-backed workflow tests:
 
-Current provisional rules:
-
-- explicit payload status `disconnected` or `offline` -> critical
-- temperature fields `temp`, `temperature`, or `NhietDo` >= 50 -> warning
-- the same temperature fields >= 70 -> critical
-- RSSI <= -70 -> warning
-- RSSI <= -85 -> critical
-
-Every finding includes the rule ID, device, raw evidence, threshold, source
-collection, ruleset version, and disclaimer. Temperature units and business
-thresholds still require company confirmation.
-
-The intended end-to-end demo flow is:
-
-```text
-Company prompt
-  -> source resolver chooses Company DB or simulator fallback
-  -> selected web runtime receives bounded company evidence
-  -> Custom Python or LangGraph selects a focused read-only tool
-  -> bounded unified device/telemetry read model
-  -> provisional PoC rule evaluation
-  -> evidence-backed chat answer and Alerts UI
-  -> explicit handoff gap to official company rules or Grafana
+```bash
+.venv/bin/python -m unittest tests.test_ioa_v3_workflow -v
 ```
 
-LangChain, n8n, and Dify receive bounded company context packaged by Flask.
-Telegram uses LangGraph and follows its remembered or default source.
+Run a platform prompt such as `/resources`, `/telemetry`, or `/cmd` with a
+known device ID and verify the reasoning trace shows MCP Mongo/Loki tool
+execution.

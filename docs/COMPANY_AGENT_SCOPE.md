@@ -16,7 +16,7 @@ The target is not a generic chatbot with unrestricted database access. It is
 one source-aware operational agent that synchronizes approved company systems
 behind controlled tools and returns auditable answers.
 
-## Current Demo
+## Current Scope
 
 The current project demonstrates:
 
@@ -26,6 +26,10 @@ The current project demonstrates:
 * provisional alert-rule discovery
 * web and Telegram interaction channels
 * persisted chats and visible execution traces
+* IOA v3 policy-gated workflow routing with MCP-backed Company DB, Loki, and
+  Grafana/Prometheus evidence
+* simulator fallback that is explicitly labeled when company systems are
+  unavailable
 
 This is a proof of concept. It does not yet prove production synchronization,
 authorization, official rule ownership, or safe operational actions.
@@ -76,6 +80,9 @@ A production pilot is ready when:
 * one named operational team and its top tasks are defined
 * every answer identifies source and freshness
 * company-source disconnection and fallback are visible and tested
+* Company DB field mapping is confirmed against the handed-over source
+* Grafana evidence is read through an approved API/adapter, not a dashboard UI
+  URL
 * read access follows least privilege and is auditable
 * benchmark tasks use frozen reference snapshots and repeatable evaluation
 * critical factual errors and unsupported claims stay below an agreed threshold

@@ -12,9 +12,10 @@ from services.telegram_service import (
 
 def create_telegram_blueprint(runtime):
     telegram_bp = Blueprint("telegram", __name__)
-    langgraph_agent = runtime["langgraph_agent"]
+    telegram_agent = runtime.get("telegram_agent") or runtime["langgraph_agent"]
     emit_user_event = runtime.get("emit_user_event")
     get_user_data_source = runtime.get("get_user_data_source")
+    resolve_source_context = runtime.get("resolve_source_context")
 
     @telegram_bp.route("/api/telegram/webhook", methods=["POST"])
     def telegram_webhook():
@@ -29,9 +30,10 @@ def create_telegram_blueprint(runtime):
         update = request.get_json(silent=True) or {}
         process_telegram_update_in_background(
             update,
-            langgraph_agent,
+            telegram_agent,
             emit_user_event=emit_user_event,
             get_user_data_source=get_user_data_source,
+            resolve_source_context=resolve_source_context,
         )
 
         return jsonify({"status": "accepted"})
@@ -49,7 +51,7 @@ def create_telegram_blueprint(runtime):
             "configured": telegram_enabled(),
             "webhook_url": webhook_url,
             "secret_configured": bool(get_telegram_secret_token()),
-            "history_user_id_configured": bool(os.getenv("TELEGRAM_HISTORY_USER_ID")),
+            "identity_mapping_required": True,
             "allowed_user_ids_configured": bool(os.getenv("TELEGRAM_ALLOWED_USER_IDS")),
         })
 

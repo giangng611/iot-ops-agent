@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 
 from agents.ioa_v1_agent import IOAV1Agent
 from agents.ioa_v2_agent import IOAV2Agent
+from agents.ioa_v3_agent import IOAV3LangGraphN8nAgent
 from agents.langchain_agent import LangChainAgent
 from agents.langgraph_agent import LangGraphAgent
 from routes.auth_routes import auth_bp
@@ -17,6 +18,7 @@ from routes.helpers import login_required
 from routes.profile_routes import profile_bp
 from routes.prompt_routes import prompt_bp
 from routes.storage_routes import storage_bp
+from services.diagnose_service import resolve_agent_operational_context
 from routes.telemetry_routes import (
     get_user_selected_data_source,
     telemetry_bp,
@@ -93,6 +95,7 @@ ioa_v1_agent = IOAV1Agent(client)
 ioa_v2_agent = IOAV2Agent(client)
 langchain_agent = LangChainAgent()
 langgraph_agent = LangGraphAgent()
+ioa_v3_agent = IOAV3LangGraphN8nAgent()
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(create_chat_blueprint(client))
@@ -101,19 +104,21 @@ app.register_blueprint(create_diagnose_blueprint({
     "ioa_v2_agent": ioa_v2_agent,
     "langchain_agent": langchain_agent,
     "langgraph_agent": langgraph_agent,
+    "ioa_v3_agent": ioa_v3_agent,
     "get_max_message_chars": lambda: MAX_DIAGNOSE_MESSAGE_CHARS,
     "get_rate_limit_requests": lambda: DIAGNOSE_RATE_LIMIT_REQUESTS,
     "get_rate_limit_window_seconds": lambda: DIAGNOSE_RATE_LIMIT_WINDOW_SECONDS,
     "diagnose_rate_limit_log": diagnose_rate_limit_log,
 }))
 app.register_blueprint(create_telegram_blueprint({
-    "langgraph_agent": langgraph_agent,
+    "telegram_agent": ioa_v3_agent,
     "emit_user_event": lambda user_id, event, payload: socketio.emit(
         event,
         payload,
         to=f"user:{user_id}",
     ),
     "get_user_data_source": get_user_selected_data_source,
+    "resolve_source_context": resolve_agent_operational_context,
 }))
 app.register_blueprint(prompt_bp)
 app.register_blueprint(profile_bp)

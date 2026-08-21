@@ -1,0 +1,390 @@
+{
+  "version": "grafana-kpi-rules-v2",
+  "source": "bo_chi_so_giam_sat_iot_platform_grafana.xlsx",
+  "notes": [
+    "Machine-readable subset of the KPI workbook used by IOA v3 Grafana tools.",
+    "Rules marked not_implemented or adapter_needed are planning guidance only and must not be presented as measured production evidence.",
+    "Thresholds are starting points and should be calibrated after 2-4 weeks of baseline collection and SLA confirmation."
+  ],
+  "rules": [
+    {
+      "kpi": "Service Uptime",
+      "aspect": "Availability",
+      "priority": "Core",
+      "tool": "grafana_platform_service_health",
+      "unit": "%",
+      "good": ">= 99.9%",
+      "warning": "99.5% - < 99.9%",
+      "critical": "< 99.5%",
+      "implementation_status": "not_implemented",
+      "evaluation": {
+        "status": "not_evaluable",
+        "reason": "Workbook notes require separate uptime and external availability/blackbox semantics."
+      }
+    },
+    {
+      "kpi": "API Success Rate",
+      "aspect": "Availability",
+      "priority": "Core",
+      "tool": "grafana_http_health",
+      "unit": "%",
+      "good": ">= 99.5%",
+      "warning": "98% - < 99.5%",
+      "critical": "< 98%",
+      "implementation_status": "available",
+      "evaluation": {
+        "metric": "success_rate_percent",
+        "derive_from": "100 - error_rate_percent",
+        "good_min": 99.5,
+        "warning_min": 98.0,
+        "critical_below": 98.0
+      }
+    },
+    {
+      "kpi": "Broker Availability",
+      "aspect": "Availability",
+      "priority": "Core",
+      "tool": "grafana_emqx_health",
+      "unit": "%",
+      "good": ">= 99.9%",
+      "warning": "99% - < 99.9%",
+      "critical": "< 99%",
+      "implementation_status": "adapter_needed",
+      "evaluation": {
+        "metric": "availability_percent",
+        "good_min": 99.9,
+        "warning_min": 99.0,
+        "critical_below": 99.0
+      }
+    },
+    {
+      "kpi": "Connected Devices Rate",
+      "aspect": "Connectivity",
+      "priority": "Core",
+      "tool": "get_company_onem2m_device_resources",
+      "unit": "%",
+      "good": ">= 98%",
+      "warning": "95% - < 98%",
+      "critical": "< 95%",
+      "implementation_status": "available_company_db",
+      "evaluation": {
+        "metric": "connected_devices_rate_percent",
+        "good_min": 98.0,
+        "warning_min": 95.0,
+        "critical_below": 95.0
+      }
+    },
+    {
+      "kpi": "Reconnect Rate",
+      "aspect": "Connectivity",
+      "priority": "Diagnostic",
+      "tool": "grafana_emqx_connection_trend",
+      "unit": "count/device/hour",
+      "good": "<= 1",
+      "warning": "> 1 to 3",
+      "critical": "> 3",
+      "implementation_status": "adapter_needed",
+      "evaluation": {
+        "metric": "reconnect_rate_per_device_hour",
+        "good_max": 1.0,
+        "warning_max": 3.0,
+        "critical_above": 3.0
+      }
+    },
+    {
+      "kpi": "Session Drop Rate",
+      "aspect": "Connectivity",
+      "priority": "Diagnostic",
+      "tool": "grafana_emqx_health",
+      "unit": "%",
+      "good": "< 1%",
+      "warning": "1% - 3%",
+      "critical": "> 3%",
+      "implementation_status": "available_not_dashboarded",
+      "evaluation": {
+        "metric": "session_drop_rate_percent",
+        "good_below": 1.0,
+        "warning_max": 3.0,
+        "critical_above": 3.0
+      }
+    },
+    {
+      "kpi": "Telemetry Throughput",
+      "aspect": "Ingestion",
+      "priority": "Core",
+      "tool": "grafana_throughput",
+      "unit": "msg/s",
+      "good": "within designed and stable capacity range",
+      "warning": "near 80% of designed capacity",
+      "critical": "> 90% of designed capacity or highly volatile",
+      "implementation_status": "available_not_dashboarded",
+      "evaluation": {
+        "metric": "publish_rate",
+        "status": "baseline_required",
+        "reason": "Workbook defines this against designed capacity rather than a fixed absolute threshold."
+      }
+    },
+    {
+      "kpi": "Message Loss Rate",
+      "aspect": "Ingestion",
+      "priority": "Core",
+      "tool": "grafana_emqx_dropped_trend",
+      "unit": "%",
+      "good": "< 0.1%",
+      "warning": "0.1% - 1%",
+      "critical": "> 1%",
+      "implementation_status": "adapter_needed",
+      "evaluation": {
+        "metric": "message_loss_rate_percent",
+        "good_below": 0.1,
+        "warning_max": 1.0,
+        "critical_above": 1.0
+      }
+    },
+    {
+      "kpi": "Queue Backlog",
+      "aspect": "Ingestion",
+      "priority": "Core",
+      "tool": "grafana_queue_backlog",
+      "unit": "count",
+      "good": "near zero or short-lived spikes",
+      "warning": "increasing but drains within 5-15 minutes",
+      "critical": "continuously increasing and not draining",
+      "implementation_status": "dashboarded",
+      "evaluation": {
+        "metric": "total_messages",
+        "status": "trend_required",
+        "reason": "Workbook threshold depends on whether backlog drains, not just an instantaneous count."
+      }
+    },
+    {
+      "kpi": "Queue Backlog Trend",
+      "aspect": "Ingestion",
+      "priority": "Core",
+      "tool": "grafana_queue_trend",
+      "unit": "count",
+      "good": "near zero or short-lived spikes",
+      "warning": "increasing but drains within 5-15 minutes",
+      "critical": "continuously increasing and not draining",
+      "implementation_status": "adapter_needed",
+      "evaluation": {
+        "metric": "trend",
+        "good_values": ["stable", "draining", "short_spike"],
+        "warning_values": ["increasing_but_draining"],
+        "critical_values": ["linear_increase_not_draining", "continuous_increase"]
+      }
+    },
+    {
+      "kpi": "Queue Wait Time",
+      "aspect": "Ingestion",
+      "priority": "Core",
+      "tool": "grafana_queue_trend",
+      "unit": "seconds",
+      "good": "<= 5s",
+      "warning": "> 5s to 30s",
+      "critical": "> 30s",
+      "implementation_status": "not_implemented",
+      "evaluation": {
+        "metric": "queue_wait_seconds",
+        "good_max": 5.0,
+        "warning_max": 30.0,
+        "critical_above": 30.0
+      }
+    },
+    {
+      "kpi": "DLQ Size",
+      "aspect": "Processing",
+      "priority": "Core",
+      "tool": "grafana_queue_backlog",
+      "unit": "count",
+      "good": "0",
+      "warning": "1 - 10",
+      "critical": "> 10 or continuously increasing",
+      "implementation_status": "available_not_dashboarded",
+      "evaluation": {
+        "metric": "dlq_messages",
+        "good_max": 0,
+        "warning_max": 10,
+        "critical_above": 10
+      }
+    },
+    {
+      "kpi": "Invalid Payload Rate",
+      "aspect": "Data Quality",
+      "priority": "Diagnostic",
+      "tool": "get_company_onem2m_telemetry_flow",
+      "unit": "%",
+      "good": "< 0.5%",
+      "warning": "0.5% - 2%",
+      "critical": "> 2%",
+      "implementation_status": "available_company_db",
+      "evaluation": {
+        "metric": "invalid_payload_rate_percent",
+        "good_below": 0.5,
+        "warning_max": 2.0,
+        "critical_above": 2.0
+      }
+    },
+    {
+      "kpi": "API Latency P95",
+      "aspect": "API & Application",
+      "priority": "Core",
+      "tool": "grafana_http_health",
+      "unit": "ms",
+      "good": "<= 1000ms",
+      "warning": "> 1000ms to 3000ms",
+      "critical": "> 3000ms",
+      "implementation_status": "available_not_dashboarded",
+      "evaluation": {
+        "metric": "latency_p95_ms",
+        "good_max": 1000,
+        "warning_max": 3000,
+        "critical_above": 3000
+      }
+    },
+    {
+      "kpi": "HTTP 5xx Rate",
+      "aspect": "API & Application",
+      "priority": "Core",
+      "tool": "grafana_http_health",
+      "unit": "%",
+      "good": "< 0.5%",
+      "warning": "0.5% - 2%",
+      "critical": "> 2%",
+      "implementation_status": "available_not_dashboarded",
+      "evaluation": {
+        "metric": "error_rate_percent",
+        "good_below": 0.5,
+        "warning_max": 2.0,
+        "critical_above": 2.0
+      }
+    },
+    {
+      "kpi": "Timeout Rate",
+      "aspect": "API & Application",
+      "priority": "Diagnostic",
+      "tool": "grafana_trace_metrics",
+      "unit": "%",
+      "good": "< 0.2%",
+      "warning": "0.2% - 1%",
+      "critical": "> 1%",
+      "implementation_status": "not_implemented",
+      "evaluation": {
+        "metric": "timeout_rate_percent",
+        "good_below": 0.2,
+        "warning_max": 1.0,
+        "critical_above": 1.0
+      }
+    },
+    {
+      "kpi": "CPU Utilization",
+      "aspect": "Infrastructure",
+      "priority": "Diagnostic",
+      "tool": "grafana_k8s_health",
+      "unit": "%",
+      "good": "< 70%",
+      "warning": "70% - 85%",
+      "critical": "> 85% sustained",
+      "implementation_status": "dashboarded",
+      "evaluation": {
+        "metric": "cluster_cpu_percent",
+        "good_below": 70.0,
+        "warning_max": 85.0,
+        "critical_above": 85.0
+      }
+    },
+    {
+      "kpi": "Memory Utilization",
+      "aspect": "Infrastructure",
+      "priority": "Diagnostic",
+      "tool": "grafana_k8s_health",
+      "unit": "%",
+      "good": "< 75%",
+      "warning": "75% - 90%",
+      "critical": "> 90% sustained",
+      "implementation_status": "dashboarded",
+      "evaluation": {
+        "metric": "cluster_memory_percent",
+        "good_below": 75.0,
+        "warning_max": 90.0,
+        "critical_above": 90.0
+      }
+    },
+    {
+      "kpi": "Disk Usage",
+      "aspect": "Infrastructure",
+      "priority": "Diagnostic",
+      "tool": "grafana_linux_health",
+      "unit": "%",
+      "good": "< 80%",
+      "warning": "80% - 90%",
+      "critical": "> 90%",
+      "implementation_status": "dashboarded",
+      "evaluation": {
+        "metric": "disk_percent",
+        "good_below": 80.0,
+        "warning_max": 90.0,
+        "critical_above": 90.0
+      }
+    },
+    {
+      "kpi": "Pod/Container Restart Count",
+      "aspect": "Infrastructure",
+      "priority": "Diagnostic",
+      "tool": "grafana_k8s_health",
+      "unit": "count",
+      "good": "0",
+      "warning": "1 - 2",
+      "critical": "> 2 or continuously increasing",
+      "implementation_status": "available_not_dashboarded",
+      "evaluation": {
+        "metric": "pod_restarts",
+        "good_max": 0,
+        "warning_max": 2,
+        "critical_above": 2
+      }
+    }
+  ],
+  "excluded_rules": [
+    {
+      "kpi": "Heartbeat Delay",
+      "reason": "Workbook marks this KPI as removed."
+    },
+    {
+      "kpi": "Ingestion Success Rate",
+      "reason": "Workbook marks this KPI as skipped."
+    },
+    {
+      "kpi": "Processing Success Rate",
+      "reason": "Workbook marks this KPI as removed."
+    },
+    {
+      "kpi": "Processing Latency P95",
+      "reason": "Workbook marks this KPI as removed."
+    },
+    {
+      "kpi": "Retry Rate",
+      "reason": "Workbook marks this KPI as skipped."
+    },
+    {
+      "kpi": "Data Freshness",
+      "reason": "Workbook marks this KPI as removed."
+    },
+    {
+      "kpi": "Data Completeness",
+      "reason": "Workbook marks this KPI as skipped."
+    },
+    {
+      "kpi": "Incident Count",
+      "reason": "Workbook marks this management KPI as removed for current scope."
+    },
+    {
+      "kpi": "MTTR",
+      "reason": "Workbook marks this management KPI as removed for current scope."
+    },
+    {
+      "kpi": "MTBF",
+      "reason": "Workbook marks this management KPI as removed for current scope."
+    }
+  ]
+}

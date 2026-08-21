@@ -1,10 +1,12 @@
+import json
 import os
 import time
 
 from werkzeug.security import check_password_hash, generate_password_hash
-from services.time_service import now_iso
+from services.time_service import now, now_iso, parse_timestamp
 
 from storage import sqlite_store
+from storage import mysql_store
 from storage.postgres_store import (
     close_postgres_pool,
     get_postgres_connection,
@@ -20,6 +22,10 @@ def using_postgres():
     return postgres_enabled()
 
 
+def using_mysql():
+    return mysql_store.mysql_enabled()
+
+
 def get_configured_app_db_backend():
     configured_backend = os.getenv("APP_DB_BACKEND")
 
@@ -33,11 +39,14 @@ def get_configured_app_db_backend():
 
 
 def get_app_db_backend():
+    if using_mysql():
+        return "mysql"
+
     return "supabase" if using_postgres() else "sqlite"
 
 
 def app_db_fallback_enabled():
-    return os.getenv("APP_DB_FALLBACK_ENABLED", "true").lower() == "true"
+    return os.getenv("APP_DB_FALLBACK_ENABLED", "false").lower() == "true"
 
 
 def get_last_fallback():
@@ -52,13 +61,20 @@ def clear_fallback():
     _postgres_circuit_open_until = 0.0
 
 
+def safe_error_summary(error):
+    if isinstance(error, BaseException):
+        return type(error).__name__
+
+    return str(error)
+
+
 def record_fallback(operation_name, error, fallback_backend="sqlite"):
     global _last_fallback
     global _postgres_circuit_open_until
 
     _last_fallback = {
         "operation": operation_name,
-        "error": str(error),
+        "error": safe_error_summary(error),
         "fallback_backend": fallback_backend,
         "recorded_at": now_iso(),
     }
@@ -111,7 +127,35 @@ def _looks_like_postgres_timeout(error):
     return any(marker in message for marker in timeout_markers)
 
 
-def _with_fallback(operation_name, postgres_operation, sqlite_operation):
+def _with_fallback(
+    operation_name,
+    postgres_operation,
+    sqlite_operation,
+    mysql_operation=None,
+):
+    if using_mysql():
+        if mysql_operation is None:
+            raise RuntimeError(
+                f"MySQL app-data operation is not wired: {operation_name}"
+            )
+
+        try:
+            return mysql_operation()
+        except Exception as exc:
+            if not app_db_fallback_enabled():
+                print(
+                    f"MySQL app-data {operation_name} failed; "
+                    f"SQLite fallback is disabled: {exc}"
+                )
+                raise
+
+            record_fallback(operation_name, exc)
+            print(
+                f"MySQL app-data {operation_name} failed; "
+                f"falling back to SQLite: {exc}"
+            )
+            return sqlite_operation()
+
     if not using_postgres():
         return sqlite_operation()
 
@@ -147,6 +191,40 @@ def _with_fallback(operation_name, postgres_operation, sqlite_operation):
         return sqlite_operation()
 
 
+def _without_sqlite_fallback(
+    operation_name,
+    postgres_operation,
+    sqlite_operation,
+    mysql_operation=None,
+):
+    if using_mysql():
+        if mysql_operation is None:
+            raise RuntimeError(
+                f"MySQL app-data operation is not wired: {operation_name}"
+            )
+
+        try:
+            return mysql_operation()
+        except Exception as exc:
+            print(
+                f"MySQL app-data {operation_name} failed; "
+                f"SQLite fallback is disabled for security-sensitive identity data: {exc}"
+            )
+            raise
+
+    if not using_postgres():
+        return sqlite_operation()
+
+    try:
+        return postgres_operation()
+    except Exception as exc:
+        print(
+            f"Supabase/Postgres app-data {operation_name} failed; "
+            f"SQLite fallback is disabled for security-sensitive identity data: {exc}"
+        )
+        raise
+
+
 def get_storage_status():
     status = {
         "app_data": {
@@ -158,6 +236,36 @@ def get_storage_status():
             "last_fallback": get_last_fallback(),
         }
     }
+
+    if using_mysql():
+        try:
+            mysql_store.check_connection()
+        except Exception as exc:
+            if app_db_fallback_enabled():
+                record_fallback("health_check", exc)
+                status["app_data"].update({
+                    "active_backend": "sqlite",
+                    "healthy": False,
+                    "message": (
+                        "MySQL is configured but unavailable; SQLite fallback is active."
+                    ),
+                    "error": safe_error_summary(exc),
+                    "last_fallback": get_last_fallback(),
+                })
+            else:
+                status["app_data"].update({
+                    "active_backend": "unavailable",
+                    "healthy": False,
+                    "message": (
+                        "MySQL is configured but unavailable; SQLite fallback is disabled."
+                    ),
+                    "error": safe_error_summary(exc),
+                })
+            return status
+
+        clear_fallback()
+        status["app_data"]["message"] = "MySQL app-data backend is healthy."
+        return status
 
     if not using_postgres():
         status["app_data"]["message"] = "SQLite app-data backend is active."
@@ -226,7 +334,7 @@ def get_storage_status():
                     "Supabase/Postgres is configured but unavailable; "
                     "SQLite fallback is active."
                 ),
-                "error": str(exc),
+                "error": safe_error_summary(exc),
                 "last_fallback": get_last_fallback(),
             })
         else:
@@ -237,7 +345,7 @@ def get_storage_status():
                     "Supabase/Postgres is configured but unavailable; "
                     "SQLite fallback is disabled."
                 ),
-                "error": str(exc),
+                "error": safe_error_summary(exc),
             })
         return status
 
@@ -274,6 +382,7 @@ def create_chat(user_id, title):
         "create_chat",
         postgres_operation,
         lambda: sqlite_store.create_chat(user_id, title),
+        lambda: mysql_store.create_chat(user_id, title),
     )
 
 
@@ -306,6 +415,7 @@ def get_chats(user_id):
         "get_chats",
         postgres_operation,
         lambda: sqlite_store.get_chats(user_id),
+        lambda: mysql_store.get_chats(user_id),
     )
 
 
@@ -329,6 +439,7 @@ def chat_belongs_to_user(chat_id, user_id):
         "chat_belongs_to_user",
         postgres_operation,
         lambda: sqlite_store.chat_belongs_to_user(chat_id, user_id),
+        lambda: mysql_store.chat_belongs_to_user(chat_id, user_id),
     )
 
 
@@ -369,6 +480,13 @@ def add_message(chat_id, role, content, reasoning_steps=None, token_usage=None):
             reasoning_steps,
             token_usage,
         ),
+        lambda: mysql_store.add_message(
+            chat_id,
+            role,
+            content,
+            reasoning_steps,
+            token_usage,
+        ),
     )
 
 
@@ -402,6 +520,7 @@ def get_messages(chat_id):
         "get_messages",
         postgres_operation,
         lambda: sqlite_store.get_messages(chat_id),
+        lambda: mysql_store.get_messages(chat_id),
     )
 
 
@@ -426,6 +545,7 @@ def create_user(username, password):
         "create_user",
         postgres_operation,
         lambda: sqlite_store.create_user(username, password),
+        lambda: mysql_store.create_user(username, password),
     )
 
 
@@ -456,6 +576,7 @@ def get_user_by_username(username):
         "get_user_by_username",
         postgres_operation,
         lambda: sqlite_store.get_user_by_username(username),
+        lambda: mysql_store.get_user_by_username(username),
     )
 
 
@@ -469,6 +590,355 @@ def verify_user(username, password):
         return None
 
     return user
+
+
+def serialize_data_sources(data_sources):
+    if isinstance(data_sources, str):
+        data_sources = deserialize_data_sources(data_sources)
+
+    return ",".join([
+        str(item).strip()
+        for item in (data_sources or ["simulator"])
+        if str(item).strip()
+    ]) or "simulator"
+
+
+def deserialize_data_sources(value):
+    return [
+        item.strip()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
+
+
+def normalize_user_data_source_policy(
+    allowed_data_sources=None,
+    default_data_source="simulator",
+):
+    allowed_sources = deserialize_data_sources(
+        serialize_data_sources(allowed_data_sources)
+    )
+
+    if "simulator" not in allowed_sources:
+        allowed_sources.insert(0, "simulator")
+
+    if "company" in allowed_sources:
+        default_data_source = "company"
+
+    if default_data_source not in allowed_sources:
+        default_data_source = "simulator"
+
+    return allowed_sources, default_data_source
+
+
+def get_user_data_source_policy(user_id):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select allowed_data_sources, default_data_source
+                    from public.users
+                    where id = %s
+                    """,
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+
+        if not row:
+            return {
+                "allowed_data_sources": ["simulator"],
+                "default_data_source": "simulator",
+            }
+
+        allowed_sources, default_source = normalize_user_data_source_policy(
+            row["allowed_data_sources"],
+            row["default_data_source"],
+        )
+
+        return {
+            "allowed_data_sources": allowed_sources,
+            "default_data_source": default_source,
+        }
+
+    return _without_sqlite_fallback(
+        "get_user_data_source_policy",
+        postgres_operation,
+        lambda: sqlite_store.get_user_data_source_policy(user_id),
+        lambda: mysql_store.get_user_data_source_policy(user_id),
+    )
+
+
+def update_user_data_source_policy(
+    user_id,
+    allowed_data_sources=None,
+    default_data_source="simulator",
+):
+    allowed_sources, default_source = normalize_user_data_source_policy(
+        allowed_data_sources,
+        default_data_source,
+    )
+
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update public.users
+                    set allowed_data_sources = %s,
+                        default_data_source = %s
+                    where id = %s
+                    """,
+                    (
+                        serialize_data_sources(allowed_sources),
+                        default_source,
+                        user_id,
+                    ),
+                )
+                updated = cursor.rowcount
+            conn.commit()
+            return updated > 0
+
+    return _without_sqlite_fallback(
+        "update_user_data_source_policy",
+        postgres_operation,
+        lambda: sqlite_store.update_user_data_source_policy(
+            user_id,
+            allowed_data_sources=allowed_sources,
+            default_data_source=default_source,
+        ),
+        lambda: mysql_store.update_user_data_source_policy(
+            user_id,
+            allowed_data_sources=allowed_sources,
+            default_data_source=default_source,
+        ),
+    )
+
+
+def upsert_telegram_identity(
+    telegram_user_id,
+    user_id,
+    telegram_username=None,
+    role="viewer",
+    allowed_data_sources=None,
+    is_active=True,
+):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into public.telegram_identities (
+                        telegram_user_id,
+                        user_id,
+                        telegram_username,
+                        role,
+                        allowed_data_sources,
+                        is_active,
+                        created_at,
+                        updated_at
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s)
+                    on conflict (telegram_user_id) do update set
+                        user_id = excluded.user_id,
+                        telegram_username = excluded.telegram_username,
+                        role = excluded.role,
+                        allowed_data_sources = excluded.allowed_data_sources,
+                        is_active = excluded.is_active,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        str(telegram_user_id),
+                        user_id,
+                        telegram_username,
+                        role or "viewer",
+                        serialize_data_sources(allowed_data_sources),
+                        bool(is_active),
+                        now_iso(),
+                        now_iso(),
+                    ),
+                )
+            conn.commit()
+
+    return _without_sqlite_fallback(
+        "upsert_telegram_identity",
+        postgres_operation,
+        lambda: sqlite_store.upsert_telegram_identity(
+            telegram_user_id,
+            user_id,
+            telegram_username=telegram_username,
+            role=role,
+            allowed_data_sources=allowed_data_sources,
+            is_active=is_active,
+        ),
+        lambda: mysql_store.upsert_telegram_identity(
+            telegram_user_id,
+            user_id,
+            telegram_username=telegram_username,
+            role=role,
+            allowed_data_sources=allowed_data_sources,
+            is_active=is_active,
+        ),
+    )
+
+
+def get_telegram_identity(telegram_user_id):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select
+                        telegram_user_id,
+                        user_id,
+                        telegram_username,
+                        role,
+                        allowed_data_sources,
+                        is_active
+                    from public.telegram_identities
+                    where telegram_user_id = %s
+                    """,
+                    (str(telegram_user_id),),
+                )
+                row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "telegram_user_id": row["telegram_user_id"],
+            "user_id": row["user_id"],
+            "telegram_username": row["telegram_username"],
+            "role": row["role"],
+            "allowed_data_sources": deserialize_data_sources(
+                row["allowed_data_sources"]
+            ),
+            "is_active": bool(row["is_active"]),
+        }
+
+    return _without_sqlite_fallback(
+        "get_telegram_identity",
+        postgres_operation,
+        lambda: sqlite_store.get_telegram_identity(telegram_user_id),
+        lambda: mysql_store.get_telegram_identity(telegram_user_id),
+    )
+
+
+def deactivate_telegram_identity(telegram_user_id):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update public.telegram_identities
+                    set is_active = false,
+                        updated_at = %s
+                    where telegram_user_id = %s
+                    """,
+                    (now_iso(), str(telegram_user_id)),
+                )
+                updated = cursor.rowcount
+            conn.commit()
+            return updated > 0
+
+    return _without_sqlite_fallback(
+        "deactivate_telegram_identity",
+        postgres_operation,
+        lambda: sqlite_store.deactivate_telegram_identity(telegram_user_id),
+        lambda: mysql_store.deactivate_telegram_identity(telegram_user_id),
+    )
+
+
+def create_telegram_link_code(code_hash, user_id, expires_at):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into public.telegram_link_codes (
+                        code_hash,
+                        user_id,
+                        expires_at,
+                        created_at
+                    )
+                    values (%s, %s, %s, %s)
+                    """,
+                    (code_hash, user_id, expires_at, now_iso()),
+                )
+            conn.commit()
+
+    return _without_sqlite_fallback(
+        "create_telegram_link_code",
+        postgres_operation,
+        lambda: sqlite_store.create_telegram_link_code(
+            code_hash,
+            user_id,
+            expires_at,
+        ),
+        lambda: mysql_store.create_telegram_link_code(
+            code_hash,
+            user_id,
+            expires_at,
+        ),
+    )
+
+
+def get_telegram_link_code(code_hash):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select code_hash, user_id, expires_at, used_at, created_at
+                    from public.telegram_link_codes
+                    where code_hash = %s
+                    """,
+                    (code_hash,),
+                )
+                row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "code_hash": row["code_hash"],
+            "user_id": row["user_id"],
+            "expires_at": row["expires_at"],
+            "used_at": row["used_at"],
+            "created_at": row["created_at"],
+        }
+
+    return _without_sqlite_fallback(
+        "get_telegram_link_code",
+        postgres_operation,
+        lambda: sqlite_store.get_telegram_link_code(code_hash),
+        lambda: mysql_store.get_telegram_link_code(code_hash),
+    )
+
+
+def mark_telegram_link_code_used(code_hash):
+    def postgres_operation():
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    update public.telegram_link_codes
+                    set used_at = %s
+                    where code_hash = %s
+                    and used_at is null
+                    """,
+                    (now_iso(), code_hash),
+                )
+                updated = cursor.rowcount
+            conn.commit()
+            return updated > 0
+
+    return _without_sqlite_fallback(
+        "mark_telegram_link_code_used",
+        postgres_operation,
+        lambda: sqlite_store.mark_telegram_link_code_used(code_hash),
+        lambda: mysql_store.mark_telegram_link_code_used(code_hash),
+    )
 
 
 def delete_chat(chat_id, user_id):
@@ -491,6 +961,7 @@ def delete_chat(chat_id, user_id):
         "delete_chat",
         postgres_operation,
         lambda: sqlite_store.delete_chat(chat_id, user_id),
+        lambda: mysql_store.delete_chat(chat_id, user_id),
     )
 
 
@@ -529,6 +1000,7 @@ def toggle_pin_chat(chat_id, user_id):
         "toggle_pin_chat",
         postgres_operation,
         lambda: sqlite_store.toggle_pin_chat(chat_id, user_id),
+        lambda: mysql_store.toggle_pin_chat(chat_id, user_id),
     )
 
 
@@ -571,6 +1043,11 @@ def change_user_password(user_id, current_password, new_password):
             current_password,
             new_password,
         ),
+        lambda: mysql_store.change_user_password(
+            user_id,
+            current_password,
+            new_password,
+        ),
     )
 
 
@@ -604,6 +1081,7 @@ def get_prompts(user_id):
         "get_prompts",
         postgres_operation,
         lambda: sqlite_store.get_prompts(user_id),
+        lambda: mysql_store.get_prompts(user_id),
     )
 
 
@@ -633,6 +1111,7 @@ def create_prompt(user_id, title, command, category):
         "create_prompt",
         postgres_operation,
         lambda: sqlite_store.create_prompt(user_id, title, command, category),
+        lambda: mysql_store.create_prompt(user_id, title, command, category),
     )
 
 
@@ -666,6 +1145,13 @@ def update_prompt(prompt_id, user_id, title, command, category):
             command,
             category,
         ),
+        lambda: mysql_store.update_prompt(
+            prompt_id,
+            user_id,
+            title,
+            command,
+            category,
+        ),
     )
 
 
@@ -690,6 +1176,7 @@ def delete_prompt(prompt_id, user_id):
         "delete_prompt",
         postgres_operation,
         lambda: sqlite_store.delete_prompt(prompt_id, user_id),
+        lambda: mysql_store.delete_prompt(prompt_id, user_id),
     )
 
 
@@ -713,6 +1200,7 @@ def update_username(user_id, new_username):
         "update_username",
         postgres_operation,
         lambda: sqlite_store.update_username(user_id, new_username),
+        lambda: mysql_store.update_username(user_id, new_username),
     )
 
 
@@ -743,6 +1231,7 @@ def delete_user_account(user_id):
         "delete_user_account",
         postgres_operation,
         lambda: sqlite_store.delete_user_account(user_id),
+        lambda: mysql_store.delete_user_account(user_id),
     )
 
 
@@ -770,6 +1259,42 @@ def get_user_usage_stats(user_id):
 
                 cursor.execute(
                     """
+                    select token_usage, created_at
+                    from public.messages
+                    where token_usage is not null
+                    and chat_id in (
+                        select id from public.chats where user_id = %s
+                    )
+                    """,
+                    (user_id,),
+                )
+                today = now().date()
+                today_token_total = 0
+
+                for row in cursor.fetchall():
+                    try:
+                        created_at = parse_timestamp(str(row["created_at"]))
+                    except Exception:
+                        continue
+
+                    if created_at.date() != today:
+                        continue
+
+                    token_usage = row["token_usage"]
+
+                    if isinstance(token_usage, str):
+                        try:
+                            token_usage = json.loads(token_usage)
+                        except ValueError:
+                            continue
+
+                    if isinstance(token_usage, dict):
+                        today_token_total += int(
+                            token_usage.get("total_tokens") or 0
+                        )
+
+                cursor.execute(
+                    """
                     select count(*) as count
                     from public.prompts
                     where user_id = %s
@@ -791,10 +1316,12 @@ def get_user_usage_stats(user_id):
             "message_count": message_count,
             "custom_prompt_count": custom_prompt_count,
             "device_count": device_count,
+            "today_token_total": today_token_total,
         }
 
     return _with_fallback(
         "get_user_usage_stats",
         postgres_operation,
         lambda: sqlite_store.get_user_usage_stats(user_id),
+        lambda: mysql_store.get_user_usage_stats(user_id),
     )

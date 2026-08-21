@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -7,6 +8,10 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
+
+admin_uri = os.getenv("MONGODB_ADMIN_URI")
+if admin_uri:
+    os.environ["MONGODB_URI"] = admin_uri
 
 from storage.mongo_store import ensure_telemetry_indexes, get_telemetry_indexes  # noqa: E402
 

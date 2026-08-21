@@ -1,25 +1,30 @@
 # Architecture
 
-IoT Ops Agent is a Flask and Socket.IO application with two operational data
-sources, multiple agent runtimes, and a separate relational app-data store.
+IoT Ops Agent is a Flask and Socket.IO application with company and simulator
+data sources, multiple agent runtimes, an IOA v3 policy workflow layer,
+MCP-backed operational evidence collection, and a separate relational app-data
+store.
 
 ## High-Level Flow
 
 ```text
-Simulator telemetry ───────────────────────────────┐
-                                                   |
-Company MongoDB -> read-only policy proxy ─────────┤
-                                                   v
-Web UI / Telegram -> Flask routes -> source resolver -> agent runtime
-                                                   |
-                                                   v
+Simulator telemetry ─────────────────────────────────────────┐
+                                                             |
+Web UI / Telegram -> Flask routes -> source resolver -> IOA runtimes
+                                                             |
+                                                             v
                                   answer + reasoning trace + runtime metadata
 
-App data -> Supabase/Postgres -> optional SQLite fallback
+IOA v3 Ops Graph -> MCP Server -> MongoDB / Loki / Prometheus
+                        |
+                        └─ bearer auth, rate limit, audit log
+
+App data -> MySQL after Supabase/Postgres migration -> fail-closed by default
+Simulator telemetry -> MongoDB when enabled, SQLite only as fallback/debug
 ```
 
 The storage systems are parallel responsibilities. MongoDB telemetry does not
-flow through Supabase/Postgres or SQLite app-data tables.
+flow through MySQL, Supabase/Postgres, or SQLite app-data tables.
 
 ## Operational Data Sources
 
@@ -28,19 +33,27 @@ flow through Supabase/Postgres or SQLite app-data tables.
 `simulator.py` and the optional embedded telemetry loop generate CPU, memory,
 heartbeat delay, status, logs, and simulator alarm metadata.
 
-`storage/telemetry_store.py` routes simulator telemetry reads and writes:
+`storage/telemetry_store.py` routes simulator telemetry reads and writes. The
+preferred local/runtime telemetry store is MongoDB when simulator telemetry is
+enabled:
 
-* `TELEMETRY_WRITE_BACKEND=sqlite` uses SQLite.
-* `TELEMETRY_WRITE_BACKEND=dual` writes SQLite and MongoDB.
 * `TELEMETRY_WRITE_BACKEND=mongodb` writes MongoDB.
-* `READ_TELEMETRY_FROM_MONGO=true` selects MongoDB reads with SQLite fallback.
+* `READ_TELEMETRY_FROM_MONGO=true` selects MongoDB reads.
+* `TELEMETRY_WRITE_BACKEND=dual` writes SQLite and MongoDB during migration or
+  verification.
+* `TELEMETRY_WRITE_BACKEND=sqlite` is a last-resort fallback/debug mode.
 
-### Company MongoDB
+### Company MongoDB Through MCP
 
-Company data is a separate source configured with `COMPANY_MONGODB_URI`.
-`services/company_mongo_proxy.py` permits bounded reads only, validates
-database and collection names, blocks unsafe operators, applies `maxTimeMS`,
-and rate-limits operations by caller.
+Company operational data is reached through a company-provided MCP server. The
+public `mcp_server/` folder is an integration contract, not a bundled server
+implementation. The Flask app is an MCP client and should not hold the real
+`COMPANY_MONGODB_URI`. It only needs `COMPANY_DATA_ACCESS_MODE=mcp`,
+`MCP_SERVER_URL`, and `MCP_BEARER_KEY`.
+
+Inside the MCP server, the company implementation should permit bounded reads
+only, validate database and collection names, block unsafe operators, apply
+`maxTimeMS`, and rate-limit operations by caller.
 
 `services/company_data_service.py` builds a unified read model from:
 
@@ -61,19 +74,42 @@ If Company MongoDB cannot be read, the source resolver reports
 `simulator_fallback`; the UI and agent use simulator data instead of presenting
 fallback records as company data.
 
+### Loki / Grafana / Prometheus Evidence Through MCP
+
+IOA v3 collects operational logs and metrics through MCP tools:
+
+```text
+grafana_logs          -> loki_query_range
+grafana_queue_*       -> grafana_query / grafana_query_range
+grafana_emqx_*        -> grafana_query_range
+grafana_k8s_*         -> grafana_query
+```
+
+The MCP server owns `GRAFANA_URL`, `GRAFANA_USERNAME`/`GRAFANA_PASSWORD`, or
+`GRAFANA_API_KEY`. The Flask app does not store Grafana/Loki/Prometheus
+credentials. Grafana dashboard UI URLs are human references for KPI mapping and
+review, not direct tool-call targets.
+
+The older n8n Grafana gateway can still be used for IOA v2/runtime comparison,
+but it is not the primary evidence path for IOA v3 runbook scenarios.
+
 ## App Data
 
-Users, chats, messages, and prompts are routed by
-`storage/relational_store.py`:
+Users, chats, messages, prompts, Telegram identities, and data-source policies
+are routed by `storage/relational_store.py`:
 
-* `APP_DB_BACKEND=sqlite` uses local SQLite.
-* `APP_DB_BACKEND=supabase` uses Supabase/Postgres.
-* `APP_DB_FALLBACK_ENABLED=true` permits SQLite fallback.
-* `APP_DB_FALLBACK_ENABLED=false` fails closed when Postgres is unavailable.
+* `APP_DB_BACKEND=mysql` uses the company/local MySQL app-data database.
+* `APP_DB_BACKEND=supabase` keeps the old Supabase/Postgres source available
+  during migration.
+* `APP_DB_FALLBACK_ENABLED=false` fails closed when the selected app database
+  is unavailable.
+* `APP_DB_FALLBACK_ENABLED=true` is only for explicit degraded local fallback.
+* `APP_DB_BACKEND=sqlite` exists for local fallback/debug only, not normal
+  company runtime.
 
-The browser does not query Supabase directly. Flask uses a server-side Postgres
-connection, and the schema revokes direct table access from Supabase client
-roles.
+The browser does not query the app database directly. Flask uses server-side
+database connections. Company operational data remains separate and goes
+through MCP.
 
 ## Flask Application
 
@@ -89,8 +125,9 @@ Service and route responsibilities include:
 * `routes/telegram_routes.py`: Telegram webhook validation and background
   processing.
 * `services/diagnose_service.py`: context packaging for n8n and Dify.
-* `services/telegram_service.py`: Telegram commands, deduplication, chat
-  persistence, source selection, and LangGraph streaming.
+* `services/telegram_service.py`: Telegram commands, deduplication, identity
+  mapping, RBAC/source authorization, chat persistence, and LangGraph
+  streaming.
 
 ## Agent Runtimes
 
@@ -102,6 +139,7 @@ The web workspace supports:
 * `IOA v2 · LangGraph`
 * `IOA v2 · n8n`
 * `IOA v2 · Dify`
+* `IOA v3 · Ops Graph`
 
 When Company DB is active, every web runtime receives company operational
 evidence. If the source is unavailable, every runtime receives simulator
@@ -112,9 +150,19 @@ verifying the resolved snapshot. LangGraph selects company-specific tools
 directly. LangChain, n8n, and Dify receive bounded company context packaged by
 Flask.
 
-Telegram currently uses the in-process LangGraph runtime. Its data source is
-the latest source remembered for `TELEGRAM_HISTORY_USER_ID`, or
-`TELEGRAM_DEFAULT_DATA_SOURCE` when no UI source has been remembered.
+Telegram currently uses the in-process `IOA v3 · Ops Graph` runtime. Each
+Telegram sender must be mapped in `telegram_identities` before the runtime can
+execute approved workflows. The mapped IoT Ops Agent user owns the saved chat
+history and source selection. A request is rejected before agent execution when
+the identity is unmapped, inactive, outside `TELEGRAM_ALLOWED_USER_IDS`, or not
+allowed to use the selected data source.
+
+`IOA v3 · Ops Graph` uses a hybrid planner. The semantic planner proposes one
+or more approved workflows from the user's request. A deterministic taxonomy
+remains as a fallback for invalid planner output, low-confidence plans, or
+disabled semantic planning. A policy verifier still checks tool allowlists,
+source permissions, params, and execution budget before any MCP, Company DB, or
+legacy Grafana workflow runs.
 
 ## Reasoning Trace
 
@@ -147,7 +195,7 @@ telegram_chat_failed
 ```
 
 These events synchronize Telegram-originated runs with the web workspace when
-history persistence is configured.
+the Telegram account is mapped to an IoT Ops Agent user.
 
 ## Security Boundary
 
@@ -156,7 +204,8 @@ Current guardrails include:
 * authenticated web APIs
 * access-code protected registration
 * diagnosis message-size and per-process rate limits
-* read-only Company MongoDB credentials and proxy operations
+* read-only Company MongoDB credentials isolated in the MCP server
+* Flask-side MCP bearer authentication for company operational evidence
 * bounded query limits, timeouts, identifier validation, and blocked operators
 * process-local Company MongoDB proxy rate limiting
 * Telegram secret-token validation and optional sender allowlist
@@ -164,3 +213,16 @@ Current guardrails include:
 Production work still includes shared/distributed rate limiting, RBAC,
 centralized audit storage, official company rule integration, and approval
 gates for any future write action.
+
+## MCP Server (peer service)
+
+`mcp_server/` in the public repo is a contract folder for a separate,
+company-provided MCP service. That external service exposes read-only MongoDB,
+Grafana Loki, and Grafana/Prometheus tools over MCP-compatible transport. It is
+the sole holder of the real Mongo/Loki/Grafana credentials; callers
+authenticate only with a bearer key scoped to the MCP server itself. The MCP
+implementation should provide namespace allowlists, blocked operators, rate
+limiting, and audit logs. See
+[MCP Server Integration](MCP_SERVER_INTEGRATION.md),
+[MCP Server Usage](MCP_SERVER_USAGE.md), and
+[MCP Server Deployment](MCP_SERVER_DEPLOYMENT.md).

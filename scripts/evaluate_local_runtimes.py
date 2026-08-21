@@ -12,8 +12,10 @@ from openai import OpenAI
 
 from agents.ioa_v1_agent import IOAV1Agent
 from agents.ioa_v2_agent import IOAV2Agent
+from agents.ioa_v3_agent import IOAV3LangGraphN8nAgent
 from agents.langchain_agent import LangChainAgent
 from agents.langgraph_agent import LangGraphAgent
+from services.diagnose_service import resolve_agent_operational_context
 from storage.sqlite_store import init_db
 from storage.telemetry_store import get_all_latest_devices
 from simulator import DEVICES, generate_telemetry
@@ -31,6 +33,7 @@ MODE_LABELS = {
     "ioa_v2_custom": "IOA v2 - Custom Python",
     "langchain": "IOA v2 - LangChain",
     "langgraph": "IOA v2 - LangGraph",
+    "ioa_v3_ops": "IOA v3 - Ops Graph",
     "n8n_webhook": "n8n - Local Webhook",
     "dify_api": "Dify - Local API",
 }
@@ -70,11 +73,34 @@ def build_local_agents(modes):
     if "langgraph" in modes:
         agents["langgraph"] = LangGraphAgent()
 
+    if "ioa_v3_ops" in modes:
+        agents["ioa_v3_ops"] = IOAV3LangGraphN8nAgent()
+
     return agents
 
 
-def run_local_agent(mode, agent, prompt):
-    result = agent.run(prompt)
+def select_scenario_source(item):
+    expected_source = str(item.get("expected_source") or "").lower()
+
+    if expected_source in {"company", "mixed", "simulator_fallback"}:
+        return "company"
+
+    return "simulator"
+
+
+def run_local_agent(mode, agent, item):
+    prompt = item["prompt"]
+
+    if mode == "ioa_v3_ops":
+        selected_source = select_scenario_source(item)
+        source_resolution = resolve_agent_operational_context(selected_source)
+        result = agent.run(
+            prompt,
+            selected_source=selected_source,
+            source_resolution=source_resolution,
+        )
+    else:
+        result = agent.run(prompt)
 
     if isinstance(result, dict):
         return {
@@ -191,9 +217,11 @@ def run_dify_api(prompt):
     }
 
 
-def run_mode(mode, agents, prompt):
+def run_mode(mode, agents, item):
+    prompt = item["prompt"]
+
     if mode in agents:
-        return run_local_agent(mode, agents[mode], prompt)
+        return run_local_agent(mode, agents[mode], item)
 
     if mode == "n8n_webhook":
         return run_n8n_webhook(prompt)
@@ -234,7 +262,10 @@ def main():
     parser.add_argument(
         "--modes",
         default="ioa_v1_custom,ioa_v2_custom,langchain,langgraph",
-        help="Comma-separated modes: ioa_v1_custom, ioa_v2_custom, langchain, langgraph, n8n_webhook, dify_api.",
+        help=(
+            "Comma-separated modes: ioa_v1_custom, ioa_v2_custom, "
+            "langchain, langgraph, ioa_v3_ops, n8n_webhook, dify_api."
+        ),
     )
     args = parser.parse_args()
 
@@ -258,7 +289,7 @@ def main():
             token_usage = None
 
             try:
-                result = run_mode(mode, agents, prompt)
+                result = run_mode(mode, agents, item)
                 answer = result["answer"]
                 steps = result["steps"]
                 token_usage = result.get("token_usage")
@@ -290,6 +321,8 @@ def main():
                 ),
                 "error": error,
                 "expected_focus": "; ".join(item.get("expected_focus", [])),
+                "expected_source": item.get("expected_source", ""),
+                "expected_tools": "; ".join(item.get("expected_tools", [])),
             }
 
             append_result(output_path, row)
@@ -297,6 +330,9 @@ def main():
                 f"[{status}] {MODE_LABELS.get(mode, mode)} | "
                 f"{item['id']} | {latency_seconds}s"
             )
+            # Pause between scenarios so the MCP server can drain its rate
+            # limiter before the next burst of tool calls.
+            time.sleep(5)
 
     print(f"\nSaved evaluation results to: {output_path}")
 

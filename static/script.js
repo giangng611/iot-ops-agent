@@ -1,3 +1,4 @@
+const MAX_FOLLOW_UP_SUGGESTIONS = 5;
 const socket = io();
 
 socket.on("connect", () => {
@@ -17,7 +18,7 @@ socket.on("connect_error", () => {
 });
 
 socket.on("device_update", (data) => {
-    if (selectedDataSource !== "simulator") {
+    if (devicesLoading || selectedDataSource !== "simulator") {
         return;
     }
 
@@ -28,7 +29,8 @@ socket.on("device_update", (data) => {
     currentDataSourceState = {
         selected_source: "simulator",
         active_source: data.source || "simulator",
-        rules_status: "simulator"
+        rules_status: "simulator",
+        selected_alert_policy: currentAlertPolicy
     };
 
     updateDataSourceDisplay();
@@ -76,16 +78,25 @@ socket.on("telegram_chat_started", (data) => {
         return;
     }
 
-    isAgentRunning = true;
+    beginAgentRun();
     telegramActiveChatId = chatId;
     currentChatId = chatId;
     latestReasoningSteps = [];
     displayedWorkflowSteps = [];
+    currentReasoningWorkflowSteps = [];
+    currentReasoningWorkflowFinalized = false;
     workflowNodeStatusMemory = {};
+    workflowNodeDetailStore = {};
     workflowFinalized = false;
+    workflowMapExpanded = false;
     pendingFinalAnswer = null;
     latestTokenUsage = null;
     reasoningTypingQueue = Promise.resolve();
+
+    if (reasoningDrawerOpen) {
+        activeReasoningViewId = LIVE_REASONING_VIEW_ID;
+        renderReasoningStepsStatic([], false);
+    }
 
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
@@ -160,6 +171,12 @@ socket.on("telegram_chat_completed", async (data) => {
     const chatId = Number(data.chat_id);
     const chat = chats.find(item => item.id === chatId);
     const reasoningSteps = Array.isArray(data.steps) ? data.steps : [];
+    const latestPrompt = chat ? findLatestUserMessage(chat.messages) : null;
+    const answerView = splitAssistantFollowUps(
+        data.final_answer || "",
+        latestPrompt || ""
+    );
+    const finalAnswer = answerView.answer;
     const tokenUsage = {
         ...(inferRuntimeMetadataFromReasoningSteps(reasoningSteps) || {}),
         ...(data.token_usage || {})
@@ -167,11 +184,11 @@ socket.on("telegram_chat_completed", async (data) => {
 
     if (chat && !chat.messages.some(message =>
         message.role === "assistant" &&
-        message.content === data.final_answer
+        message.content === finalAnswer
     )) {
         chat.messages.push({
             role: "assistant",
-            content: data.final_answer,
+            content: finalAnswer,
             hasReasoning: reasoningSteps.length > 0,
             reasoningSteps: reasoningSteps,
             tokenUsage: tokenUsage
@@ -181,7 +198,8 @@ socket.on("telegram_chat_completed", async (data) => {
     if (chatId === currentChatId) {
         latestReasoningSteps = reasoningSteps;
         latestTokenUsage = tokenUsage;
-        pendingFinalAnswer = data.final_answer;
+        pendingFinalAnswer = finalAnswer;
+        document.getElementById("loading").classList.add("hidden");
 
         await reasoningTypingQueue;
         await wait(WORKFLOW_EVENT_DELAY_MS);
@@ -195,17 +213,16 @@ socket.on("telegram_chat_completed", async (data) => {
         updateReasoningWorkflowMap(reasoningSteps, true);
         await wait(WORKFLOW_EVENT_DELAY_MS);
 
-        document.getElementById("loading").classList.add("hidden");
-
         await renderAssistantMessage(
-            data.final_answer,
+            finalAnswer,
             reasoningSteps.length > 0,
             reasoningSteps,
             null,
             true,
-            chat ? findLatestUserMessage(chat.messages) : null,
+            latestPrompt,
             latestTokenUsage
         );
+        renderFollowUpSuggestions(answerView.followUps, finalAnswer);
     }
 
     if (chatId === telegramActiveChatId) {
@@ -232,21 +249,27 @@ socket.on("telegram_chat_failed", (data) => {
     setTelegramRunState(false);
 });
 
-let currentMode = "ioa_v2_langgraph";
+let currentMode = "ioa_v3_langgraph_n8n";
 let allDevices = [];
+let deviceTablePage = 1;
+const DEVICE_TABLE_PAGE_SIZE = 10;
 let chats = [];
 let currentChatId = null;
 let latestReasoningSteps = [];
 let displayedWorkflowSteps = [];
+let currentReasoningWorkflowSteps = [];
+let currentReasoningWorkflowFinalized = false;
 let workflowNodeStatusMemory = {};
 let reasoningDrawerOpen = false;
 let activeReasoningViewId = null;
 let workflowPanelOpen = false;
 let workflowFinalized = false;
+let workflowMapExpanded = false;
 let currentAlerts = {
     critical_count: 0,
     warning_count: 0
 };
+let currentAlertPolicy = "fallback";
 let healthChart = null;
 let metricsChart = null;
 let deviceHistoryChart = null;
@@ -269,6 +292,10 @@ let assistantMessageActionStore = {};
 let userMessageActionStore = {};
 let workflowNodeDetailStore = {};
 let selectedDataSource = "simulator";
+let allowedDataSources = ["simulator"];
+let selectedPromptDeviceId = "";
+let lastFollowUpParamOptions = {};
+let devicesLoading = true;
 const LIVE_REASONING_VIEW_ID = "__live_reasoning_trace__";
 
 function isLiveReasoningDrawerOpen() {
@@ -287,28 +314,35 @@ function resetReasoningWorkflowView() {
 function resetLiveReasoningRun() {
     latestReasoningSteps = [];
     displayedWorkflowSteps = [];
+    currentReasoningWorkflowSteps = [];
+    currentReasoningWorkflowFinalized = false;
     workflowNodeStatusMemory = {};
+    workflowNodeDetailStore = {};
     workflowFinalized = false;
+    workflowMapExpanded = false;
     pendingFinalAnswer = null;
     latestTokenUsage = null;
     reasoningTypingQueue = Promise.resolve();
 
-    if (isLiveReasoningDrawerOpen()) {
-        resetReasoningWorkflowView();
+    if (reasoningDrawerOpen) {
+        activeReasoningViewId = LIVE_REASONING_VIEW_ID;
         renderReasoningStepsStatic([], false);
     }
 }
 let currentDataSourceState = {
     selected_source: "simulator",
     active_source: "simulator",
-    rules_status: "simulator"
+    rules_status: "simulator",
+    db_audit_status: "unknown",
+    db_audit: [],
+    db_read_plan: [],
+    db_debug_samples: {}
 };
 
 const prompts = [
     "/overview system health",
     "/check all unhealthy devices",
     "/find critical devices",
-    "/diagnose system issue",
     "/check devices with delayed heartbeat",
     "/show devices with alarms",
     "/check company telemetry records greater than a threshold",
@@ -318,8 +352,8 @@ const prompts = [
 ];
 
 const homeHeroPrompts = [
-    "Ask about fleet health, critical devices, alarms, or device diagnosis.",
-    "Try a fleet overview, heartbeat check, or root-cause diagnosis.",
+    "Ask about fleet health, critical devices, alarms, or runbook checks.",
+    "Try a fleet overview, heartbeat check, or operational drilldown.",
     "Review alarms, risky gateways, and devices that need attention.",
     "Ask the agent to summarize current IoT operations risk."
 ];
@@ -335,6 +369,14 @@ function escapeHtml(value) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function escapeJsString(value) {
+    return String(value ?? "")
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\\'")
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "");
 }
 
 function formatConversationalText(value) {
@@ -357,6 +399,10 @@ function wait(ms) {
 }
 
 function formatTokenUsage(tokenUsage) {
+    if (tokenUsage?.deterministic || tokenUsage?.source === "deterministic_answer") {
+        return "rule-rendered, no model tokens";
+    }
+
     if (!tokenUsage || !tokenUsage.total_tokens) {
         return "";
     }
@@ -374,6 +420,42 @@ function formatModelUsage(tokenUsage) {
 
     const runtimeLabel = tokenUsage.runtime_label || tokenUsage.runtimeLabel || "";
     return runtimeLabel || "";
+}
+
+function formatCompactNumber(value) {
+    const number = Number(value || 0);
+
+    if (number >= 1000000) {
+        return `${(number / 1000000).toFixed(1)}M`;
+    }
+
+    if (number >= 1000) {
+        return `${(number / 1000).toFixed(1)}K`;
+    }
+
+    return String(number);
+}
+
+async function refreshTodayTokenMeter() {
+    const meter = document.getElementById("todayTokenMeter");
+
+    if (!meter) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/api/profile/usage-stats");
+
+        if (!response.ok) {
+            return;
+        }
+
+        const data = await response.json();
+        meter.textContent = `Today ${formatCompactNumber(data.today_token_total)} tokens`;
+        meter.title = `${Number(data.today_token_total || 0).toLocaleString()} tokens used today`;
+    } catch (error) {
+        console.error("Failed to refresh today token meter:", error);
+    }
 }
 
 function parseJsonField(value, fallback) {
@@ -449,6 +531,13 @@ function inferRuntimeMetadataFromReasoningSteps(reasoningSteps) {
         };
     }
 
+    if (normalized === "langgraph+n8n") {
+        return {
+            runtime_label: "IOA v3 · Ops Graph",
+            model_name: "gpt-4o-mini + operational workflow"
+        };
+    }
+
     if (normalized === "dify") {
         return {
             runtime_label: "IOA v2 · Dify",
@@ -466,8 +555,262 @@ function inferRuntimeMetadataFromReasoningSteps(reasoningSteps) {
     return null;
 }
 
+function normalizeFollowUpText(value) {
+    return String(value || "")
+        .toLowerCase()
+        .replace(/[`*_>#-]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function splitAssistantFollowUps(message, currentUserPrompt = "") {
+    const lines = String(message || "").replace(/\r\n/g, "\n").split("\n");
+    const headingIndex = lines.findIndex(line =>
+        /^(?:#{1,6}\s*)?(follow-up questions|câu hỏi tiếp theo)\s*:?$/i
+            .test(line.trim())
+    );
+
+    if (headingIndex < 0) {
+        return {
+            answer: String(message || ""),
+            followUps: []
+        };
+    }
+
+    const answer = lines.slice(0, headingIndex).join("\n").trim();
+    const currentNormalized = normalizeFollowUpText(currentUserPrompt);
+    const seen = new Set();
+    const followUps = [];
+
+    for (const line of lines.slice(headingIndex + 1)) {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+            continue;
+        }
+
+        if (/^#{1,6}\s+/.test(trimmed)) {
+            break;
+        }
+
+        const question = trimmed
+            .replace(/^[-*]\s+/, "")
+            .replace(/^\d+[.)]\s+/, "")
+            .trim();
+        const normalized = normalizeFollowUpText(question);
+
+        if (!question || !normalized || normalized === currentNormalized) {
+            continue;
+        }
+
+        if (seen.has(normalized)) {
+            continue;
+        }
+
+        seen.add(normalized);
+        followUps.push(question);
+    }
+
+    return {
+        answer,
+        followUps: followUps.slice(0, MAX_FOLLOW_UP_SUGGESTIONS)
+    };
+}
+
+function uniqueEntityValues(values) {
+    const seen = new Set();
+    const unique = [];
+
+    values.forEach(value => {
+        const cleaned = String(value || "")
+            .replace(/[\u200b]/g, "")
+            .replace(/[|,.;:)]+$/g, "")
+            .trim();
+
+        if (!cleaned || seen.has(cleaned)) {
+            return;
+        }
+
+        seen.add(cleaned);
+        unique.push(cleaned);
+    });
+
+    return unique.slice(0, 20);
+}
+
+function extractFollowUpParamOptions(answer) {
+    const text = String(answer || "");
+    const queueValues = [];
+    const podValues = [];
+    const serviceValues = [];
+
+    for (const match of text.matchAll(/`([^`]+)`/g)) {
+        const value = match[1].trim();
+        if (/^(?:amq\.gen-|queue\.|emqx-[^.]*\.queue\.)/.test(value)) {
+            queueValues.push(value);
+        }
+        if (/-[a-z0-9]{5,}(?:-[a-z0-9]{4,})?$/i.test(value) && !value.includes(".")) {
+            podValues.push(value);
+        }
+        if (/^(?:iot-|emqx|rabbitmq|redis|mysql|mongodb|notify)/i.test(value)) {
+            serviceValues.push(value);
+        }
+    }
+
+    for (const line of text.split("\n")) {
+        const cells = line.split("|").map(cell =>
+            cell.replace(/`/g, "").trim()
+        ).filter(Boolean);
+
+        if (cells.length < 2) {
+            continue;
+        }
+
+        const firstCell = cells[0];
+        if (/^(?:amq\.gen-|queue\.|emqx-[^.]*\.queue\.)/.test(firstCell)) {
+            queueValues.push(firstCell);
+        }
+    }
+
+    const queues = uniqueEntityValues(queueValues);
+    const pods = uniqueEntityValues(podValues);
+    const services = uniqueEntityValues(serviceValues);
+
+    return {
+        queue_id: queues,
+        queue_name: queues,
+        pod: pods,
+        service: services,
+    };
+}
+
+function hideFollowUpSuggestions() {
+    const suggestions = document.getElementById("promptSuggestions");
+    const chatMessages = document.getElementById("chatMessages");
+
+    if (!suggestions) {
+        return;
+    }
+
+    suggestions.classList.add("hidden");
+    suggestions.classList.remove("follow-up-suggestions");
+    suggestions.innerHTML = "";
+
+    if (chatMessages) {
+        chatMessages.style.paddingBottom = "";
+    }
+}
+
+function scrollChatForFollowUpSuggestions() {
+    const suggestions = document.getElementById("promptSuggestions");
+    const chatMessages = document.getElementById("chatMessages");
+
+    if (!suggestions || !chatMessages || suggestions.classList.contains("hidden")) {
+        return;
+    }
+
+    const bottomInset = suggestions.offsetHeight + 18;
+    chatMessages.style.paddingBottom = `${bottomInset}px`;
+    chatMessages.scrollTo({
+        top: chatMessages.scrollHeight,
+        behavior: "smooth"
+    });
+}
+
+function renderFollowUpSuggestions(questions, answer = "") {
+    const suggestions = document.getElementById("promptSuggestions");
+    const safeQuestions = Array.isArray(questions)
+        ? questions.filter(Boolean).slice(0, MAX_FOLLOW_UP_SUGGESTIONS)
+        : [];
+
+    if (!suggestions || safeQuestions.length === 0) {
+        hideFollowUpSuggestions();
+        return;
+    }
+
+    lastFollowUpParamOptions = extractFollowUpParamOptions(answer);
+    suggestions.classList.add("follow-up-suggestions");
+    suggestions.classList.remove("hidden");
+    suggestions.innerHTML = `
+        <div class="follow-up-suggestions-header">
+            <span>Continue drilldown</span>
+            <button
+                class="follow-up-close-btn"
+                type="button"
+                aria-label="Close follow-up suggestions"
+                onclick="hideFollowUpSuggestions()"
+            >
+                ×
+            </button>
+        </div>
+        ${safeQuestions.map(question => `
+            <button
+                class="suggestion-item follow-up-suggestion-item"
+                type="button"
+                onclick="selectFollowUpQuestion('${escapeJsString(question)}')"
+            >
+                ${escapeHtml(question)}
+            </button>
+        `).join("")}
+    `;
+
+    requestAnimationFrame(scrollChatForFollowUpSuggestions);
+}
+
+function selectFollowUpQuestion(question) {
+    if (isAgentRunning) {
+        return;
+    }
+
+    const fields = parseCommandFields(question);
+    if (fields.length > 0) {
+        hideFollowUpSuggestions();
+        openCommandParamModal({
+            title: "Continue drilldown",
+            command: question,
+            paramOptions: lastFollowUpParamOptions,
+            autoRun: true,
+        });
+        return;
+    }
+
+    const input = document.getElementById("messageInput");
+
+    input.value = question;
+    hideFollowUpSuggestions();
+    scheduleMessageInputResize();
+    updateRunButtonState();
+    input.focus();
+    sendMessage();
+}
+
 function findPromptById(promptId) {
     return promptsData.find(prompt => String(prompt.id) === String(promptId));
+}
+
+function isDefaultPromptItem(prompt) {
+    const value = prompt?.is_default;
+
+    if (typeof value === "string") {
+        return ["1", "true", "yes"].includes(value.trim().toLowerCase());
+    }
+
+    return Boolean(value);
+}
+
+function promptShortcut(prompt) {
+    return isDefaultPromptItem(prompt) ? (prompt.shortcut || "") : "";
+}
+
+function beginAgentRun() {
+    isAgentRunning = true;
+    setAppBusyState(true);
+}
+
+function endAgentRun() {
+    isAgentRunning = false;
+    setAppBusyState(false);
+    updateRunButtonState();
 }
 
 function setMode(mode) {
@@ -581,6 +924,14 @@ function showTab(tabName, buttonElement) {
         buttonElement.classList.add("active");
     }
 
+    if (tabName === "prompts") {
+        renderPromptCards();
+    }
+
+    if (tabName === "devices") {
+        renderDeviceTable();
+    }
+
     if (tabName !== "home") {
         closeReasoningDrawer();
     }
@@ -602,8 +953,11 @@ function newChat() {
     displayedWorkflowSteps = [];
     workflowNodeStatusMemory = {};
     workflowFinalized = false;
+    workflowMapExpanded = false;
 
     document.getElementById("messageInput").value = "";
+    autoResizeMessageInput();
+    updateRunButtonState();
     document.getElementById("chatMessages").innerHTML = "";
 
     const hero = document.getElementById("homeHero");
@@ -655,7 +1009,7 @@ function usePrompt(promptText) {
     const input = document.getElementById("messageInput");
     const suggestions = document.getElementById("promptSuggestions");
 
-    input.value = promptText;
+    input.value = fillPromptDevicePlaceholder(promptText);
 
     suggestions.classList.add("hidden");
     suggestions.innerHTML = "";
@@ -663,18 +1017,74 @@ function usePrompt(promptText) {
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
 
+    scheduleMessageInputResize();
+    updateRunButtonState();
     input.focus();
 }
 
 function handleEnter(event) {
-    if (event.key === "Enter") {
-        if (isAgentRunning) {
+    if (event.key === "Enter" && !event.shiftKey) {
+        const palette = document.getElementById("slashPalette");
+        if (palette && !palette.classList.contains("hidden")) {
+            event.preventDefault();
+            const selected = palette.querySelector(".slash-command.selected") || palette.querySelector(".slash-command");
+            if (selected) selected.click();
+            return;
+        }
+
+        if (isAgentRunning || !getMessageInputValue()) {
             event.preventDefault();
             return;
         }
 
+        event.preventDefault();
         sendMessage();
     }
+}
+
+function autoResizeMessageInput() {
+    const input = document.getElementById("messageInput");
+
+    if (!input) {
+        return;
+    }
+
+    input.style.height = "auto";
+    const maxHeight = 220;
+    const nextHeight = Math.min(input.scrollHeight, maxHeight);
+    input.style.height = `${Math.max(nextHeight, 48)}px`;
+    input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
+}
+
+function scheduleMessageInputResize() {
+    requestAnimationFrame(() => {
+        autoResizeMessageInput();
+        requestAnimationFrame(autoResizeMessageInput);
+    });
+}
+
+function handleMessageInput() {
+    if (getMessageInputValue()) {
+        hideFollowUpSuggestions();
+    }
+
+    handlePromptSuggestions();
+    scheduleMessageInputResize();
+    updateRunButtonState();
+}
+
+function getMessageInputValue() {
+    return (document.getElementById("messageInput")?.value || "").trim();
+}
+
+function updateRunButtonState() {
+    const runButton = document.querySelector(".run-button");
+
+    if (!runButton) {
+        return;
+    }
+
+    runButton.disabled = isAgentRunning || !getMessageInputValue();
 }
 
 function handlePromptSuggestions() {
@@ -689,7 +1099,9 @@ function handlePromptSuggestions() {
         return;
     }
 
+    const lookupValue = value.split(/\s+/)[0] || value;
     const filtered = slashCommands.filter(item =>
+        promptShortcut(item).toLowerCase().includes(lookupValue.toLowerCase()) ||
         item.command.toLowerCase().includes(value.toLowerCase()) ||
         item.title.toLowerCase().includes(value.toLowerCase()) ||
         item.category.toLowerCase().includes(value.toLowerCase())
@@ -704,32 +1116,285 @@ function handlePromptSuggestions() {
     palette.innerHTML = filtered.map(item => `
         <div class="slash-command" onclick="selectSlashCommandById('${escapeHtml(item.id)}')">
             <div>
-                <strong>${escapeHtml(item.title)}</strong>
+                <strong>
+                    ${escapeHtml(item.title)}
+                    ${promptShortcut(item) ? `<span class="slash-shortcut">${escapeHtml(promptShortcut(item))}</span>` : ""}
+                </strong>
                 <p>${escapeHtml(item.command)}</p>
             </div>
-
-            <span>${escapeHtml(item.category)}</span>
+            <span class="slash-category">${escapeHtml(item.category)}</span>
         </div>
     `).join("");
+
+    const firstItem = palette.querySelector(".slash-command");
+    if (firstItem) firstItem.classList.add("selected");
 
     palette.classList.remove("hidden");
 }
 
-function selectSlashCommandById(promptId) {
-    const prompt = findPromptById(promptId);
+// ── Command parameter modal ────────────────────────────────────────────────
+// No schema definitions needed here.  The modal is driven entirely by
+// <placeholder> tokens in each prompt's command string:
+//   <key>   → required field
+//   <key?>  → optional field (shown in modal; appended as "Label: value" if filled)
+//
+// To add a parameterized prompt: just put <placeholders> in its command string.
 
-    if (!prompt) {
-        return;
+const PARAM_LABEL_OVERRIDES = {
+    device_id:     "Device ID",
+    queue_id:      "Queue ID",
+    queue_name:    "Queue",
+    pod:           "Pod",
+    service:       "Service",
+    request_id:    "Request ID",
+    time_range:    "Time range",
+    resource_name: "Resource",
+    error_message: "Error message",
+};
+
+const PARAM_PLACEHOLDER_OVERRIDES = {
+    device_id:     "e.g. S3e1c21c3-7aad-...",
+    queue_id:      "Select a queue from the latest answer",
+    queue_name:    "Select a queue from the latest answer",
+    pod:           "Select a pod from the latest answer",
+    service:       "Select a service from the latest answer",
+    time_range:    "e.g. last 6 hours",
+    resource_name: "e.g. CNT, CIN",
+};
+
+function paramLabel(key) {
+    return PARAM_LABEL_OVERRIDES[key] ||
+        key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function paramPlaceholder(key, required) {
+    return PARAM_PLACEHOLDER_OVERRIDES[key] || (required ? "" : "optional");
+}
+
+// Parse <key> (required) and <key?> (optional) tokens from a command string.
+// Returns [{key, required}] in order of first appearance, deduped.
+function parseCommandFields(command) {
+    const seen   = new Set();
+    const fields = [];
+    for (const m of (command || "").matchAll(/<([a-z][a-z0-9_]*)(\?)?>/g)) {
+        const key = m[1];
+        if (seen.has(key)) continue;
+        seen.add(key);
+        fields.push({ key, required: !m[2] });
+    }
+    return fields;
+}
+
+let _pendingCommandPrompt = null;
+
+function openCommandParamModal(prompt) {
+    const fields = parseCommandFields(prompt.command || "");
+    const paramOptions = prompt.paramOptions || {};
+    _pendingCommandPrompt = prompt;
+
+    document.getElementById("commandParamTitle").textContent = prompt.title;
+
+    const fieldsEl = document.getElementById("commandParamFields");
+    fieldsEl.innerHTML = fields.map(f => {
+        const options = Array.isArray(paramOptions[f.key])
+            ? paramOptions[f.key].filter(Boolean)
+            : [];
+        const defaultValue = f.key === "device_id" && selectedPromptDeviceId
+            ? selectedPromptDeviceId
+            : "";
+        const control = options.length > 0
+            ? `
+                <select
+                    id="param-${f.key}"
+                    class="param-input param-select${f.required ? " param-input-required" : ""}"
+                >
+                    <option value="">${escapeHtml(paramPlaceholder(f.key, f.required))}</option>
+                    ${options.map(option => `
+                        <option value="${escapeHtml(option)}">${escapeHtml(option)}</option>
+                    `).join("")}
+                </select>
+            `
+            : `
+                <input
+                    id="param-${f.key}"
+                    class="param-input${f.required ? " param-input-required" : ""}"
+                    type="text"
+                    placeholder="${escapeHtml(paramPlaceholder(f.key, f.required))}"
+                    autocomplete="off"
+                    ${defaultValue ? `value="${escapeHtml(defaultValue)}"` : ""}
+                />
+            `;
+
+        return `
+            <div class="param-field">
+                <label class="param-label" for="param-${f.key}">
+                    ${escapeHtml(paramLabel(f.key))}
+                    ${f.required ? '<span class="param-required">*</span>' : ""}
+                </label>
+                ${control}
+            </div>
+        `;
+    }).join("");
+
+    document.getElementById("commandParamModal").classList.remove("hidden");
+
+    // Focus first empty required field, else first field
+    const firstFocus = fields.find(f => {
+        const el = document.getElementById(`param-${f.key}`);
+        return el && !el.value.trim();
+    }) || fields[0];
+    document.getElementById(`param-${firstFocus?.key}`)?.focus();
+}
+
+function closeCommandParamModal() {
+    document.getElementById("commandParamModal").classList.add("hidden");
+    _pendingCommandPrompt = null;
+}
+
+function handleCommandParamBackdrop(event) {
+    if (event.target === document.getElementById("commandParamModal")) {
+        closeCommandParamModal();
+    }
+}
+
+function submitCommandParams() {
+    if (!_pendingCommandPrompt) return;
+    const fields = parseCommandFields(_pendingCommandPrompt.command || "");
+
+    // Validate required fields first
+    for (const f of fields) {
+        if (!f.required) continue;
+        const el = document.getElementById(`param-${f.key}`);
+        if (!el?.value?.trim()) {
+            el?.classList.add("param-input-error");
+            el?.focus();
+            return;
+        }
+        el.classList.remove("param-input-error");
     }
 
-    selectSlashCommand(prompt.command);
+    let command = String(_pendingCommandPrompt.command || "");
+    const extras = [];
+
+    for (const f of fields) {
+        const val = document.getElementById(`param-${f.key}`)?.value?.trim() || "";
+        if (f.required) {
+            // Replace <key> inline with the value
+            command = command.replaceAll(`<${f.key}>`, val);
+        } else {
+            // Strip <key?> token from the template
+            command = command.replaceAll(`<${f.key}?>`, "");
+            // Append as "Label: value" if the user filled it in
+            if (val) extras.push(`${paramLabel(f.key)}: ${val}`);
+        }
+    }
+
+    // Clean up any whitespace gaps left by stripped optional tokens
+    command = command.replace(/\s{2,}/g, " ").trimEnd();
+    if (extras.length) command += " " + extras.join(". ") + ".";
+
+    const shouldAutoRun = Boolean(_pendingCommandPrompt?.autoRun);
+    closeCommandParamModal();
+
+    const input = document.getElementById("messageInput");
+    input.value = command;
+
+    const homeButton = document.querySelector(".top-tab");
+    showTab("home", homeButton);
+
+    scheduleMessageInputResize();
+    updateRunButtonState();
+    input.focus();
+
+    if (shouldAutoRun) {
+        sendMessage();
+    }
+}
+
+// Close modal on Escape / submit on Enter; arrow keys navigate the slash palette
+document.addEventListener("keydown", e => {
+    if (e.key === "Escape") closeCommandParamModal();
+    if (e.key === "Enter" && !document.getElementById("commandParamModal").classList.contains("hidden")) {
+        e.preventDefault();
+        submitCommandParams();
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        const palette = document.getElementById("slashPalette");
+        if (!palette || palette.classList.contains("hidden")) return;
+        e.preventDefault();
+        const items = Array.from(palette.querySelectorAll(".slash-command"));
+        if (!items.length) return;
+        const currentIdx = items.findIndex(i => i.classList.contains("selected"));
+        if (currentIdx >= 0) items[currentIdx].classList.remove("selected");
+        const nextIdx = e.key === "ArrowDown"
+            ? (currentIdx + 1) % items.length
+            : (currentIdx - 1 + items.length) % items.length;
+        items[nextIdx].classList.add("selected");
+        items[nextIdx].scrollIntoView({ block: "nearest" });
+    }
+});
+
+// ── End command parameter modal ────────────────────────────────────────────
+
+function selectSlashCommandById(promptId) {
+    const prompt = findPromptById(promptId);
+    if (!prompt) return;
+
+    const shortcut = promptShortcut(prompt);
+    const palette  = document.getElementById("slashPalette");
+    palette.classList.add("hidden");
+    palette.innerHTML = "";
+
+    if (parseCommandFields(prompt.command || "").length > 0) {
+        openCommandParamModal(prompt);
+    } else {
+        selectSlashCommand(prompt.command);
+    }
+}
+
+function findPromptByShortcut(value) {
+    const normalized = String(value || "").trim().split(/\s+/)[0].toLowerCase();
+
+    if (!normalized.startsWith("/")) {
+        return null;
+    }
+
+    return slashCommands.find(item =>
+        promptShortcut(item).toLowerCase() === normalized ||
+        String(item.command || "").toLowerCase() === normalized
+    ) || null;
+}
+
+function expandSlashShortcutMessage(value) {
+    const rawValue = String(value || "").trim();
+    const prompt = findPromptByShortcut(rawValue);
+
+    if (!prompt) {
+        return rawValue;
+    }
+
+    const shortcut = String(promptShortcut(prompt) || prompt.command || "").trim();
+    const trailingInput = rawValue.slice(shortcut.length).trim();
+    let command = String(prompt.command || "");
+
+    if (trailingInput && command.includes("<device_id>")) {
+        command = command.replaceAll("<device_id>", trailingInput);
+    } else if (trailingInput) {
+        command = `${fillPromptDevicePlaceholder(command)} ${trailingInput}`;
+    } else {
+        command = fillPromptDevicePlaceholder(command);
+    }
+
+    return command;
 }
 
 function selectSlashCommand(command) {
     const input = document.getElementById("messageInput");
     const palette = document.getElementById("slashPalette");
 
-    input.value = command;
+    input.value = fillPromptDevicePlaceholder(command);
+    scheduleMessageInputResize();
+    updateRunButtonState();
 
     palette.classList.add("hidden");
     palette.innerHTML = "";
@@ -741,8 +1406,8 @@ async function loadSlashCommands() {
     const response = await fetch("/api/prompts");
     const data = await response.json();
 
-    promptsData = data.prompts;
-    slashCommands = data.prompts;
+    promptsData = data.prompts || [];
+    slashCommands = promptsData;
 
     renderPromptCards();
 }
@@ -769,12 +1434,13 @@ function renderPromptCards() {
         const matchesSearch =
             prompt.title.toLowerCase().includes(searchValue) ||
             prompt.command.toLowerCase().includes(searchValue) ||
+            promptShortcut(prompt).toLowerCase().includes(searchValue) ||
             prompt.category.toLowerCase().includes(searchValue);
 
         const matchesType =
             typeFilter === "all" ||
-            (typeFilter === "default" && prompt.is_default) ||
-            (typeFilter === "custom" && !prompt.is_default);
+            (typeFilter === "default" && isDefaultPromptItem(prompt)) ||
+            (typeFilter === "custom" && !isDefaultPromptItem(prompt));
 
         return matchesCategory && matchesSearch && matchesType;
     });
@@ -785,8 +1451,13 @@ function renderPromptCards() {
         grid.innerHTML += `
             <div class="prompt-card">
                 <div class="prompt-card-top">
-                    <span class="prompt-category">${escapeHtml(prompt.category)}</span>
-                    ${prompt.is_default ? `<span class="prompt-default">Default</span>` : `<span class="prompt-custom">Custom</span>`}
+                    <div class="prompt-card-badges">
+                        <span class="prompt-category">${escapeHtml(prompt.category)}</span>
+                        ${promptShortcut(prompt) ? `<span class="prompt-shortcut">${escapeHtml(promptShortcut(prompt))}</span>` : ""}
+                    </div>
+                    ${isDefaultPromptItem(prompt)
+                        ? `<span class="prompt-default">Default</span>`
+                        : `<span class="prompt-custom">Custom</span>`}
                 </div>
 
                 <h3>${escapeHtml(prompt.title)}</h3>
@@ -828,6 +1499,11 @@ function usePromptById(promptId) {
     const prompt = findPromptById(promptId);
 
     if (!prompt) {
+        return;
+    }
+
+    if (parseCommandFields(prompt.command || "").length > 0) {
+        openCommandParamModal(prompt);
         return;
     }
 
@@ -943,16 +1619,17 @@ async function sendMessage() {
         return;
     }
 
-    isAgentRunning = true;
+    beginAgentRun();
     const input = document.getElementById("messageInput");
     const loading = document.getElementById("loading");
     const suggestions = document.getElementById("promptSuggestions");
     const runButton = document.querySelector(".run-button");
 
-    const message = input.value.trim();
+    const rawMessage = input.value.trim();
+    const message = expandSlashShortcutMessage(rawMessage);
 
     if (!message) {
-        isAgentRunning = false;
+        endAgentRun();
         return;
     }
 
@@ -962,54 +1639,58 @@ async function sendMessage() {
         );
         input.reportValidity();
         input.setCustomValidity("");
-        isAgentRunning = false;
+        endAgentRun();
         return;
     }
 
-    resetLiveReasoningRun();
+    try {
+        resetLiveReasoningRun();
 
-    input.value = "";
-    input.disabled = true;
-    setAppBusyState(true);
+        input.value = "";
+        autoResizeMessageInput();
+        updateRunButtonState();
+        input.disabled = true;
 
-    await createChatIfNeeded(message);
+        await createChatIfNeeded(message);
 
-    const hero = document.getElementById("homeHero");
-    hero.classList.add("hidden");
+        const hero = document.getElementById("homeHero");
+        hero.classList.add("hidden");
 
-    suggestions.classList.add("hidden");
+        suggestions.classList.add("hidden");
         if (
             currentMode === "ioa_v2_custom" ||
             currentMode === "ioa_v2_langchain" ||
             currentMode === "ioa_v2_langgraph" ||
             currentMode === "ioa_v2_n8n" ||
-            currentMode === "ioa_v2_dify"
+            currentMode === "ioa_v2_dify" ||
+            currentMode === "ioa_v3_langgraph_n8n"
         ) {
-        loading.innerHTML = `
-            <span>Agent is thinking...</span>
-            <button class="reasoning-loading-btn" onclick="openReasoningDrawer()">
-                Show reasoning trace
-            </button>
+            loading.innerHTML = `
+                <span>Agent is thinking...</span>
+                <button class="reasoning-loading-btn" onclick="openReasoningDrawer()">
+                    Show reasoning trace
+                </button>
+            `;
+        } else {
+            loading.innerHTML = `
+                <span>Agent is thinking...</span>
+            `;
+        }
+
+        loading.classList.remove("hidden");
+
+        runButton.disabled = true;
+        runButton.innerHTML = `
+            <span>Running...</span>
+            <small>Please wait</small>
         `;
-    } else {
-        loading.innerHTML = `
-            <span>Agent is thinking...</span>
-        `;
-    }
 
-    loading.classList.remove("hidden");
+        const conversationContext = buildRecentConversationContext();
 
-    runButton.disabled = true;
-    runButton.innerHTML = `
-        Running...
-        <span>Please wait</span>
-    `;
+        addUserMessage(message);
 
-    addUserMessage(message);
+        await saveMessageToDatabase("user", message);
 
-    await saveMessageToDatabase("user", message);
-
-    try {
         let finalAnswer = "";
 
         if (
@@ -1017,9 +1698,10 @@ async function sendMessage() {
             currentMode === "ioa_v2_langchain" ||
             currentMode === "ioa_v2_langgraph" ||
             currentMode === "ioa_v2_n8n" ||
-            currentMode === "ioa_v2_dify"
+            currentMode === "ioa_v2_dify" ||
+            currentMode === "ioa_v3_langgraph_n8n"
         ) {
-            finalAnswer = await sendStreamMessage(message);
+            finalAnswer = await sendStreamMessage(message, conversationContext);
         } else {
             const response = await fetch("/api/diagnose", {
                 method: "POST",
@@ -1029,7 +1711,8 @@ async function sendMessage() {
                 body: JSON.stringify({
                     message: message,
                     mode: currentMode,
-                    data_source: selectedDataSource
+                    data_source: selectedDataSource,
+                    conversation_context: conversationContext
                 })
             });
 
@@ -1039,7 +1722,13 @@ async function sendMessage() {
             latestReasoningSteps = [];
         }
 
+        const answerView = splitAssistantFollowUps(finalAnswer, message);
+        finalAnswer = answerView.answer;
+
+        loading.classList.add("hidden");
+
         await addAssistantMessage(finalAnswer, latestReasoningSteps.length > 0);
+        renderFollowUpSuggestions(answerView.followUps, finalAnswer);
 
         await saveMessageToDatabase(
             "assistant",
@@ -1048,28 +1737,29 @@ async function sendMessage() {
             latestTokenUsage
         );
         input.value = "";
+        autoResizeMessageInput();
+        updateRunButtonState();
 
     } catch (error) {
+        hideFollowUpSuggestions();
         addAssistantMessage("Request failed: " + error, false);
 
     } finally {
         await waitForAssistantTypingToFinish();
 
-        loading.classList.add("hidden");
-
         runButton.disabled = false;
         runButton.innerHTML = `
-            Run
-            <span>Enter ↵</span>
+            <span>Run</span>
+            <small>Enter ↵</small>
         `;
 
         input.disabled = false;
-        isAgentRunning = false;
-        setAppBusyState(false);
+        autoResizeMessageInput();
+        endAgentRun();
     }
 }
 
-async function sendStreamMessage(message) {
+async function sendStreamMessage(message, conversationContext = []) {
     const response = await fetch("/api/diagnose-stream", {
         method: "POST",
         headers: {
@@ -1078,7 +1768,8 @@ async function sendStreamMessage(message) {
         body: JSON.stringify({
             message: message,
             mode: currentMode,
-            data_source: selectedDataSource
+            data_source: selectedDataSource,
+            conversation_context: conversationContext
         })
     });
 
@@ -1207,14 +1898,73 @@ async function sendStreamMessage(message) {
     return finalAnswer;
 }
 
-function diagnoseDevice(deviceId) {
+async function copyDeviceId(deviceId, button = null) {
+    const value = String(deviceId || "").trim();
+
+    if (!value) {
+        return;
+    }
+
+    rememberPromptDeviceId(value);
+    replaceInputDevicePlaceholder(value);
+
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+        } else {
+            const tempInput = document.createElement("textarea");
+            tempInput.value = value;
+            tempInput.setAttribute("readonly", "");
+            tempInput.style.position = "fixed";
+            tempInput.style.left = "-9999px";
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand("copy");
+            tempInput.remove();
+        }
+    } catch (error) {
+        console.error("Failed to copy device ID:", error);
+        return;
+    }
+
+    if (!button) {
+        return;
+    }
+
+    const previousText = button.textContent;
+    button.textContent = "Copied";
+    button.classList.add("copied");
+
+    setTimeout(() => {
+        button.textContent = previousText || "Copy";
+        button.classList.remove("copied");
+    }, 1200);
+}
+
+function rememberPromptDeviceId(deviceId) {
+    selectedPromptDeviceId = String(deviceId || "").trim();
+}
+
+function fillPromptDevicePlaceholder(promptText) {
+    const text = String(promptText || "");
+
+    if (!selectedPromptDeviceId) {
+        return text;
+    }
+
+    return text.replace(/<device_id>/g, selectedPromptDeviceId);
+}
+
+function replaceInputDevicePlaceholder(deviceId) {
     const input = document.getElementById("messageInput");
-    input.value = `/diagnose ${deviceId}`;
 
-    const homeButton = document.querySelector(".top-tab");
-    showTab("home", homeButton);
+    if (!input || !input.value.includes("<device_id>")) {
+        return;
+    }
 
-    sendMessage();
+    input.value = input.value.replace(/<device_id>/g, deviceId);
+    scheduleMessageInputResize();
+    updateRunButtonState();
 }
 
 function renderChatHistory() {
@@ -1283,14 +2033,24 @@ function renderChatHistory() {
         `;
 
         item.onclick = function () {
+            if (isAgentRunning) {
+                return;
+            }
+
             loadChat(chat.id);
         };
 
         history.appendChild(item);
     });
+
+    setAppBusyState(isAgentRunning);
 }
 
 async function loadChat(chatId) {
+    if (isAgentRunning) {
+        return;
+    }
+
     const homeButton = document.querySelector(".top-tab");
     showTab("home", homeButton);
     const chat = chats.find(item => item.id === chatId);
@@ -1327,12 +2087,12 @@ async function loadChat(chatId) {
 
     let lastUserMessage = null;
 
-    chat.messages.forEach(message => {
+    for (const message of chat.messages) {
         if (message.role === "user") {
             lastUserMessage = message.content;
             renderUserMessage(message.content, message.createdAt);
         } else {
-            renderAssistantMessage(
+            await renderAssistantMessage(
                 message.content,
                 message.hasReasoning,
                 message.reasoningSteps || [],
@@ -1342,7 +2102,7 @@ async function loadChat(chatId) {
                 message.tokenUsage || null
             );
         }
-    });
+    }
 
     renderChatHistory();
 }
@@ -1446,26 +2206,41 @@ async function prefetchRecentChats(limit = PREFETCH_CHAT_LIMIT) {
 }
 
 async function refreshDevices() {
+    setDevicesLoadingState(true);
+
     try {
         const response = await fetch("/api/devices");
         const data = await response.json();
 
         selectedDataSource = data.selected_source || selectedDataSource;
+        allowedDataSources = data.allowed_data_sources || allowedDataSources;
+        currentAlertPolicy = data.selected_alert_policy || currentAlertPolicy;
         currentDataSourceState = {
             selected_source: data.selected_source || selectedDataSource,
             active_source: data.active_source || data.source || "simulator",
             rules_status: data.rules_status || "unknown",
+            selected_alert_policy: currentAlertPolicy,
             reason: data.reason || "",
             rules_message: data.rules_message || "",
             summary: data.summary || {},
-            alerts: data.alerts || {}
+            alerts: data.alerts || {},
+            official_alerts: data.official_alerts || {},
+            kpi_evaluations: data.kpi_evaluations || [],
+            company_rule_mappings: data.company_rule_mappings || [],
+            provenance: data.provenance || {},
+            db_audit_status: data.db_audit_status || data.provenance?.db_audit_status || "unknown",
+            db_audit: data.db_audit || data.provenance?.db_audit || [],
+            db_read_plan: data.db_read_plan || data.provenance?.db_read_plan || [],
+            db_debug_samples: data.db_debug_samples || {}
         };
         allDevices = data.devices || [];
         currentAlerts = data.alerts || {
             critical_count: 0,
             warning_count: 0
         };
+        devicesLoading = false;
         updateDataSourceControl();
+        updateAlertPolicyControl();
         updateDataSourceDisplay();
         renderDeviceTable();
         renderAlertCenter();
@@ -1475,10 +2250,18 @@ async function refreshDevices() {
 
     } catch (error) {
         console.error("Failed to refresh devices:", error);
+        devicesLoading = false;
+        renderDeviceLoadingState("Unable to load devices. Please try again.");
     }
 }
 
 async function changeDataSource(value) {
+    if (!allowedDataSources.includes(value)) {
+        updateDataSourceControl();
+        updateRealtimeStatusDisplay();
+        return;
+    }
+
     selectedDataSource = value;
     updateDataSourceControl();
     updateRealtimeStatusDisplay();
@@ -1494,10 +2277,19 @@ async function changeDataSource(value) {
             })
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
+            selectedDataSource = data.selected_source || selectedDataSource;
+            allowedDataSources = data.allowed_data_sources || allowedDataSources;
+            updateDataSourceControl();
             throw new Error("Unable to update data source.");
         }
 
+        selectedDataSource = data.selected_source || selectedDataSource;
+        allowedDataSources = data.allowed_data_sources || allowedDataSources;
+        currentAlertPolicy = data.selected_alert_policy || currentAlertPolicy;
+        await loadSlashCommands();
         await refreshDevices();
     } catch (error) {
         console.error("Failed to switch data source:", error);
@@ -1514,6 +2306,61 @@ function updateDataSourceControl() {
     control.dataset.selected = selectedDataSource;
     control.querySelectorAll("button").forEach(button => {
         const isSelected = button.dataset.source === selectedDataSource;
+        const isAllowed = allowedDataSources.includes(button.dataset.source);
+        button.setAttribute("aria-pressed", String(isSelected));
+        button.disabled = !isAllowed;
+        button.classList.toggle("disabled-option", !isAllowed);
+    });
+}
+
+async function changeAlertPolicy(value) {
+    if (!["official", "fallback"].includes(value)) {
+        updateAlertPolicyControl();
+        return;
+    }
+
+    currentAlertPolicy = value;
+    updateAlertPolicyControl();
+    updateDataSourceDisplay();
+    renderAlertCenter();
+
+    try {
+        const response = await fetch("/api/alert-policy", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                selected_alert_policy: value
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || "Unable to update alert policy.");
+        }
+
+        currentAlertPolicy = data.selected_alert_policy || currentAlertPolicy;
+        currentDataSourceState.selected_alert_policy = currentAlertPolicy;
+        updateAlertPolicyControl();
+        updateDataSourceDisplay();
+        renderAlertCenter();
+    } catch (error) {
+        console.error("Failed to switch alert policy:", error);
+    }
+}
+
+function updateAlertPolicyControl() {
+    const control = document.getElementById("alertPolicySegmented");
+
+    if (!control) {
+        return;
+    }
+
+    control.dataset.selected = currentAlertPolicy;
+    control.querySelectorAll("button").forEach(button => {
+        const isSelected = button.dataset.alertPolicy === currentAlertPolicy;
         button.setAttribute("aria-pressed", String(isSelected));
     });
 }
@@ -1521,11 +2368,17 @@ function updateDataSourceControl() {
 function formatDataSourceLabel(value) {
     const labels = {
         simulator: "Simulator",
-        sqlite: "SQLite simulator",
-        mongodb: "MongoDB simulator",
-        company: "Company DB",
-        company_mongodb: "Company MongoDB",
-        simulator_fallback: "Simulator fallback"
+        sqlite: "SQLite (Local)",
+        mongodb: "MongoDB (Testbed)",
+        postgres: "Postgres",
+        company: "Company",
+        company_mongodb: "MongoDB (Prod)",
+        simulator_fallback: "Fallback",
+        official: "Official",
+        fallback: "Fallback",
+        provisional_poc: "PoC",
+        not_configured: "Not configured",
+        available_unmapped: "Unmapped"
     };
 
     return labels[value] || value || "Unknown";
@@ -1544,10 +2397,15 @@ function updateDataSourceDisplay() {
     const rulesStatus = currentDataSourceState.rules_status || "unknown";
 
     if (badge) {
-        badge.textContent = selectedDataSource === "simulator"
-            ? activeLabel
-            : `${selectedLabel} → ${activeLabel}`;
-        badge.className = `source-badge ${rulesStatus}`;
+        const activeSource = (
+            currentDataSourceState.active_source ||
+            currentDataSourceState.source ||
+            selectedDataSource ||
+            "unknown"
+        );
+        badge.textContent = activeLabel;
+        badge.title = `Selected: ${selectedLabel}; Active: ${activeLabel}`;
+        badge.className = `source-badge ${rulesStatus} ${activeSource}`;
     }
 
     if (!note) {
@@ -1566,7 +2424,7 @@ function updateDataSourceDisplay() {
     if (rulesStatus === "available_unmapped") {
         note.textContent = (
             currentDataSourceState.rules_message ||
-            "Company rules were discovered, but rule evaluation is not integrated yet."
+            "Company rules are available. Official alert evaluation is handled by the approved Grafana/n8n workflow."
         );
         note.classList.remove("hidden");
         return;
@@ -1574,8 +2432,10 @@ function updateDataSourceDisplay() {
 
     if (rulesStatus === "provisional_poc") {
         note.textContent = (
-            currentDataSourceState.rules_message ||
-            "PoC fallback rules are active. These are not official company or Grafana alerts."
+            currentAlertPolicy === "official"
+                ? "Official KPI/Grafana alerts are active through the approved Grafana/n8n workflow. Fallback rules remain available as a separate view."
+                : currentDataSourceState.rules_message ||
+                    "PoC fallback rules are active. These are not official company or Grafana alerts."
         );
         note.classList.remove("hidden");
         return;
@@ -1591,7 +2451,7 @@ function updateDataSourceDisplay() {
 
     if (selectedDataSource === "simulator") {
         note.textContent = (
-            "Fallback simulator is selected. Demo telemetry and demo alert rules are active."
+            "Simulator telemetry is selected. Demo alert rules are active."
         );
         note.classList.remove("hidden");
         return;
@@ -1721,6 +2581,66 @@ function getCompanyRecordView(device) {
     };
 }
 
+function displayCompanyValue(value, fallback = "-") {
+    if (value === null || value === undefined) {
+        return fallback;
+    }
+
+    const text = String(value).trim();
+
+    if (!text || text.toLowerCase() === "null" || text.toLowerCase() === "none") {
+        return fallback;
+    }
+
+    return text;
+}
+
+function companyProfileSummary(device) {
+    const category = displayCompanyValue(device.category, "Unknown type");
+    const maker = displayCompanyValue(device.manufacturer, "");
+    const model = displayCompanyValue(device.model, "");
+    const protocol = displayCompanyValue(device.protocol, "");
+    const source = device.inventory_source === "devicemgmt.NODE"
+        ? "devicemgmt.NODE device registry"
+        : displayCompanyValue(device.inventory_source, "telemetry-only row");
+
+    return {
+        category,
+        details: [maker, model, protocol].filter(Boolean).join(" · ") || "No device profile metadata",
+        source,
+        node: displayCompanyValue(device.node_id, ""),
+    };
+}
+
+function companyRuleFieldSummary() {
+    const rules = currentDataSourceState.company_rule_mappings || [];
+    const fields = [];
+
+    rules.forEach(rule => {
+        (rule.filters || []).forEach(filter => {
+            if (filter.field && !fields.includes(filter.field)) {
+                fields.push(filter.field);
+            }
+        });
+    });
+
+    return fields;
+}
+
+function companyMetricFieldSummary() {
+    const fields = [];
+
+    (allDevices || []).forEach(device => {
+        (device.metrics || []).forEach(metric => {
+            if (metric.name && !fields.includes(metric.name)) {
+                fields.push(metric.name);
+            }
+        });
+    });
+
+    return fields;
+}
+
 function renderCompanyMetrics(metrics) {
     if (!Array.isArray(metrics) || metrics.length === 0) {
         return '<span class="metric-empty">No additional telemetry in this record</span>';
@@ -1729,14 +2649,41 @@ function renderCompanyMetrics(metrics) {
     return `
         <div class="metric-chip-list">
             ${metrics.map(metric => `
-                <span class="metric-chip">
-                    <strong>${escapeHtml(metric.name)}</strong>
+                <span class="metric-chip" title="${escapeHtml(companyMetricTooltip(metric))}">
+                    <strong>${escapeHtml(companyMetricLabel(metric))}</strong>
                     ${escapeHtml(metric.value)}
                     ${metric.unit ? `<small>${escapeHtml(metric.unit)}</small>` : ""}
+                    ${metric.inferred_from ? '<small class="metric-source">mapped</small>' : ""}
                 </span>
             `).join("")}
         </div>
     `;
+}
+
+function companyMetricLabel(metric) {
+    if (metric.inferred_from) {
+        return metric.name;
+    }
+
+    return metric.name === "value" ? "raw value" : metric.name;
+}
+
+function companyMetricTooltip(metric) {
+    const parts = [
+        `${companyMetricLabel(metric)}: ${metric.value}`
+    ];
+
+    if (metric.inferred_from) {
+        parts.push(`mapped from ${metric.inferred_from}`);
+    } else if (metric.name === "value") {
+        parts.push("CIN.con contains a generic JSON field named value, not a business metric name.");
+    }
+
+    if (metric.rule_operator || metric.rule_threshold) {
+        parts.push(`rule ${metric.rule_operator || ""} ${metric.rule_threshold || ""}`.trim());
+    }
+
+    return parts.join(" · ");
 }
 
 function renderCompanyDataSummary() {
@@ -1762,6 +2709,9 @@ function renderCompanyDataSummary() {
     const telemetryDevices = allDevices.filter(
         device => Number(device.telemetry_record_count || 0) > 0
     ).length;
+    const ruleFields = companyRuleFieldSummary();
+    const metricFields = companyMetricFieldSummary();
+    const missingRuleFields = ruleFields.filter(field => !metricFields.includes(field));
     const connectedCount = Object.entries(statusCounts)
         .filter(([status]) => status.includes("connected") && !status.includes("disconnected"))
         .reduce((total, [, count]) => total + count, 0);
@@ -1772,7 +2722,7 @@ function renderCompanyDataSummary() {
     summary.innerHTML = `
         <div class="company-summary-stats">
             <div>
-                <span>Inventory devices</span>
+                <span>Device profiles</span>
                 <strong>${uniqueDevices}</strong>
             </div>
             <div>
@@ -1793,10 +2743,15 @@ function renderCompanyDataSummary() {
             </div>
         </div>
         <p class="company-rules-notice">
-            ${sourceSummary.unmapped_telemetry_count || 0} telemetry records could not
-            be mapped safely. ${tenantCount} tenant${tenantCount === 1 ? "" : "s"} are
-            represented. Alerts use provisional PoC rules; official company and
-            Grafana rule evaluation is still pending.
+            ${sourceSummary.telemetry_payload_count || 0} telemetry payloads scanned.
+            ${sourceSummary.unmapped_telemetry_count || 0} records could not be mapped safely.
+            Raw value means datamgmt.CIN.con literally exposes {"value": "..."} instead
+            of a metric such as Toc_do_xe, PM2.5, temp, or humidity.
+            ${missingRuleFields.length ? `
+                Rule fields not found in current telemetry chips:
+                ${escapeHtml(missingRuleFields.slice(0, 5).join(", "))}.
+            ` : ""}
+            ${tenantCount} tenant${tenantCount === 1 ? "" : "s"} are represented.
         </p>
     `;
 }
@@ -1806,6 +2761,12 @@ function updateDeviceControlsForSource() {
     const charts = document.getElementById("devicesCharts");
     const summary = document.getElementById("companyDataSummary");
     const tableCard = document.getElementById("devicesTableCard");
+    const debugButton = document.getElementById("companyDbDebugButton");
+
+    document.querySelector(".device-controls")?.classList.toggle(
+        "company-device-controls",
+        companyMode,
+    );
 
     document.querySelectorAll(".simulator-only-control").forEach(control => {
         control.classList.toggle("hidden", companyMode);
@@ -1817,21 +2778,429 @@ function updateDeviceControlsForSource() {
     charts?.classList.toggle("hidden", companyMode);
     summary?.classList.toggle("hidden", !companyMode);
     tableCard?.classList.toggle("company-table-card", companyMode);
+    debugButton?.classList.toggle("hidden", !companyMode);
 
     if (companyMode) {
         renderCompanyDataSummary();
     }
 }
 
+function formatDebugJson(value) {
+    return escapeHtml(JSON.stringify(value ?? null, null, 2));
+}
+
+function renderDebugCopyBlock(label, rawText) {
+    return `
+        <div class="db-debug-copy-block">
+            <div class="db-debug-copy-header">
+                <label>${escapeHtml(label)}</label>
+            </div>
+            <div class="db-debug-copy-body">
+                <span
+                    class="db-debug-copy-action"
+                    role="button"
+                    tabindex="0"
+                    onclick="copyDebugBlock(this)"
+                    onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); copyDebugBlock(this); }"
+                >
+                    Copy
+                </span>
+                <pre>${escapeHtml(rawText)}</pre>
+            </div>
+        </div>
+    `;
+}
+
+async function copyDebugBlock(button) {
+    const block = button.closest(".db-debug-copy-block");
+    const pre = block?.querySelector("pre");
+    const text = pre?.textContent || "";
+
+    if (!text) {
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied";
+        setTimeout(() => {
+            button.textContent = "Copy";
+        }, 1400);
+    } catch (error) {
+        console.error("Failed to copy debug block:", error);
+        button.textContent = "Failed";
+        setTimeout(() => {
+            button.textContent = "Copy";
+        }, 1400);
+    }
+}
+
+function mongoShellCommandFromPlan(plan) {
+    const namespace = String(plan.namespace || "");
+    const [database, collection] = namespace.split(".");
+
+    if (!database || !collection) {
+        return JSON.stringify(plan, null, 2);
+    }
+
+    const query = plan.query || {};
+    const projection = plan.projection || {};
+    const sort = plan.sort;
+    const limit = plan.effective_limit || plan.requested_limit || 100;
+    let command = `db.getSiblingDB(${JSON.stringify(database)}).getCollection(${JSON.stringify(collection)}).find(\n`;
+    command += `  ${JSON.stringify(query, null, 2).replace(/\n/g, "\n  ")},\n`;
+    command += `  ${JSON.stringify(projection, null, 2).replace(/\n/g, "\n  ")}\n`;
+    command += `)`;
+
+    if (Array.isArray(sort) && sort.length === 2) {
+        command += `.sort({ ${JSON.stringify(sort[0])}: ${sort[1]} })`;
+    }
+
+    command += `.limit(${limit});`;
+    return command;
+}
+
+function renderCompanyDbDebugSection(plan, index) {
+    const samples = currentDataSourceState.db_debug_samples || {};
+    const runtimeAudits = currentDataSourceState.db_audit || [];
+    const namespace = plan.namespace || `query-${index + 1}`;
+    const audit = runtimeAudits.find(item => item.namespace === namespace) || {};
+    const sampleRows = samples[namespace] || [];
+
+    return `
+        <section class="db-debug-section">
+            <div class="db-debug-section-header">
+                <div>
+                    <h3>${escapeHtml(namespace)}</h3>
+                    <p>
+                        ${escapeHtml(plan.operation || "find")}
+                        · requested ${escapeHtml(plan.requested_limit || "-")}
+                        · effective ${escapeHtml(plan.effective_limit || audit.effective_limit || "-")}
+                    </p>
+                </div>
+                <span>${sampleRows.length} sample${sampleRows.length === 1 ? "" : "s"}</span>
+            </div>
+            ${renderDebugCopyBlock("Mongo shell equivalent", mongoShellCommandFromPlan(plan))}
+            ${renderDebugCopyBlock("Runtime audit", JSON.stringify(audit || {}, null, 2))}
+            ${renderDebugCopyBlock("Sample result returned to backend", JSON.stringify(sampleRows, null, 2))}
+        </section>
+    `;
+}
+
+function companyConnectionState(device) {
+    const normalizedStatus = String(device.status || "unknown").toLowerCase();
+
+    if (normalizedStatus.includes("disconnected")) {
+        return "disconnected";
+    }
+
+    if (normalizedStatus.includes("connected")) {
+        return "connected";
+    }
+
+    return "unknown";
+}
+
+function companyDeviceSearchText(device) {
+    const searchableMetrics = Array.isArray(device.metrics)
+        ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
+        : "";
+
+    return [
+        device.device_id,
+        device.record_id,
+        device.parent_container,
+        device.device_name,
+        device.node_id,
+        device.category,
+        device.model,
+        device.manufacturer,
+        device.app_domain_name,
+        device.tenant_name,
+        searchableMetrics
+    ].join(" ").toLowerCase();
+}
+
+function getCompanyTableState() {
+    const searchValue = document.getElementById("deviceSearch")?.value.toLowerCase() || "";
+    const statusValue = document.getElementById("companyConnectionFilter")?.value || "all";
+    const sortValue = document.getElementById("companySortSelect")?.value || "latest";
+    let devices = [...(allDevices || [])];
+
+    devices = devices.filter(device => {
+        const matchesSearch = companyDeviceSearchText(device).includes(searchValue);
+        const matchesStatus = statusValue === "all" || companyConnectionState(device) === statusValue;
+        return matchesSearch && matchesStatus;
+    });
+
+    devices.sort((a, b) => {
+        if (sortValue === "name") {
+            return String(a.device_name || a.device_id || "").localeCompare(
+                String(b.device_name || b.device_id || "")
+            );
+        }
+
+        if (sortValue === "telemetry") {
+            return Number(b.telemetry_record_count || 0)
+                - Number(a.telemetry_record_count || 0);
+        }
+
+        if (sortValue === "rules") {
+            return Number(b.rule_count || 0) - Number(a.rule_count || 0);
+        }
+
+        return Number(b.timestamp || 0) - Number(a.timestamp || 0);
+    });
+
+    return {
+        searchValue,
+        statusValue,
+        sortValue,
+        devices,
+    };
+}
+
+function explainCompanyDeviceRow(device, visibleDevices) {
+    const visibleIds = new Set(visibleDevices.map(item => item.device_id));
+    const reasons = [];
+
+    if (!visibleIds.has(device.device_id)) {
+        reasons.push("Not visible with the current table search/filter/sort window.");
+    }
+
+    if (device.inventory_source === "devicemgmt.NODE") {
+        reasons.push("Device profile row from devicemgmt.NODE childDeviceInfoEntities.");
+    }
+
+    if (Number(device.telemetry_record_count || 0) === 0) {
+        reasons.push("No datamgmt.CIN payload was safely mapped to this device.");
+    } else {
+        reasons.push(`${device.telemetry_record_count} datamgmt.CIN payload records mapped through CNT/container ownership or payload identity.`);
+    }
+
+    if (!Array.isArray(device.metrics) || device.metrics.length === 0) {
+        reasons.push("No displayable metric name/value was extracted from the latest payload.");
+    } else if (device.metrics.some(metric => metric.name === "value")) {
+        reasons.push("Latest payload only exposed a generic value field, so the UI labels it raw value.");
+    } else {
+        reasons.push("Latest payload includes named metrics that can be displayed directly.");
+    }
+
+    if (device.connectivity) {
+        reasons.push(`connectivity=${device.connectivity} is inventory metadata from the DB, not the live connection status.`);
+    }
+
+    return reasons;
+}
+
+function renderCompanyDeviceDebugRows(rows, visibleDevices) {
+    if (!rows.length) {
+        return `
+            <div class="db-debug-empty">
+                <strong>No device rows matched the current table state.</strong>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="db-debug-device-list">
+            ${rows.map(device => `
+                <article class="db-debug-device-card">
+                    <div>
+                        <strong title="${escapeHtml(device.device_name || "")}">
+                            ${escapeHtml(device.device_name || "Unnamed device")}
+                        </strong>
+                        <small title="${escapeHtml(device.device_id || "")}">
+                            ${escapeHtml(device.device_id || "Unknown ID")}
+                        </small>
+                    </div>
+                    <dl>
+                        <div><dt>Device profile</dt><dd>${escapeHtml(device.inventory_source || "-")}</dd></div>
+                        <div><dt>Record</dt><dd title="${escapeHtml(device.record_id || "")}">${escapeHtml(device.record_id || "-")}</dd></div>
+                        <div><dt>Container</dt><dd title="${escapeHtml(device.parent_container || "")}">${escapeHtml(device.parent_container || "-")}</dd></div>
+                        <div><dt>Telemetry</dt><dd>${escapeHtml(device.telemetry_record_count || 0)} records</dd></div>
+                        <div><dt>Connectivity</dt><dd>${escapeHtml(device.connectivity || "-")}</dd></div>
+                        <div><dt>Protocol</dt><dd>${escapeHtml(device.protocol || "-")}</dd></div>
+                    </dl>
+                    <ul>
+                        ${explainCompanyDeviceRow(device, visibleDevices).map(reason => `
+                            <li>${escapeHtml(reason)}</li>
+                        `).join("")}
+                    </ul>
+                    ${renderDebugCopyBlock("Visible row payload", JSON.stringify({
+                        metrics: device.metrics || [],
+                        payload_summary: device.payload_summary || null,
+                        content_format: device.content_format || null,
+                    }, null, 2))}
+                </article>
+            `).join("")}
+        </div>
+    `;
+}
+
+function openCompanyDbDebug() {
+    const modal = document.getElementById("companyDbDebugModal");
+    const content = document.getElementById("companyDbDebugContent");
+
+    if (!modal || !content) {
+        return;
+    }
+
+    const plan = currentDataSourceState.db_read_plan || [];
+    const summary = currentDataSourceState.summary || {};
+    const provenance = currentDataSourceState.provenance || {};
+    const samples = currentDataSourceState.db_debug_samples || {};
+    const tableState = getCompanyTableState();
+    const sampleDeviceRows = tableState.devices.slice(0, 8);
+
+    if (!plan.length && !Object.keys(samples).length) {
+        content.innerHTML = `
+            <div class="db-debug-empty">
+                <strong>No MongoDB debug data is available for this page load.</strong>
+                <p>${escapeHtml(currentDataSourceState.reason || "Switch to Company data source and refresh Devices.")}</p>
+            </div>
+        `;
+        modal.classList.remove("hidden");
+        return;
+    }
+
+    content.innerHTML = `
+        <div class="db-debug-overview">
+            <div>
+                <span>Active source</span>
+                <strong>${escapeHtml(formatDataSourceLabel(currentDataSourceState.active_source))}</strong>
+            </div>
+            <div>
+                <span>Audit status</span>
+                <strong>${escapeHtml(currentDataSourceState.db_audit_status || provenance.db_audit_status || "unknown")}</strong>
+            </div>
+            <div>
+                <span>CIN scanned</span>
+                <strong>${escapeHtml(summary.content_instance_count || 0)}</strong>
+            </div>
+            <div>
+                <span>Unmapped telemetry</span>
+                <strong>${escapeHtml(summary.unmapped_telemetry_count || 0)}</strong>
+            </div>
+            <div>
+                <span>Rows after filter</span>
+                <strong>${escapeHtml(tableState.devices.length)} / ${escapeHtml((allDevices || []).length)}</strong>
+            </div>
+        </div>
+        <section class="db-debug-explainer">
+            <strong>How to read this</strong>
+            <p>
+                Device profile means the row came from devicemgmt.NODE. Telemetry records
+                come from datamgmt.CIN.con after the backend maps CIN through CNT/container
+                ownership or payload identity. The label "raw value" is UI wording for
+                a generic metric named "value"; the value itself, such as "abcd1", comes
+                from the database payload.
+                If datamgmt.RULE filters expect fields such as Toc_do_xe or ug/m3 but
+                CIN.con only contains {"value":"abcd1"}, the rule cannot be evaluated
+                against that telemetry without a confirmed field mapping.
+            </p>
+            <p>
+                Current table state: search="${escapeHtml(tableState.searchValue || "none")}",
+                connection="${escapeHtml(tableState.statusValue)}",
+                sort="${escapeHtml(tableState.sortValue)}".
+            </p>
+        </section>
+        <section class="db-debug-section">
+            <div class="db-debug-section-header">
+                <div>
+                    <h3>Visible joined device rows</h3>
+                    <p>Rows after the current Devices table search/filter/sort, with business interpretation.</p>
+                </div>
+                <span>${sampleDeviceRows.length} rows</span>
+            </div>
+            ${renderCompanyDeviceDebugRows(sampleDeviceRows, tableState.devices)}
+        </section>
+        ${plan.map(renderCompanyDbDebugSection).join("")}
+    `;
+    modal.classList.remove("hidden");
+}
+
+function closeCompanyDbDebug() {
+    const modal = document.getElementById("companyDbDebugModal");
+
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+}
+
+function renderDeviceLoadingState(message = "Loading devices...") {
+    const tableBody = document.getElementById("deviceTableBody");
+    const tableHeader = document.getElementById("deviceTableHeader");
+    const charts = document.getElementById("devicesCharts");
+    const summary = document.getElementById("companyDataSummary");
+    const tableCard = document.getElementById("devicesTableCard");
+    const pagination = document.getElementById("deviceTablePagination");
+    const companyMode = isCompanyDataActive();
+
+    charts?.classList.add("hidden");
+    summary?.classList.add("hidden");
+    pagination?.classList.add("hidden");
+    tableCard?.classList.toggle("company-table-card", companyMode);
+
+    if (tableHeader) {
+        tableHeader.innerHTML = "";
+    }
+
+    if (tableBody) {
+        tableBody.innerHTML = `
+            <tr>
+                <td class="devices-loading-cell">
+                    ${escapeHtml(message)}
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function resetDeviceTablePage() {
+    deviceTablePage = 1;
+    renderDeviceTable();
+}
+
+function setDeviceTablePage(page) {
+    const scrollContainer = document.querySelector(".content-scroll") ||
+        document.scrollingElement;
+    const previousScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+
+    deviceTablePage = Math.max(1, Number(page) || 1);
+    renderDeviceTable();
+
+    if (scrollContainer) {
+        requestAnimationFrame(() => {
+            scrollContainer.scrollTop = previousScrollTop;
+        });
+    }
+}
+
+function setDevicesLoadingState(isLoading) {
+    devicesLoading = isLoading;
+
+    if (isLoading) {
+        renderDeviceLoadingState();
+    }
+}
+
 function renderDeviceTable() {
     const tableBody = document.getElementById("deviceTableBody");
     const tableHeader = document.getElementById("deviceTableHeader");
+    const pagination = document.getElementById("deviceTablePagination");
 
     if (!tableBody || !tableHeader) {
         return;
     }
 
     const companyMode = isCompanyDataActive();
+
+    if (devicesLoading) {
+        renderDeviceLoadingState();
+        return;
+    }
+
     updateDeviceControlsForSource();
 
     tableHeader.innerHTML = companyMode
@@ -1839,7 +3208,7 @@ function renderDeviceTable() {
             <th class="company-device-column">Device</th>
             <th>Connection</th>
             <th>Latest telemetry</th>
-            <th>Inventory</th>
+            <th>Device profile</th>
             <th>Last observed</th>
             <th>Rules / History</th>
         `
@@ -1850,14 +3219,14 @@ function renderDeviceTable() {
             <th>Memory</th>
             <th>Heartbeat</th>
             <th>Priority</th>
-            <th>Diagnose</th>
-            <th>History</th>
+            <th class="device-history-column">History</th>
         `;
 
     if (!allDevices || allDevices.length === 0) {
+        pagination?.classList.add("hidden");
         tableBody.innerHTML = `
             <tr>
-                <td colspan="${companyMode ? 6 : 8}">
+                <td colspan="${companyMode ? 6 : 7}">
                     Waiting for realtime telemetry...
                 </td>
             </tr>
@@ -1875,58 +3244,34 @@ function renderDeviceTable() {
 
     let devices = [...allDevices];
 
-    devices = devices.filter(device => {
-        const searchableMetrics = Array.isArray(device.metrics)
-            ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
-            : "";
-        const searchableText = [
-            device.device_id,
-            device.parent_container,
-            device.device_name,
-            device.node_id,
-            device.category,
-            device.model,
-            device.manufacturer,
-            device.app_domain_name,
-            device.tenant_name,
-            searchableMetrics
-        ].join(" ").toLowerCase();
-        const matchesSearch = searchableText.includes(searchValue);
-        const normalizedStatus = String(device.status || "unknown").toLowerCase();
-        const connectionState = normalizedStatus.includes("disconnected")
-            ? "disconnected"
-            : normalizedStatus.includes("connected")
-                ? "connected"
-                : "unknown";
-        const matchesStatus = statusValue === "all" || (
-            companyMode
-                ? connectionState === statusValue
-                : device.status === statusValue
-        );
+    if (companyMode) {
+        devices = getCompanyTableState().devices;
+    } else {
+        devices = devices.filter(device => {
+            const searchableMetrics = Array.isArray(device.metrics)
+                ? device.metrics.map(metric => `${metric.name} ${metric.value}`).join(" ")
+                : "";
+            const searchableText = [
+                device.device_id,
+                device.parent_container,
+                device.device_name,
+                device.node_id,
+                device.category,
+                device.model,
+                device.manufacturer,
+                device.app_domain_name,
+                device.tenant_name,
+                searchableMetrics
+            ].join(" ").toLowerCase();
+            const matchesSearch = searchableText.includes(searchValue);
+            const matchesStatus = statusValue === "all" || device.status === statusValue;
 
-        return matchesSearch && matchesStatus;
-    });
+            return matchesSearch && matchesStatus;
+        });
+    }
 
-    devices.sort((a, b) => {
-        if (companyMode) {
-            if (sortValue === "name") {
-                return String(a.device_name || a.device_id || "").localeCompare(
-                    String(b.device_name || b.device_id || "")
-                );
-            }
-
-            if (sortValue === "telemetry") {
-                return Number(b.telemetry_record_count || 0)
-                    - Number(a.telemetry_record_count || 0);
-            }
-
-            if (sortValue === "rules") {
-                return Number(b.rule_count || 0) - Number(a.rule_count || 0);
-            }
-
-            return Number(b.timestamp || 0) - Number(a.timestamp || 0);
-        }
-
+    if (!companyMode) {
+        devices.sort((a, b) => {
         if (sortValue === "priority") {
             return calculatePriority(b) - calculatePriority(a);
         }
@@ -1948,13 +3293,33 @@ function renderDeviceTable() {
         }
 
         return 0;
-    });
+        });
+    }
+
+    const totalDevices = devices.length;
+    const totalPages = Math.max(1, Math.ceil(totalDevices / DEVICE_TABLE_PAGE_SIZE));
+    deviceTablePage = Math.min(Math.max(1, deviceTablePage), totalPages);
+    const startIndex = (deviceTablePage - 1) * DEVICE_TABLE_PAGE_SIZE;
+    const pagedDevices = devices.slice(startIndex, startIndex + DEVICE_TABLE_PAGE_SIZE);
 
     tableBody.innerHTML = "";
+    renderDeviceTablePagination(totalDevices, startIndex, pagedDevices.length);
 
-    devices.forEach(device => {
+    if (pagedDevices.length === 0) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="${companyMode ? 6 : 7}">
+                    No devices match the current filters.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    pagedDevices.forEach(device => {
         if (companyMode) {
             const view = getCompanyRecordView(device);
+            const profile = companyProfileSummary(device);
             const normalizedStatus = String(view.status || "unknown").toLowerCase();
             const connectionClass = normalizedStatus.includes("disconnected")
                 ? "disconnected"
@@ -1965,15 +3330,29 @@ function renderDeviceTable() {
             tableBody.innerHTML += `
                 <tr>
                     <td class="company-device-cell">
-                        <strong
-                            class="company-device-name"
-                            title="${escapeHtml(view.name)}"
-                        >
-                            ${escapeHtml(view.name)}
-                        </strong>
-                        <small class="device-subtext company-id" title="${escapeHtml(view.id)}">
-                            ${escapeHtml(view.id)}
-                        </small>
+                        <div class="copyable-device">
+                            <div class="copyable-device-text">
+                                <strong
+                                    class="company-device-name"
+                                    title="${escapeHtml(view.name)}"
+                                >
+                                    ${escapeHtml(view.name)}
+                                </strong>
+                                <small
+                                        class="device-subtext company-id"
+                                    >
+                                    ID: ${escapeHtml(view.id)}
+                                </small>
+                            </div>
+                            <button
+                                class="device-copy-btn"
+                                type="button"
+                                title="Copy device ID"
+                                onclick="copyDeviceId('${escapeJsString(view.id)}', this)"
+                            >
+                                Copy
+                            </button>
+                        </div>
                     </td>
                     <td>
                         <span class="connection-badge ${connectionClass}">
@@ -1982,16 +3361,17 @@ function renderDeviceTable() {
                     </td>
                     <td>${renderCompanyMetrics(view.telemetry)}</td>
                     <td class="company-context-cell">
-                        <span>${escapeHtml(device.category || "Unknown type")}</span>
+                        <span>
+                            <b class="company-profile-label">Type</b>
+                            ${escapeHtml(profile.category)}
+                        </span>
                         <small class="device-subtext">
-                            ${escapeHtml([
-                                device.manufacturer,
-                                device.model,
-                                device.protocol
-                            ].filter(Boolean).join(" · ") || "No model metadata")}
+                            <b class="company-profile-label">Meta</b>
+                            ${escapeHtml(profile.details)}
                         </small>
-                        <small class="device-subtext" title="${escapeHtml(device.node_id || "")}">
-                            ${escapeHtml(device.node_id || device.inventory_source || "Telemetry only")}
+                        <small class="device-subtext">
+                            <b class="company-profile-label">Source</b>
+                            ${escapeHtml([profile.source, profile.node].filter(Boolean).join(" · "))}
                         </small>
                     </td>
                     <td class="company-time-cell">
@@ -2004,7 +3384,7 @@ function renderDeviceTable() {
                         <span>
                             ${Number(device.rule_count || 0)} mapped rules
                         </span>
-                        <button onclick="showDeviceHistory('${escapeHtml(device.device_id)}')">
+                        <button onclick="showDeviceHistory('${escapeJsString(device.device_id)}')">
                             History
                         </button>
                     </td>
@@ -2016,31 +3396,38 @@ function renderDeviceTable() {
         const priority = calculatePriority(device);
         const payloadSummary = formatCompanyPayloadSummary(device);
         const deviceLabel = escapeHtml(device.device_id);
+        const rawDeviceId = escapeJsString(device.device_id);
 
         tableBody.innerHTML += `
             <tr>
                 <td>
-                    ${deviceLabel}
-                    ${payloadSummary ? `<small class="device-subtext">${escapeHtml(payloadSummary)}</small>` : ""}
+                    <div class="copyable-device">
+                        <div class="copyable-device-text">
+                            <span class="device-id-text">${deviceLabel}</span>
+                            ${payloadSummary ? `<small class="device-subtext">${escapeHtml(payloadSummary)}</small>` : ""}
+                        </div>
+                        <button
+                            class="device-copy-btn"
+                            type="button"
+                            title="Copy device ID"
+                            onclick="copyDeviceId('${rawDeviceId}', this)"
+                        >
+                            Copy
+                        </button>
+                    </div>
                 </td>
                 <td>${formatDeviceStatus(device)}</td>
                 <td>${formatMetricValue(device.cpu_usage, "%")}</td>
                 <td>${formatMetricValue(device.memory_usage, "%")}</td>
                 <td>${formatMetricValue(device.heartbeat_delay, "s ago")}</td>
                 <td>${priority}</td>
-                <td>
-                    <button onclick="diagnoseDevice('${deviceLabel}')">
-                        Diagnose
-                    </button>
-                </td>
-
-                <td>
+                <td class="device-history-cell">
                     ${device.company_record ? `
                         <button disabled title="Company telemetry chart mapping is pending.">
                             Raw record
                         </button>
                     ` : `
-                        <button onclick="showDeviceHistory('${deviceLabel}')">
+                        <button onclick="showDeviceHistory('${rawDeviceId}')">
                             History
                         </button>
                     `}
@@ -2048,6 +3435,50 @@ function renderDeviceTable() {
             </tr>
         `;
     });
+}
+
+function renderDeviceTablePagination(totalDevices, startIndex, visibleCount) {
+    const pagination = document.getElementById("deviceTablePagination");
+
+    if (!pagination) {
+        return;
+    }
+
+    if (totalDevices <= DEVICE_TABLE_PAGE_SIZE) {
+        pagination.classList.add("hidden");
+        pagination.innerHTML = "";
+        return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(totalDevices / DEVICE_TABLE_PAGE_SIZE));
+    const from = totalDevices === 0 ? 0 : startIndex + 1;
+    const to = startIndex + visibleCount;
+
+    pagination.classList.remove("hidden");
+    pagination.innerHTML = `
+        <div class="table-pagination-status">
+            Showing ${escapeHtml(from)}-${escapeHtml(to)} of ${escapeHtml(totalDevices)} devices
+        </div>
+        <div class="table-pagination-actions">
+            <button
+                type="button"
+                class="secondary-btn"
+                ${deviceTablePage <= 1 ? "disabled" : ""}
+                onclick="setDeviceTablePage(${deviceTablePage - 1})"
+            >
+                Previous
+            </button>
+            <span>Page ${escapeHtml(deviceTablePage)} / ${escapeHtml(totalPages)}</span>
+            <button
+                type="button"
+                class="secondary-btn"
+                ${deviceTablePage >= totalPages ? "disabled" : ""}
+                onclick="setDeviceTablePage(${deviceTablePage + 1})"
+            >
+                Next
+            </button>
+        </div>
+    `;
 }
 
 function addUserMessage(message) {
@@ -2139,10 +3570,12 @@ async function renderAssistantMessage(
     retryPrompt = null,
     tokenUsage = null
 ) {
-    const displayMessage = formatConversationalText(message);
     const chatMessages = document.getElementById("chatMessages");
+    const answerView = splitAssistantFollowUps(message, retryPrompt || "");
+    const displayMessage = answerView.answer;
     const reasoningId = `reasoning-${Date.now()}-${Math.random()}`;
     const messageId = `assistant-message-${Date.now()}-${Math.random()}`;
+    const contentId = `${messageId}-content`;
     const shouldPinScroll = shouldKeepTypingPinnedToBottom(chatMessages);
 
     window[reasoningId] = reasoningSteps;
@@ -2161,7 +3594,7 @@ async function renderAssistantMessage(
                 </div>
 
                 <div class="message-bubble assistant-bubble">
-                    <pre class="typing-output">${shouldType ? "" : escapeHtml(displayMessage)}</pre>
+                    <div class="markdown-output" id="${contentId}"></div>
                 </div>
 
                 <div class="assistant-actions">
@@ -2199,11 +3632,22 @@ async function renderAssistantMessage(
         </div>
     `;
 
-    const outputs = chatMessages.querySelectorAll(".typing-output");
-    const latestOutput = outputs[outputs.length - 1];
+    const contentEl = document.getElementById(contentId);
+    if (contentEl) {
+        if (shouldType) {
+            contentEl.classList.add("typing-output");
+            await typeTextIntoElementPromise(
+                contentEl,
+                formatConversationalText(displayMessage || "")
+            );
+            contentEl.classList.remove("typing-output");
+        }
 
-    if (shouldType) {
-        await typeTextIntoElementPromise(latestOutput, displayMessage, 8);
+        if (typeof marked !== "undefined") {
+            contentEl.innerHTML = marked.parse(displayMessage || "");
+        } else {
+            contentEl.textContent = displayMessage || "";
+        }
     }
 
     if (shouldPinScroll) {
@@ -2252,7 +3696,28 @@ function editUserMessage(messageId) {
     const input = document.getElementById("messageInput");
     input.value = storedMessage.content;
     input.disabled = false;
+    scheduleMessageInputResize();
+    updateRunButtonState();
     input.focus();
+}
+
+function buildRecentConversationContext(limit = 6) {
+    const chat = chats.find(item => item.id === currentChatId);
+    if (!chat || !Array.isArray(chat.messages)) {
+        return [];
+    }
+
+    return chat.messages
+        .filter(message =>
+            message &&
+            (message.role === "user" || message.role === "assistant") &&
+            message.content
+        )
+        .slice(-limit)
+        .map(message => ({
+            role: message.role,
+            content: String(message.content).slice(0, 4000)
+        }));
 }
 
 async function copyAssistantMessage(messageId, button) {
@@ -2285,6 +3750,8 @@ function tryAssistantMessageAgain(messageId) {
 
     const input = document.getElementById("messageInput");
     input.value = storedMessage.retryPrompt;
+    scheduleMessageInputResize();
+    updateRunButtonState();
     sendMessage();
 }
 
@@ -2355,9 +3822,775 @@ function renderReasoningDrawerLive() {
     return;
 }
 
+function prettyJson(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+
+    return JSON.stringify(value, null, 2);
+}
+
+function renderJsonBlock(value, className = "") {
+    return `<pre class="reasoning-json-block ${className}">${escapeHtml(prettyJson(value))}</pre>`;
+}
+
+function encodedJsonForCopy(value) {
+    return encodeURIComponent(prettyJson(value));
+}
+
+function formatMongoCommandFromAudit(event = {}) {
+    const namespace = String(event.namespace || "");
+    const [databaseName, collectionName] = namespace.split(".");
+    const operation = event.operation || "read";
+
+    if (operation === "find" && databaseName && collectionName) {
+        let command = `db.getSiblingDB("${databaseName}")` +
+            `.getCollection("${collectionName}")` +
+            `.find(${JSON.stringify(event.query || {})}, ${JSON.stringify(event.projection || {})})`;
+
+        if (Array.isArray(event.sort) && event.sort.length === 2) {
+            command += `.sort(${JSON.stringify({ [event.sort[0]]: event.sort[1] })})`;
+        }
+
+        if (event.effective_limit !== undefined && event.effective_limit !== null) {
+            command += `.limit(${event.effective_limit})`;
+        }
+
+        if (event.max_time_ms !== undefined && event.max_time_ms !== null) {
+            command += `.maxTimeMS(${event.max_time_ms})`;
+        }
+
+        return command;
+    }
+
+    if (operation === "list_collections" && databaseName) {
+        return `db.getSiblingDB("${databaseName}").getCollectionNames()`;
+    }
+
+    if (operation === "list_database_names") {
+        return "db.adminCommand({ listDatabases: 1 })";
+    }
+
+    if (operation === "collStats" && databaseName && collectionName) {
+        return `db.getSiblingDB("${databaseName}").runCommand({ collStats: "${collectionName}", scale: 1 })`;
+    }
+
+    return `${operation} ${namespace}`.trim();
+}
+
+function normalizeQueryCommands(output) {
+    if (Array.isArray(output?.query_commands) && output.query_commands.length > 0) {
+        return output.query_commands;
+    }
+
+    const auditEvents = Array.isArray(output?.db_audit) ? output.db_audit : [];
+
+    return auditEvents
+        .filter(event => event && typeof event === "object")
+        .map(event => ({
+            ...event,
+            command: formatMongoCommandFromAudit(event),
+        }));
+}
+
+function normalizeReadPlanCommands(output) {
+    if (Array.isArray(output?.db_read_plan_commands) && output.db_read_plan_commands.length > 0) {
+        return output.db_read_plan_commands;
+    }
+
+    const planEvents = Array.isArray(output?.db_read_plan) ? output.db_read_plan : [];
+
+    return planEvents
+        .filter(event => event && typeof event === "object")
+        .map(event => ({
+            ...event,
+            command: formatMongoCommandFromAudit(event),
+        }));
+}
+
+function copyQueryCommand(button, command) {
+    copyTextToClipboard(command);
+
+    if (!button) {
+        return;
+    }
+
+    const previousText = button.textContent;
+    button.textContent = "Copied";
+
+    setTimeout(() => {
+        button.textContent = previousText || "Copy";
+    }, 1200);
+}
+
+function copyJsonAction(button, encodedJson) {
+    copyQueryCommand(button, decodeURIComponent(encodedJson || ""));
+}
+
+function toggleQueryCommandDetails(button) {
+    const actions = button?.closest(".query-command-actions");
+    const panel = actions?.querySelector(".query-command-details-panel");
+
+    if (!panel) {
+        return;
+    }
+
+    const isHidden = panel.classList.toggle("hidden");
+    button.textContent = isHidden ? "Show query details" : "Hide query details";
+}
+
+function toggleFullEvidenceJson(button) {
+    const section = button?.closest(".observation-section");
+    const panel = section?.querySelector(".observation-details-panel");
+
+    if (!panel) {
+        return;
+    }
+
+    const isHidden = panel.classList.toggle("hidden");
+    button.textContent = isHidden
+        ? "Show full evidence JSON"
+        : "Hide full evidence JSON";
+}
+
+function renderCommandCards(commands) {
+    return commands.map((command, index) => `
+        <div class="query-command-card">
+            <div class="query-command-header">
+                <span>Command ${index + 1}</span>
+                <span>${escapeHtml(command.operation || "read")} · ${escapeHtml(command.namespace || "")}</span>
+            </div>
+            <div class="query-command-code-wrap">
+                <pre class="query-command-code">${escapeHtml(command.command || "")}</pre>
+            </div>
+            <div class="query-command-actions">
+                <button
+                    class="query-command-details-toggle"
+                    type="button"
+                    onclick="toggleQueryCommandDetails(this)"
+                >
+                    Show query details
+                </button>
+                <button
+                    class="query-command-copy"
+                    type="button"
+                    onclick="copyQueryCommand(this, decodeURIComponent('${encodeURIComponent(command.command || "")}'))"
+                >
+                    Copy
+                </button>
+                <div class="query-command-details-panel hidden">
+                    ${renderJsonBlock({
+                        actor: command.actor || "unknown",
+                        operation: command.operation || "read",
+                        namespace: command.namespace || "",
+                        query: command.query || {},
+                        projection: command.projection || {},
+                        sort: command.sort || null,
+                        requested_limit: command.requested_limit,
+                        effective_limit: command.effective_limit,
+                        max_time_ms: command.max_time_ms,
+                        allowed_namespaces_enforced: command.allowed_namespaces_enforced,
+                        credentials_redacted: command.credentials_redacted,
+                        mutating: command.mutating,
+                        audit_source: command.audit_source,
+                    })}
+                </div>
+            </div>
+        </div>
+    `).join("");
+}
+
+function renderQueryCommands(output) {
+    const commands = normalizeQueryCommands(output);
+
+    if (commands.length === 0) {
+        const readPlanCommands = normalizeReadPlanCommands(output);
+
+        if (readPlanCommands.length > 0) {
+            return `
+                <section class="query-command-section query-command-missing">
+                    <div class="query-command-title">Database Read Plan</div>
+                    <p class="query-command-note">
+                        Runtime DB audit is missing, so these are the intended read commands from the company read model, not verified audit events.
+                    </p>
+                    ${renderCommandCards(readPlanCommands)}
+                </section>
+            `;
+        }
+
+        if (output?.source === "company_mongodb" || String(output?.tool || "").startsWith("get_company_")) {
+            return `
+                <section class="query-command-section query-command-missing">
+                    <div class="query-command-title">Database Query Commands</div>
+                    <p class="query-command-note">
+                        No database query command was attached to this tool step. This should be treated as an audit gap.
+                    </p>
+                </section>
+            `;
+        }
+
+        return "";
+    }
+
+    return `
+        <section class="query-command-section">
+            <div class="query-command-title">Database Query Commands</div>
+            <p class="query-command-note">
+                Read-only commands emitted by the authorized tool. Credentials are never shown here.
+            </p>
+            ${renderCommandCards(commands)}
+        </section>
+    `;
+}
+
+function renderExternalApiRequest(output) {
+    const httpCall = output?.http_call;
+
+    if (!httpCall || typeof httpCall !== "object" || Array.isArray(httpCall)) {
+        return "";
+    }
+
+    const method = httpCall.method || "GET";
+    const path = httpCall.path || "";
+    const params = httpCall.params || {};
+    const query = Object.entries(params)
+        .filter(([, value]) => value !== null && value !== undefined && value !== "")
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        .join("&");
+    const command = `${method} ${path}${query ? `?${query}` : ""}`;
+
+    return `
+        <section class="query-command-section api-request-section">
+            <div class="query-command-title">External API Request</div>
+            <p class="query-command-note">
+                IOA v3 called an approved Grafana API workflow through n8n. This is not a direct database query.
+            </p>
+            <div class="query-command-card">
+                <div class="query-command-header">
+                    <span>Request 1</span>
+                    <span>${escapeHtml(method)} · ${escapeHtml(path)}</span>
+                </div>
+                <div class="query-command-code-wrap">
+                    <pre class="query-command-code">${escapeHtml(command)}</pre>
+                </div>
+                <div class="query-command-actions">
+                    <button
+                        class="query-command-details-toggle"
+                        type="button"
+                        onclick="toggleQueryCommandDetails(this)"
+                    >
+                        Show request details
+                    </button>
+                    <button
+                        class="query-command-copy"
+                        type="button"
+                        onclick="copyQueryCommand(this, decodeURIComponent('${encodeURIComponent(command)}'))"
+                    >
+                        Copy
+                    </button>
+                    <div class="query-command-details-panel hidden">
+                        ${renderJsonBlock({
+                            method,
+                            path,
+                            params,
+                            base_url: httpCall.base_url || "redacted_configured_gateway",
+                            executed_by: "n8n-grafana-ops-gateway",
+                            mutating: false,
+                            credentials: "redacted",
+                        })}
+                    </div>
+                </div>
+            </div>
+        </section>
+    `;
+}
+
+function renderWorkflowExecutions(output) {
+    const executions = Array.isArray(output?.executions)
+        ? output.executions
+        : [];
+
+    if (executions.length === 0) {
+        return "";
+    }
+
+    return executions.map((execution, index) => `
+        <section class="tool-call-section workflow-execution-section">
+            <div class="tool-call-title">Workflow Execution ${index + 1}</div>
+            <div class="tool-call-grid">
+                <div>
+                    <span>Tool</span>
+                    <strong>${escapeHtml(execution.tool || "unknown")}</strong>
+                </div>
+                <div>
+                    <span>Source</span>
+                    <strong>${escapeHtml(execution.source || "unknown")}</strong>
+                </div>
+                ${execution.workflow_id ? `
+                    <div>
+                        <span>Workflow</span>
+                        <strong>${escapeHtml(execution.workflow_id)}</strong>
+                    </div>
+                ` : ""}
+                ${execution.planner_confidence !== undefined ? `
+                    <div>
+                        <span>Planner confidence</span>
+                        <strong>${escapeHtml(String(execution.planner_confidence))}</strong>
+                    </div>
+                ` : ""}
+            </div>
+            ${execution.planner_reason ? `
+                <p class="query-command-note">${escapeHtml(execution.planner_reason)}</p>
+            ` : ""}
+        </section>
+        ${renderExternalApiRequest(execution)}
+        ${renderQueryCommands(execution)}
+    `).join("");
+}
+
+function renderToolCall(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) {
+        return "";
+    }
+
+    const toolCall = output.tool_call || {};
+    const execution = output._tool_execution || {};
+    const toolName = toolCall.tool || output.tool || output.selected_tool || output.action;
+    const workflowNode = toolCall.workflow_node || execution.workflow_node || output.workflow_node;
+    const dataSource = toolCall.data_source || output.data_source || output.selected_source || output.source;
+    const executionTarget = toolCall.execution_target || execution.execution_target;
+
+    if (!toolName && !workflowNode && !executionTarget) {
+        return "";
+    }
+
+    return `
+        <section class="tool-call-section">
+            <div class="tool-call-title">Tool Call</div>
+            <div class="tool-call-grid">
+                ${toolName ? `
+                    <div>
+                        <span>Tool</span>
+                        <strong>${escapeHtml(toolName)}</strong>
+                    </div>
+                ` : ""}
+                ${dataSource ? `
+                    <div>
+                        <span>Data source</span>
+                        <strong>${escapeHtml(dataSource)}</strong>
+                    </div>
+                ` : ""}
+                ${workflowNode ? `
+                    <div>
+                        <span>Workflow node</span>
+                        <strong>${escapeHtml(workflowNode)}</strong>
+                    </div>
+                ` : ""}
+                ${executionTarget ? `
+                    <div>
+                        <span>Execution target</span>
+                        <strong>${escapeHtml(executionTarget)}</strong>
+                    </div>
+                ` : ""}
+            </div>
+        </section>
+    `;
+}
+
+function summarizeArray(value) {
+    if (!Array.isArray(value)) {
+        return value;
+    }
+
+    return {
+        count: value.length,
+        details: "Collapsed in default trace view. Open full evidence JSON when needed.",
+        truncated: value.length > 0,
+    };
+}
+
+function summarizeObject(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return value;
+    }
+
+    return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => {
+            if (key === "rules" || key === "alerts" || key === "devices" || Array.isArray(item)) {
+                return [key, summarizeArray(item)];
+            }
+
+            if (item && typeof item === "object") {
+                return [key, summarizeObject(item)];
+            }
+
+            return [key, item];
+        })
+    );
+}
+
+function compactObservationOutput(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) {
+        return output ?? "Waiting for observation...";
+    }
+
+    const compact = { ...output };
+    delete compact.query_commands;
+    delete compact.db_audit;
+    delete compact.db_read_plan_commands;
+    delete compact.db_read_plan;
+
+    return compact;
+}
+
+function appendIfPresent(target, source, key) {
+    if (
+        source &&
+        Object.prototype.hasOwnProperty.call(source, key) &&
+        source[key] !== undefined
+    ) {
+        target[key] = source[key];
+    }
+}
+
+function summarizeNestedCounts(source, keys) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+        return null;
+    }
+
+    const summary = {};
+
+    keys.forEach(key => appendIfPresent(summary, source, key));
+
+    return Object.keys(summary).length > 0 ? summary : null;
+}
+
+function hasNestedArray(value) {
+    if (Array.isArray(value)) {
+        return value.length > 0;
+    }
+
+    if (!value || typeof value !== "object") {
+        return false;
+    }
+
+    return Object.values(value).some(item => hasNestedArray(item));
+}
+
+function isComplexObservation(compact) {
+    if (!compact || typeof compact !== "object" || Array.isArray(compact)) {
+        return false;
+    }
+
+    const compactText = JSON.stringify(compact);
+    const complexKeys = [
+        "devices",
+        "alerts",
+        "samples",
+        "sample_records",
+        "interpretation_notes",
+        "poc_rules",
+        "matches",
+        "provenance",
+    ];
+
+    return (
+        compactText.length > 900 ||
+        complexKeys.some(key => Object.prototype.hasOwnProperty.call(compact, key)) ||
+        hasNestedArray(compact)
+    );
+}
+
+function summarizeObservationOutput(output) {
+    const compact = compactObservationOutput(output);
+
+    if (!compact || typeof compact !== "object" || Array.isArray(compact)) {
+        return compact;
+    }
+
+    if (compact.source === "n8n_grafana_gateway") {
+        return {
+            source: compact.source,
+            tool: compact.tool,
+            workflow_id: compact.workflow_id,
+            http_call: compact.http_call,
+            evidence: summarizeObject(compact.evidence || {}),
+        };
+    }
+
+    if (!isComplexObservation(compact)) {
+        return compact;
+    }
+
+    const summary = {};
+    [
+        "source",
+        "tool",
+        "selected_tool",
+        "data_source",
+        "db_audit_status",
+        "count",
+        "record_count",
+        "distinct_device_count",
+        "record_type",
+        "classification",
+        "classification_status",
+        "rules_status",
+        "official_rules_status",
+    ].forEach(key => appendIfPresent(summary, compact, key));
+
+    const counterSummary = summarizeNestedCounts(compact.summary, [
+        "device_count",
+        "inventory_node_count",
+        "identity_count",
+        "container_count",
+        "rule_count",
+        "telemetry_catalog_count",
+        "content_instance_count",
+        "unmapped_telemetry_count",
+        "command_record_count",
+    ]);
+
+    if (counterSummary) {
+        summary.summary = counterSummary;
+    }
+
+    const alertSummary = summarizeNestedCounts(compact.alerts, [
+        "critical_count",
+        "warning_count",
+        "total_count",
+        "rules_status",
+        "policy",
+        "official",
+        "ruleset_version",
+    ]);
+
+    if (alertSummary) {
+        summary.alerts = alertSummary;
+    }
+
+    [
+        "devices",
+        "alerts",
+        "samples",
+        "sample_records",
+        "interpretation_notes",
+        "poc_rules",
+        "matches",
+    ].forEach(key => {
+        if (Array.isArray(compact[key])) {
+            summary[key] = summarizeArray(compact[key]);
+        }
+    });
+
+    return summary;
+}
+
+function isEmptyPlainObject(value) {
+    return value &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        Object.keys(value).length === 0;
+}
+
+function observationSummaryItems(summary, output) {
+    if (!summary || summary === "Waiting for observation...") {
+        return ["Waiting for observation..."];
+    }
+
+    if (isEmptyPlainObject(summary)) {
+        return ["No structured observation payload was returned for this step."];
+    }
+
+    if (typeof summary !== "object" || Array.isArray(summary)) {
+        return [String(summary)];
+    }
+
+    const items = [];
+    const add = (label, value) => {
+        if (value === undefined || value === null || value === "") {
+            return;
+        }
+
+        if (typeof value === "object") {
+            if (isEmptyPlainObject(value)) {
+                return;
+            }
+
+            items.push(`${label}: ${JSON.stringify(value)}`);
+            return;
+        }
+
+        items.push(`${label}: ${value}`);
+    };
+
+    add("Source", summary.source || summary.data_source);
+    add("Tool", summary.tool || summary.selected_tool);
+    add("Status", summary.status || summary.classification_status || summary.db_audit_status);
+    add("Records", summary.record_count || summary.count || summary.distinct_device_count);
+    add("Type", summary.record_type || summary.classification);
+
+    if (summary.summary && typeof summary.summary === "object") {
+        Object.entries(summary.summary).forEach(([key, value]) => {
+            add(formatObservationLabel(key), value);
+        });
+    }
+
+    if (summary.alerts && typeof summary.alerts === "object") {
+        Object.entries(summary.alerts).forEach(([key, value]) => {
+            add(formatObservationLabel(key), value);
+        });
+    }
+
+    ["devices", "samples", "sample_records", "matches"].forEach(key => {
+        const value = summary[key];
+
+        if (value && typeof value === "object") {
+            add(formatObservationLabel(key), value.count !== undefined
+                ? `${value.count} item${Number(value.count) === 1 ? "" : "s"}`
+                : value);
+        }
+    });
+
+    if (items.length === 0 && output && typeof output === "object") {
+        const topLevelKeys = Object.keys(output).filter(key => ![
+            "query_commands",
+            "db_audit",
+            "db_read_plan_commands",
+            "db_read_plan"
+        ].includes(key));
+
+        if (topLevelKeys.length > 0) {
+            items.push(`Observation keys: ${topLevelKeys.slice(0, 6).join(", ")}`);
+        }
+    }
+
+    return items.length > 0
+        ? items.slice(0, 8)
+        : ["Observation completed. Open full evidence JSON for raw details."];
+}
+
+function formatObservationLabel(key) {
+    return String(key || "")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function renderObservationSummary(summary, output) {
+    const items = observationSummaryItems(summary, output);
+
+    return `
+        <div class="observation-summary">
+            ${items.map(item => `
+                <div class="observation-summary-row">
+                    ${escapeHtml(item)}
+                </div>
+            `).join("")}
+        </div>
+    `;
+}
+
+function hasMeaningfulObservationSummary(summary) {
+    if (!summary || summary === "Waiting for observation...") {
+        return false;
+    }
+
+    if (isEmptyPlainObject(summary)) {
+        return false;
+    }
+
+    return true;
+}
+
+function shouldShowFullEvidenceToggle(compact, summary) {
+    if (!compact || typeof compact !== "object" || Array.isArray(compact)) {
+        return false;
+    }
+
+    return isComplexObservation(compact);
+}
+
+function renderObservationOutput(output) {
+    if (!output) {
+        return renderJsonBlock("Waiting for observation...");
+    }
+
+    const compactOutput = compactObservationOutput(output);
+    const summaryOutput = summarizeObservationOutput(output);
+    const showFullEvidence = shouldShowFullEvidenceToggle(
+        compactOutput,
+        summaryOutput
+    );
+    const showSummaryJsonCopy = hasMeaningfulObservationSummary(summaryOutput);
+    const showObservationActions = showFullEvidence || showSummaryJsonCopy;
+
+    return `
+        ${renderToolCall(output)}
+        ${renderWorkflowExecutions(output)}
+        ${renderExternalApiRequest(output)}
+        ${renderQueryCommands(output)}
+        <section class="observation-section">
+            <div class="observation-section-title">Observation</div>
+            ${renderObservationSummary(summaryOutput, output)}
+            ${showObservationActions ? `
+            <div class="observation-details">
+                <div class="observation-actions">
+                    ${showFullEvidence ? `
+                    <button
+                        class="observation-details-toggle"
+                        type="button"
+                        onclick="toggleFullEvidenceJson(this)"
+                    >
+                        Show full evidence JSON
+                    </button>
+                    ` : ""}
+                    ${showSummaryJsonCopy ? `
+                    <span
+                        class="observation-json-copy"
+                        role="button"
+                        tabindex="0"
+                        onclick="copyJsonAction(this, '${encodedJsonForCopy(summaryOutput)}')"
+                        onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); copyJsonAction(this, '${encodedJsonForCopy(summaryOutput)}'); }"
+                    >
+                        Copy summary JSON
+                    </span>
+                    ` : ""}
+                </div>
+                ${showFullEvidence ? `
+                    <div class="observation-details-panel hidden">
+                        ${renderJsonBlock(compactOutput, "observation-json")}
+                        <div class="observation-actions observation-actions-below">
+                            <span
+                                class="observation-json-copy"
+                                role="button"
+                                tabindex="0"
+                                onclick="copyJsonAction(this, '${encodedJsonForCopy(compactOutput)}')"
+                                onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); copyJsonAction(this, '${encodedJsonForCopy(compactOutput)}'); }"
+                            >
+                                Copy full evidence JSON
+                            </span>
+                        </div>
+                    </div>
+                ` : ""}
+            </div>
+            ` : ""}
+        </section>
+    `;
+}
+
+function observationText(output) {
+    return output
+        ? JSON.stringify(output, null, 2)
+        : "Waiting for observation...";
+}
+
 function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
     const content = document.getElementById("reasoningDrawerContent");
     const safeSteps = Array.isArray(steps) ? steps : [];
+    const scrollContainer = content.querySelector(".reasoning-trace-list") || content;
+    const shouldPinScroll = shouldKeepTypingPinnedToBottom(scrollContainer);
+    currentReasoningWorkflowSteps = safeSteps;
+    currentReasoningWorkflowFinalized = finalized;
 
     if (safeSteps.length === 0) {
         content.innerHTML = `
@@ -2366,16 +4599,13 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
                 No reasoning trace yet.
             </div>
         `;
+        restorePinnedScroll(content, shouldPinScroll);
         return;
     }
 
     let html = "";
 
     safeSteps.forEach(step => {
-        const outputText = step.output
-            ? JSON.stringify(step.output, null, 2)
-            : "Waiting for observation...";
-
         html += `
             <div class="reasoning-step" id="reasoning-step-${step.iteration}">
                 <h4>Iteration ${step.iteration}</h4>
@@ -2391,7 +4621,9 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
                 </p>
 
                 <p><strong>Observation:</strong></p>
-                <pre class="reasoning-observation">${escapeHtml(outputText)}</pre>
+                <div class="reasoning-observation-container">
+                    ${renderObservationOutput(step.output)}
+                </div>
             </div>
         `;
     });
@@ -2402,6 +4634,7 @@ function renderReasoningStepsStatic(steps, finalized = workflowFinalized) {
             ${html}
         </div>
     `;
+    restorePinnedScroll(content.querySelector(".reasoning-trace-list") || content, shouldPinScroll);
 }
 
 function renderReasoningSteps(steps, shouldType = false) {
@@ -2411,10 +4644,6 @@ function renderReasoningSteps(steps, shouldType = false) {
     let html = "";
 
     safeSteps.forEach((step, index) => {
-        const outputText = step.output
-            ? JSON.stringify(step.output, null, 2)
-            : "Waiting for observation...";
-
         html += `
             <div class="reasoning-step" data-step-index="${index}">
                 <h4>Iteration ${step.iteration}</h4>
@@ -2430,7 +4659,11 @@ function renderReasoningSteps(steps, shouldType = false) {
                 </p>
 
                 <p><strong>Observation:</strong></p>
-                <pre class="reasoning-observation">${shouldType ? "" : escapeHtml(outputText)}</pre>
+                <div class="reasoning-observation-container">
+                    ${shouldType
+                        ? '<pre class="reasoning-observation"></pre>'
+                        : renderObservationOutput(step.output)}
+                </div>
             </div>
         `;
     });
@@ -2464,34 +4697,34 @@ function renderReasoningSteps(steps, shouldType = false) {
         const actionElement = stepElement.querySelector(".reasoning-action");
         const observationElement = stepElement.querySelector(".reasoning-observation");
 
-        const observationText = step.output
-            ? JSON.stringify(step.output, null, 2)
-            : "Waiting for observation...";
-
         typeReasoningStep(
             thoughtElement,
             step.thought,
             actionElement,
             step.action,
             observationElement,
-            observationText
+            observationText(step.output)
         );
     });
 }
 
 function createReasoningStepElement(step) {
     const content = document.getElementById("reasoningDrawerContent");
+    let traceList = content.querySelector(".reasoning-trace-list");
+    const shouldPinScroll = shouldKeepTypingPinnedToBottom(traceList || content);
 
-    if (!content.querySelector(".reasoning-trace-list")) {
+    if (!traceList) {
         content.innerHTML = `
             ${renderWorkflowMap(latestReasoningSteps, workflowFinalized)}
             <div class="reasoning-trace-list"></div>
         `;
+        traceList = content.querySelector(".reasoning-trace-list");
     }
 
     const existing = document.getElementById(`reasoning-step-${step.iteration}`);
 
     if (existing) {
+        restorePinnedScroll(traceList || content, shouldPinScroll);
         return existing;
     }
 
@@ -2513,11 +4746,12 @@ function createReasoningStepElement(step) {
         </p>
 
         <p><strong>Observation:</strong></p>
-        <pre class="reasoning-observation"></pre>
+        <div class="reasoning-observation-container">
+        </div>
     `;
 
-    const traceList = content.querySelector(".reasoning-trace-list") || content;
-    traceList.appendChild(wrapper);
+    (traceList || content).appendChild(wrapper);
+    restorePinnedScroll(traceList || content, shouldPinScroll);
 
     return wrapper;
 }
@@ -2644,6 +4878,28 @@ function getRuntimeWorkflowTemplate(runtimeMode, frameworkName = "") {
         };
     }
 
+    if (framework === "langgraph+n8n" || (!framework && mode === "ioa_v3_langgraph_n8n")) {
+        return {
+            title: "IOA v3 workflow",
+            viewBox: "0 0 100 100",
+            nodes: [
+                { id: "validate_request", label: "Validate request", shortLabel: "Validate", detail: "Check prompt size, source context, and IOA v3 policy entry.", icon: "IN", x: 11, y: 30, type: "trigger" },
+                { id: "select_workflow", label: "Select workflow", shortLabel: "Select", detail: "LangGraph chooses an allowlisted operational workflow/tool.", icon: "AI", x: 34, y: 30, type: "agent" },
+                { id: "authorize_workflow", label: "Authorize workflow", shortLabel: "Authorize", detail: "Check tool allowlist, params, and execution budget.", icon: "OK", x: 56, y: 30, type: "agent" },
+                { id: "call_n8n_workflow", label: "Run approved tool", shortLabel: "Run tool", detail: "Execute the approved Grafana/n8n or company DB read workflow and collect bounded evidence.", icon: "HTTP", x: 73, y: 62, type: "tool" },
+                { id: "apply_kpi_rules", label: "Apply KPI rules", shortLabel: "KPI rules", detail: "Attach Grafana KPI semantics before language generation.", icon: "KPI", x: 83, y: 30, type: "agent" },
+                { id: "generate_answer", label: "Generate final answer", shortLabel: "Answer", detail: "Generate the final answer from n8n evidence and KPI rules.", icon: "OUT", x: 94, y: 30, type: "answer" }
+            ],
+            edges: [
+                { from: "validate_request", to: "select_workflow", path: "M17 20 C23 20 27 20 29 20" },
+                { from: "select_workflow", to: "authorize_workflow", path: "M40 20 C46 20 50 20 51 20" },
+                { from: "authorize_workflow", to: "call_n8n_workflow", path: "M62 24 C70 30 71 43 73 50" },
+                { from: "call_n8n_workflow", to: "apply_kpi_rules", path: "M78 51 C82 43 82 31 82 24" },
+                { from: "apply_kpi_rules", to: "generate_answer", path: "M88 20 C90 20 91 20 92 20" }
+            ]
+        };
+    }
+
     if (framework === "n8n" || (!framework && mode === "ioa_v2_n8n")) {
         return {
             title: "n8n workflow",
@@ -2706,6 +4962,7 @@ function inferWorkflowFramework(steps) {
     const knownFrameworks = {
         langchain: "LangChain",
         langgraph: "LangGraph",
+        "langgraph+n8n": "LangGraph+n8n",
         n8n: "n8n",
         dify: "Dify",
         custom: "Custom",
@@ -2967,8 +5224,11 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
     const workflow = buildWorkflowState(safeSteps, finalized);
     const framework = inferWorkflowFramework(safeSteps);
     const visibleNodes = workflow.nodes
-        .filter(node => !node.helper)
-        .slice(0, 4);
+        .filter(node => !node.helper);
+    const completedCount = visibleNodes.filter(node =>
+        node.status === "completed"
+    ).length;
+    const activeNode = visibleNodes.find(node => node.status === "active");
 
     workflowNodeDetailStore = {};
 
@@ -3005,17 +5265,48 @@ function renderWorkflowMap(steps, finalized = workflowFinalized) {
     `;
     }).join("");
 
+    const summary = activeNode
+        ? `${activeNode.shortLabel || activeNode.label} is running`
+        : `${completedCount}/${visibleNodes.length} steps complete`;
+
     return `
-        <section id="reasoningWorkflowMap" class="workflow-lane-map">
+        <section id="reasoningWorkflowMap" class="workflow-lane-map ${workflowMapExpanded ? "expanded" : "collapsed"}">
             <div class="workflow-map-header">
-                <span>Workflow</span>
-                <strong>${escapeHtml(workflow.title)}</strong>
+                <div>
+                    <span>Workflow</span>
+                    <strong>${escapeHtml(workflow.title)}</strong>
+                    <small>${escapeHtml(summary)}</small>
+                </div>
+                <button
+                    type="button"
+                    class="workflow-map-toggle"
+                    onclick="toggleReasoningWorkflowMap()"
+                >
+                    ${workflowMapExpanded ? "Hide" : "Show"}
+                </button>
             </div>
-            <div class="workflow-lane">
+            <div class="workflow-lane ${workflowMapExpanded ? "" : "hidden"}">
                 ${nodesHtml}
             </div>
         </section>
     `;
+}
+
+function toggleReasoningWorkflowMap() {
+    workflowMapExpanded = !workflowMapExpanded;
+    const steps = isLiveReasoningDrawerOpen()
+        ? (displayedWorkflowSteps.length ? displayedWorkflowSteps : latestReasoningSteps)
+        : currentReasoningWorkflowSteps;
+    const finalized = isLiveReasoningDrawerOpen()
+        ? workflowFinalized
+        : currentReasoningWorkflowFinalized;
+
+    if (isLiveReasoningDrawerOpen()) {
+        updateReasoningWorkflowMap(steps, finalized);
+        return;
+    }
+
+    renderReasoningStepsStatic(steps, finalized);
 }
 
 function getWorkflowNodeSummary(node, matchingStep) {
@@ -3056,6 +5347,8 @@ function updateReasoningWorkflowMap(steps, finalized = workflowFinalized) {
     }
 
     const existing = document.getElementById("reasoningWorkflowMap");
+    currentReasoningWorkflowSteps = Array.isArray(steps) ? steps : [];
+    currentReasoningWorkflowFinalized = finalized;
 
     if (existing) {
         existing.outerHTML = renderWorkflowMap(steps, finalized);
@@ -3128,28 +5421,30 @@ function enqueueReasoningObservation(step) {
         }
 
         const stepElement = createReasoningStepElement(step);
-        const observationElement = stepElement.querySelector(".reasoning-observation");
+        const observationContainer = stepElement.querySelector(
+            ".reasoning-observation-container"
+        );
+        const scrollContainer = getTypingScrollContainer(stepElement);
+        const shouldPinScroll = shouldKeepTypingPinnedToBottom(scrollContainer);
 
-        const observationText = step.output
-            ? JSON.stringify(step.output, null, 2)
-            : "Waiting for observation...";
+        if (observationContainer) {
+            observationContainer.innerHTML = renderObservationOutput(step.output);
+        }
 
-        return typeTextIntoElementPromise(observationElement, observationText, 1)
-            .then(() => {
-                const existingStep = displayedWorkflowSteps.find(item =>
-                    item.iteration === step.iteration
-                );
+        const existingStep = displayedWorkflowSteps.find(item =>
+            item.iteration === step.iteration
+        );
 
-                if (existingStep) {
-                    existingStep.output = step.output;
-                } else {
-                    displayedWorkflowSteps.push({
-                        ...step
-                    });
-                }
-
-                updateReasoningWorkflowMap(displayedWorkflowSteps, false);
+        if (existingStep) {
+            existingStep.output = step.output;
+        } else {
+            displayedWorkflowSteps.push({
+                ...step
             });
+        }
+
+        updateReasoningWorkflowMap(displayedWorkflowSteps, false);
+        restorePinnedScroll(scrollContainer, shouldPinScroll);
     });
 }
 
@@ -3157,6 +5452,14 @@ function renderAlertCenter() {
     const badge = document.getElementById("alertBadge");
     const summary = document.getElementById("alertSummary");
     const alertList = document.getElementById("alertList");
+
+    if (
+        currentDataSourceState.selected_source === "company" &&
+        currentAlertPolicy === "official"
+    ) {
+        renderOfficialCompanyAlertsPending(badge, summary, alertList);
+        return;
+    }
 
     if (
         currentDataSourceState.selected_source === "company" &&
@@ -3269,10 +5572,6 @@ function renderAlertCenter() {
                 </div>
 
                 <div class="alert-actions">
-                    <button onclick="diagnoseDevice('${device.device_id}')">
-                        Diagnose
-                    </button>
-
                     <button onclick="showDeviceHistory('${device.device_id}')">
                         History
                     </button>
@@ -3298,6 +5597,262 @@ function renderAlertCenter() {
             </div>
         `;
     });
+}
+
+function renderOfficialCompanyAlertsPending(badge, summary, alertList) {
+    const officialAlerts = currentDataSourceState.official_alerts || {};
+    const alerts = officialAlerts.active_alerts || [];
+    const critical = officialAlerts.critical_count || 0;
+    const warning = officialAlerts.warning_count || 0;
+    const total = alerts.length;
+    const alertRows = buildOfficialAlertRows(alerts);
+    const alertingDeviceCount = alertRows.filter(row => row.device_kind === "affected").length;
+    const unknownDeviceCount = alertRows.filter(row => row.device_kind === "unknown_status").length;
+
+    if (badge) {
+        if (total > 0) {
+            badge.classList.remove("hidden");
+            badge.textContent = total;
+        } else {
+            badge.classList.add("hidden");
+        }
+    }
+
+    if (!summary || !alertList) {
+        return;
+    }
+
+    if (total === 0) {
+        summary.textContent = "No active alerts.";
+        alertList.innerHTML = "";
+        return;
+    }
+
+    summary.innerHTML = `
+        <div class="company-summary-stats alert-overview-stats">
+            <div>
+                <span>Devices to check</span>
+                <strong>${escapeHtml(alertRows.length)}</strong>
+            </div>
+            <div>
+                <span>Alerting devices</span>
+                <strong>${escapeHtml(alertingDeviceCount)}</strong>
+            </div>
+            <div>
+                <span>Unknown status</span>
+                <strong>${escapeHtml(unknownDeviceCount)}</strong>
+            </div>
+            <div>
+                <span>Critical</span>
+                <strong>${escapeHtml(critical)}</strong>
+            </div>
+            <div>
+                <span>Warning</span>
+                <strong>${escapeHtml(warning)}</strong>
+            </div>
+        </div>
+    `;
+
+    if (alertRows.length === 0) {
+        alertList.innerHTML = `
+            <div class="table-card alert-table-wrapper">
+                <p class="metric-empty">
+                    Active KPI evidence exists, but no device sample was returned for review.
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    alertList.innerHTML = `
+        <div class="table-card alert-table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Device</th>
+                        <th>Status</th>
+                        <th>Reason</th>
+                        <th>Evidence</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${alertRows.map(row => renderOfficialAlertRow(row)).join("")}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function buildOfficialAlertRows(alerts) {
+    const rows = [];
+
+    alerts.forEach(kpi => {
+        const severityValue = kpi.severity || kpi.status;
+        const severity = ["critical", "warning", "good"].includes(severityValue)
+            ? severityValue
+            : "info";
+        const evidence = kpi.evidence || {};
+        const affectedDevices = evidence.affected_devices || [];
+        const unknownDevices = evidence.unknown_status_samples || [];
+
+        if (affectedDevices.length === 0 && unknownDevices.length === 0) {
+            rows.push({
+                kpi,
+                severity,
+                device_kind: "kpi_only",
+                device: null,
+            });
+        }
+
+        affectedDevices.forEach(device => {
+            rows.push({
+                kpi,
+                severity,
+                device,
+                device_kind: "affected",
+            });
+        });
+
+        unknownDevices.forEach(device => {
+            rows.push({
+                kpi,
+                severity: "unknown",
+                device,
+                device_kind: "unknown_status",
+            });
+        });
+    });
+
+    return rows;
+}
+
+function renderOfficialAlertRow(row) {
+    const device = row.device || {};
+    const deviceId = device.device_id || "";
+    const deviceName = row.device_kind === "kpi_only"
+        ? (row.kpi.title || row.kpi.kpi || "KPI alert")
+        : (device.device_name || deviceId || "Unknown device");
+    const deviceStatus = device.status || (
+        row.device_kind === "kpi_only" ? "no device sample" : "unknown"
+    );
+    const recordCount = Number(device.telemetry_record_count || 0);
+    const reason = formatOfficialAlertReason(row.kpi, row.severity, device, row.device_kind);
+    const evidence = formatOfficialAlertEvidence(row.kpi, row.device_kind);
+    const actions = deviceId
+        ? `
+            <div class="alert-row-actions">
+                <button class="secondary-btn" onclick="showDeviceHistory('${escapeJsString(deviceId)}')">
+                    History
+                </button>
+            </div>
+        `
+        : `<span class="metric-empty">No device action</span>`;
+
+    return `
+        <tr>
+            <td class="alert-device-name-cell">
+                <div class="copyable-device">
+                    <div class="copyable-device-text">
+                        <strong>${escapeHtml(deviceName)}</strong>
+                        <small class="device-subtext">
+                            ${deviceId ? `${escapeHtml(deviceId)} · ` : ""}
+                            ${escapeHtml(deviceStatus)} · ${recordCount} records
+                        </small>
+                    </div>
+                    ${deviceId ? `
+                        <button
+                            class="device-copy-btn"
+                            type="button"
+                            title="Copy device ID"
+                            onclick="copyDeviceId('${escapeJsString(deviceId)}', this)"
+                        >
+                            Copy
+                        </button>
+                    ` : ""}
+                </div>
+            </td>
+            <td>
+                <span class="alert-status-badge ${escapeHtml(row.severity)}">
+                    ${escapeHtml(row.severity.replace("_", " "))}
+                </span>
+            </td>
+            <td class="alert-reason-cell">${escapeHtml(reason)}</td>
+            <td class="alert-evidence-cell">${escapeHtml(evidence)}</td>
+            <td class="alert-actions-cell">${actions}</td>
+        </tr>
+    `;
+}
+
+function formatKpiThresholdSentence(thresholds) {
+    const labels = {
+        good_min: "good at or above",
+        warning_min: "warning at or above",
+        critical_below: "critical below",
+        good_below: "good below",
+        warning_max: "warning at or below",
+        critical_above: "critical above",
+        good_max: "good at or below"
+    };
+
+    return Object.entries(thresholds)
+        .map(([key, threshold]) => `${labels[key] || key.replaceAll("_", " ")} ${threshold}`)
+        .join("; ");
+}
+
+function formatOfficialAlertReason(kpi, severity, device, deviceKind) {
+    const title = kpi.title || kpi.kpi || "KPI alert";
+
+    if (deviceKind === "unknown_status") {
+        return `${title} needs review because this device has unknown connection status in the company evidence.`;
+    }
+
+    if (deviceKind === "kpi_only") {
+        return `${title} is active, but the current DB evidence did not return a device sample for direct action.`;
+    }
+
+    const status = device?.status || "matched the alert condition";
+    return `${title} is ${severity} because this device status is ${status}.`;
+}
+
+function formatOfficialAlertEvidence(kpi, deviceKind) {
+    const evidenceParts = [];
+    const value = kpi.value === null || kpi.value === undefined
+        ? "not evaluable"
+        : `${kpi.value}${kpi.unit || ""}`;
+    const metric = kpi.metric || "value";
+    const summary = kpiEvidenceSummary(kpi);
+    const thresholdText = formatKpiThresholdSentence(kpi.thresholds || {});
+
+    evidenceParts.push(`${metric} is ${value}.`);
+
+    if (summary) {
+        evidenceParts.push(`${summary}.`);
+    }
+
+    if (thresholdText) {
+        evidenceParts.push(`Thresholds: ${thresholdText}.`);
+    }
+
+    if (deviceKind === "unknown_status") {
+        evidenceParts.push("Included because unknown status devices can hide useful telemetry or mapping problems.");
+    }
+
+    return evidenceParts.join(" ");
+}
+
+function kpiEvidenceSummary(kpi) {
+    const evidence = kpi.evidence || {};
+
+    if (kpi.metric === "connected_devices_rate_percent") {
+        return `Evidence shows ${evidence.connected_devices || 0} connected out of ${evidence.status_evidence_devices || 0} status-known devices`;
+    }
+
+    if (kpi.metric === "invalid_payload_rate_percent") {
+        return `Evidence shows ${evidence.invalid_payloads || 0} invalid payloads out of ${evidence.content_instances_scanned || 0} scanned payloads`;
+    }
+
+    return `Source is ${evidence.source || kpi.source || "company DB"}`;
 }
 
 function renderCompanyPocAlerts(badge, summary, alertList) {
@@ -3382,9 +5937,6 @@ function renderCompanyPocAlerts(badge, summary, alertList) {
                     </span>
                 </div>
                 <div class="alert-actions">
-                    <button onclick="diagnoseDevice('${escapeHtml(alert.device_id)}')">
-                        Diagnose
-                    </button>
                     <button onclick="showDeviceHistory('${escapeHtml(alert.device_id)}')">
                         History
                     </button>
@@ -3925,7 +6477,9 @@ function renderCompanyDeviceHistory(history, canvas, emptyState) {
             ? safeHistory.slice(-12).reverse().map(item => `
                 <div>
                     <strong>${escapeHtml(formatCompanyTimestamp(item.timestamp))}</strong>
-                    <span>${escapeHtml(item.status || "No numeric telemetry in this record")}</span>
+                    <span>
+                        ${renderCompanyHistoryMetricSummary(item)}
+                    </span>
                 </div>
             `).join("")
             : "<p>No mapped telemetry history is available for this device.</p>";
@@ -3989,6 +6543,20 @@ function renderCompanyDeviceHistory(history, canvas, emptyState) {
     });
 }
 
+function renderCompanyHistoryMetricSummary(item) {
+    const metrics = Array.isArray(item.metrics) ? item.metrics : [];
+
+    if (metrics.length === 0) {
+        return escapeHtml(item.status || "No mapped telemetry in this record");
+    }
+
+    return metrics.slice(0, 4).map(metric => (
+        `${escapeHtml(companyMetricLabel(metric))}: ${escapeHtml(metric.value)}${
+            metric.unit ? ` ${escapeHtml(metric.unit)}` : ""
+        }`
+    )).join(" · ");
+}
+
 async function loadChatsFromDatabase() {
     const response = await fetch("/api/chats");
     const data = await response.json();
@@ -4010,7 +6578,17 @@ async function loadChatsFromDatabase() {
 document.addEventListener("DOMContentLoaded", () => {
     loadChatsFromDatabase();
     loadSlashCommands();
+    setDevicesLoadingState(true);
     refreshDevices();
+    const messageInput = document.getElementById("messageInput");
+
+    if (messageInput) {
+        messageInput.addEventListener("paste", scheduleMessageInputResize);
+    }
+
+    scheduleMessageInputResize();
+    updateRunButtonState();
+    refreshTodayTokenMeter();
 });
 
 async function saveMessageToDatabase(
@@ -4049,7 +6627,10 @@ async function saveMessageToDatabase(
             "Failed to save chat message:",
             data.error || response.status
         );
+        return;
     }
+
+    refreshTodayTokenMeter();
 }
 
 function toggleHistoryMenu(chatId) {
@@ -4203,7 +6784,7 @@ async function openProfileDrawer(type) {
     if (type === "settings") {
         title.textContent = "Settings";
         subtitle.textContent =
-            "Manage account preferences and workspace actions.";
+            "Manage password, username, logout, and account actions.";
 
         content.innerHTML = `
             <div class="drawer-info-list">
@@ -4344,11 +6925,11 @@ async function openProfileDrawer(type) {
 
     if (type === "workspace") {
         title.textContent = "Workspace & Data";
-        subtitle.textContent = "Operational data source and runtime status for this session.";
+        subtitle.textContent = "Choose the operational data source and review runtime status.";
 
         const selectedMode =
         document.getElementById("modeSelect")?.dataset.value ||
-        "ioa_v2_langgraph";
+        "ioa_v3_langgraph_n8n";
 
         let modeLabel = "IOA v2 · Custom Python ReAct Agent";
 
@@ -4370,6 +6951,10 @@ async function openProfileDrawer(type) {
 
         if (selectedMode === "ioa_v2_dify") {
             modeLabel = "IOA v2 · Dify App Agent";
+        }
+
+        if (selectedMode === "ioa_v3_langgraph_n8n") {
+            modeLabel = "IOA v3 · Ops Graph";
         }
 
         const deviceCount =
@@ -4411,10 +6996,42 @@ async function openProfileDrawer(type) {
                             aria-pressed="${selectedDataSource === "simulator"}"
                             onclick="changeDataSource('simulator')"
                         >
-                            Fallback simulator
+                            Simulator
                         </button>
                     </div>
                     <p id="dataSourceNote" class="drawer-source-note"></p>
+
+                    <div class="drawer-subsection">
+                        <strong>Alert Policy</strong>
+                        <p>Choose whether the Alerts tab uses official Grafana/company alerts or simulator rules.</p>
+                    </div>
+                    <div
+                        id="alertPolicySegmented"
+                        class="data-source-segmented alert-policy-segmented"
+                        data-selected="${escapeHtml(currentAlertPolicy)}"
+                        role="group"
+                        aria-label="Alert policy"
+                    >
+                        <button
+                            type="button"
+                            data-alert-policy="official"
+                            aria-pressed="${currentAlertPolicy === "official"}"
+                            onclick="changeAlertPolicy('official')"
+                        >
+                            Official alerts
+                        </button>
+                        <button
+                            type="button"
+                            data-alert-policy="fallback"
+                            aria-pressed="${currentAlertPolicy === "fallback"}"
+                            onclick="changeAlertPolicy('fallback')"
+                        >
+                            Fallback alerts
+                        </button>
+                    </div>
+                    <p class="drawer-source-note">
+                        Official alerts use the approved KPI rules and Grafana/n8n alert workflow. Fallback alerts keep the PoC device rules available as a separate view.
+                    </p>
                 </div>
 
                 <div>
@@ -4442,6 +7059,7 @@ async function openProfileDrawer(type) {
         `;
 
         updateDataSourceControl();
+        updateAlertPolicyControl();
         updateDataSourceDisplay();
 
         fetchStorageStatus().then(storageStatus => {
@@ -4476,7 +7094,7 @@ async function openProfileDrawer(type) {
         title.textContent = "Notifications";
 
         subtitle.textContent =
-            "Realtime alert behavior and workspace notification preferences.";
+            "Review realtime alert behavior.";
 
         const alertBadgeEnabled =
             !document
@@ -4543,6 +7161,37 @@ async function openProfileDrawer(type) {
         `;
     }
 
+    if (type === "telegram") {
+        title.textContent = "Telegram";
+        subtitle.textContent = "Link this account to the Telegram bot with a one-time code.";
+
+        content.innerHTML = `
+            <div class="drawer-info-list">
+                <div>
+                    <strong>Secure account linking</strong>
+                    <p>
+                        Generate a short-lived code, then send it to the Telegram bot.
+                        New links start with simulator access only.
+                    </p>
+
+                    <button class="secondary-btn" onclick="generateTelegramLinkCode()">
+                        Generate Link Code
+                    </button>
+
+                    <div id="telegramLinkResult" class="profile-form"></div>
+                </div>
+
+                <div>
+                    <strong>Company DB access</strong>
+                    <p>
+                        Company DB access is not self-granted through Telegram.
+                        An approved operator/admin must grant company scope after review.
+                    </p>
+                </div>
+            </div>
+        `;
+    }
+
     if (type === "usage") {
         title.textContent = "Usage Statistics";
         subtitle.textContent = "Account-level activity across your workspace.";
@@ -4559,6 +7208,71 @@ async function openProfileDrawer(type) {
         loadUsageStats(content);
     }
 
+}
+
+async function generateTelegramLinkCode() {
+    const result = document.getElementById("telegramLinkResult");
+
+    if (!result) {
+        return;
+    }
+
+    result.innerHTML = "<p>Generating link code...</p>";
+
+    try {
+        const response = await fetch("/api/profile/telegram-link-code", {
+            method: "POST",
+        });
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+            result.innerHTML = `<p>${escapeHtml(data.error || "Unable to create link code.")}</p>`;
+            return;
+        }
+
+        const command = `/link ${data.code}`;
+        result.innerHTML = `
+            <label>Send this command to the Telegram bot</label>
+            <div class="telegram-link-command-box">
+                <input id="telegramLinkCommand" readonly value="${escapeHtml(command)}">
+                <button
+                    id="telegramLinkCopyButton"
+                    class="telegram-link-copy-btn"
+                    onclick="copyTelegramLinkCommand(this)"
+                    type="button"
+                >
+                    Copy
+                </button>
+            </div>
+            <p>
+                Expires in ${Number(data.ttl_minutes || 15)} minutes.
+                The code can be used once.
+            </p>
+        `;
+    } catch (error) {
+        result.innerHTML = "<p>Unable to create link code.</p>";
+    }
+}
+
+async function copyTelegramLinkCommand(button = null) {
+    const input = document.getElementById("telegramLinkCommand");
+
+    if (!input) {
+        return;
+    }
+
+    await copyTextToClipboard(input.value);
+
+    if (button) {
+        const originalText = button.textContent;
+        button.textContent = "Copied";
+        button.classList.add("copied");
+
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.classList.remove("copied");
+        }, 1400);
+    }
 }
 
 function closeProfileDrawer() {
@@ -4757,7 +7471,8 @@ function typeReasoningStep(thoughtElement, thoughtText, actionElement, actionTex
 }
 
 function getTypingScrollContainer(element) {
-    return element.closest(".drawer-content") ||
+    return element.closest(".reasoning-trace-list") ||
+        element.closest(".drawer-content") ||
         element.closest(".chat-messages");
 }
 
@@ -4780,6 +7495,16 @@ function scrollTypingContainerIfPinned(element) {
     }
 
     container.scrollTop = container.scrollHeight;
+}
+
+function restorePinnedScroll(container, shouldPinScroll) {
+    if (!container || !shouldPinScroll) {
+        return;
+    }
+
+    requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+    });
 }
 
 function typeTextIntoElementPromise(element, text, speed = 8) {
@@ -4853,12 +7578,12 @@ function setTelegramRunState(isRunning) {
         runButton.disabled = isRunning;
         runButton.innerHTML = isRunning
             ? `
-                Running...
-                <span>Telegram</span>
+                <span>Running...</span>
+                <small>Please wait</small>
             `
             : `
-                Run
-                <span>Enter ↵</span>
+                <span>Run</span>
+                <small>Enter ↵</small>
             `;
     }
 
@@ -4877,9 +7602,19 @@ function setAppBusyState(isBusy) {
     const newChatButton = document.querySelector(".new-chat-btn");
     const logoutButton = document.querySelector(".logout-text-btn");
     const profileCard = document.querySelector(".profile-card");
+    const chatSearch = document.getElementById("chatSearch");
+    const sidebarToggle = document.getElementById("sidebarToggle");
 
     if (newChatButton) {
         newChatButton.disabled = isBusy;
+    }
+
+    if (chatSearch) {
+        chatSearch.disabled = isBusy;
+    }
+
+    if (sidebarToggle) {
+        sidebarToggle.disabled = isBusy;
     }
 
     if (logoutButton) {
@@ -4989,6 +7724,7 @@ async function loadUsageStats(content) {
 
 function formatBackendLabel(value) {
     const labels = {
+        mysql: "MySQL",
         mongodb: "MongoDB",
         postgres: "Postgres",
         supabase: "Supabase/Postgres",
@@ -5003,7 +7739,7 @@ function formatAppDataStatus(status) {
     const activeBackend = formatBackendLabel(status.active_backend);
 
     if (status.healthy) {
-        return `${activeBackend} healthy`;
+        return activeBackend;
     }
 
     if (status.fallback_enabled) {
@@ -5051,9 +7787,21 @@ function getRealtimeStatusHtml() {
             : '<span class="status-offline">Fallback simulator disconnected</span>';
     }
 
+    if (currentDataSourceState.active_source === "mongodb") {
+        return realtimeSocketConnected
+            ? '<span class="status-online">MongoDB telemetry active</span>'
+            : '<span class="status-offline">MongoDB telemetry disconnected</span>';
+    }
+
+    if (currentDataSourceState.active_source === "sqlite") {
+        return realtimeSocketConnected
+            ? '<span class="status-fallback">SQLite telemetry active</span>'
+            : '<span class="status-offline">SQLite telemetry disconnected</span>';
+    }
+
     return realtimeSocketConnected
-        ? '<span class="status-fallback">Fallback simulator active</span>'
-        : '<span class="status-offline">Fallback simulator disconnected</span>';
+        ? '<span class="status-online">Realtime active</span>'
+        : '<span class="status-offline">Realtime disconnected</span>';
 }
 
 function updateRealtimeStatusDisplay() {

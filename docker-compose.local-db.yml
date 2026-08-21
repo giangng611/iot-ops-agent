@@ -1,0 +1,36 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${DOCKER_MYSQL_DATABASE:-iot_ops_agent}
+      MYSQL_USER: ${DOCKER_MYSQL_USER:-iot_ops_agent}
+      MYSQL_PASSWORD: ${DOCKER_MYSQL_PASSWORD:-iot_ops_agent_dev}
+      MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:-iot_ops_agent_root_dev}
+    ports:
+      - "${DOCKER_MYSQL_PORT_ON_HOST:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  web:
+    environment:
+      MYSQL_DB_URL: ""
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${DOCKER_MYSQL_USER:-iot_ops_agent}
+      MYSQL_PASSWORD: ${DOCKER_MYSQL_PASSWORD:-iot_ops_agent_dev}
+      MYSQL_DATABASE: ${DOCKER_MYSQL_DATABASE:-iot_ops_agent}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql-data:

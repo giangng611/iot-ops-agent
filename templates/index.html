@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>IoT Ops Agent</title>
-    <link rel="stylesheet" href="/static/style.css?v=15">
+    <link rel="stylesheet" href="/static/style.css?v=48">
+    <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 </head>
 
 <body>
@@ -63,7 +64,7 @@
                     class="logout-text-btn"
                     onclick="event.stopPropagation(); openLogoutModal();"
                 >
-                    Logout
+                    <span>Logout</span>
                 </button>
             </div>
         </div>
@@ -75,7 +76,7 @@
             <button class="top-tab active" onclick="showTab('home', this)">Home</button>
             <button class="top-tab" onclick="showTab('devices', this)">Devices</button>
             <button class="top-tab" onclick="showTab('alerts', this)">
-                Alerts
+                <span>Alerts</span>
                 <span id="alertBadge" class="alert-badge hidden">0</span>
             </button>
             <button class="top-tab" onclick="showTab('prompts', this)">Prompts</button>
@@ -88,7 +89,7 @@
 
                 <div id="homeHero" class="home-hero">
                     <h1>IoT Ops Agent</h1>
-                    <p id="homeHeroPrompt">Ask about fleet health, critical devices, alarms, or device diagnosis.</p>
+                    <p id="homeHeroPrompt">Ask about fleet health, critical devices, alarms, or runbook checks.</p>
                 </div>
 
                 <div id="chatMessages" class="chat-messages"></div>
@@ -101,62 +102,78 @@
                     </div>
 
                     <div id="slashPalette" class="slash-palette hidden"></div>
-                    <div class="input-row chat-input-row">
-                        <div id="modeSelect" class="mode-picker" data-value="ioa_v2_langgraph">
-                            <button
-                                class="mode-picker-button"
-                                type="button"
-                                onclick="toggleModePicker()"
-                                aria-haspopup="listbox"
-                                aria-expanded="false"
-                            >
-                                <span id="modePickerLabel">IOA v2 · LangGraph</span>
-                                <svg viewBox="0 0 20 20">
-                                    <path d="M5.5 7.5 10 12l4.5-4.5"></path>
-                                </svg>
-                            </button>
+                    <div class="chat-composer">
+                        <textarea
+                            id="messageInput"
+                            maxlength="2000"
+                            rows="1"
+                            placeholder="Type / to see prompts..."
+                            oninput="handleMessageInput()"
+                            onkeydown="handleEnter(event)"
+                        ></textarea>
 
-                            <div id="modePickerMenu" class="mode-picker-menu hidden" role="listbox">
-                                <button type="button" data-mode="ioa_v1_custom" onclick="selectModeOption(this)">
-                                    IOA v1 · Custom Python
+                        <div class="composer-footer">
+                            <div id="modeSelect" class="mode-picker" data-value="ioa_v3_langgraph_n8n">
+                                <button
+                                    class="mode-picker-button"
+                                    type="button"
+                                    onclick="toggleModePicker()"
+                                    aria-haspopup="listbox"
+                                    aria-expanded="false"
+                                >
+                                    <span id="modePickerLabel">IOA v3 · Ops Graph</span>
+                                    <svg viewBox="0 0 20 20">
+                                        <path d="M5.5 7.5 10 12l4.5-4.5"></path>
+                                    </svg>
                                 </button>
-                                <button type="button" data-mode="ioa_v2_custom" onclick="selectModeOption(this)">
-                                    IOA v2 · Custom Python
-                                </button>
-                                <button type="button" data-mode="ioa_v2_langchain" onclick="selectModeOption(this)">
-                                    IOA v2 · LangChain
-                                </button>
-                                <button type="button" data-mode="ioa_v2_langgraph" onclick="selectModeOption(this)" class="selected">
-                                    IOA v2 · LangGraph
-                                </button>
-                                <button type="button" data-mode="ioa_v2_n8n" onclick="selectModeOption(this)">
-                                    IOA v2 · n8n
-                                </button>
-                                <button type="button" data-mode="ioa_v2_dify" onclick="selectModeOption(this)">
-                                    IOA v2 · Dify
+
+                                <div id="modePickerMenu" class="mode-picker-menu hidden" role="listbox">
+                                    <button type="button" data-mode="ioa_v1_custom" onclick="selectModeOption(this)">
+                                        IOA v1 · Custom Python
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_custom" onclick="selectModeOption(this)">
+                                        IOA v2 · Custom Python
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_langchain" onclick="selectModeOption(this)">
+                                        IOA v2 · LangChain
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_langgraph" onclick="selectModeOption(this)">
+                                        IOA v2 · LangGraph
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_n8n" onclick="selectModeOption(this)">
+                                        IOA v2 · n8n
+                                    </button>
+                                    <button type="button" data-mode="ioa_v2_dify" onclick="selectModeOption(this)">
+                                        IOA v2 · Dify
+                                    </button>
+                                    <button type="button" data-mode="ioa_v3_langgraph_n8n" onclick="selectModeOption(this)" class="selected">
+                                        IOA v3 · Ops Graph
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="composer-actions">
+                                <div id="todayTokenMeter" class="today-token-meter">
+                                    Today 0 tokens
+                                </div>
+
+                                <button
+                                    class="run-button"
+                                    onclick="sendMessage()"
+                                    title="Send message"
+                                    aria-label="Send message"
+                                >
+                                    <span>Run</span>
+                                    <small>Enter ↵</small>
                                 </button>
                             </div>
                         </div>
-
-                        <input
-                            id="messageInput"
-                            type="text"
-                            maxlength="2000"
-                            placeholder="Type / to see prompts..."
-                            oninput="handlePromptSuggestions()"
-                            onkeydown="handleEnter(event)"
-                        >
-
-                        <button class="run-button" onclick="sendMessage()">
-                            Run
-                            <span>Enter ↵</span>
-                        </button>
                     </div>
                 </div>
 
             </section>
 
-            <section id="devicesTab" class="tab-page">
+            <section id="devicesTab" class="tab-page workspace-page">
                 <div class="page-header page-header-with-status">
                     <div>
                         <h1>Devices</h1>
@@ -173,13 +190,13 @@
                         id="deviceSearch"
                         type="text"
                         placeholder="Search device..."
-                        oninput="renderDeviceTable()"
+                        oninput="resetDeviceTablePage()"
                     >
 
                     <select
                         id="statusFilter"
                         class="simulator-only-control"
-                        onchange="renderDeviceTable()"
+                        onchange="resetDeviceTablePage()"
                     >
                         <option value="all">
                             All statuses
@@ -201,7 +218,7 @@
                     <select
                         id="sortSelect"
                         class="simulator-only-control"
-                        onchange="renderDeviceTable()"
+                        onchange="resetDeviceTablePage()"
                     >
                         <option value="priority">
                             Sort by priority
@@ -227,7 +244,7 @@
                     <select
                         id="companyConnectionFilter"
                         class="company-only-control hidden"
-                        onchange="renderDeviceTable()"
+                        onchange="resetDeviceTablePage()"
                     >
                         <option value="all">
                             All connections
@@ -249,7 +266,7 @@
                     <select
                         id="companySortSelect"
                         class="company-only-control hidden"
-                        onchange="renderDeviceTable()"
+                        onchange="resetDeviceTablePage()"
                     >
                         <option value="latest">
                             Latest observed
@@ -268,74 +285,89 @@
                         </option>
                     </select>
 
+                    <button
+                        id="companyDbDebugButton"
+                        class="db-debug-button company-only-control hidden"
+                        type="button"
+                        onclick="openCompanyDbDebug()"
+                        title="Show backend MongoDB read commands and sampled results"
+                    >
+                        DB debug
+                    </button>
+
                 </div>
 
-                <div id="companyDataSummary" class="company-data-summary hidden"></div>
+                <div class="tab-scroll-body devices-scroll-body">
+                    <div id="companyDataSummary" class="company-data-summary hidden"></div>
 
-                <div id="devicesCharts" class="charts-grid">
-                    <div class="chart-card">
-                        <h2 id="healthChartTitle">Fleet Health Distribution</h2>
-                        <canvas id="healthChart"></canvas>
-                    </div>
-
-                    <div class="chart-card">
-                        <h2 id="metricsChartTitle">Average Fleet Metrics</h2>
-                        <div id="metricsChartLegend" class="custom-chart-legend">
-                            <span><i class="legend-cpu"></i>Avg CPU %</span>
-                            <span><i class="legend-memory"></i>Avg Memory %</span>
-                            <span><i class="legend-heartbeat"></i>Avg Heartbeat Delay</span>
+                    <div id="devicesCharts" class="charts-grid hidden">
+                        <div class="chart-card">
+                            <h2 id="healthChartTitle">Fleet Health Distribution</h2>
+                            <canvas id="healthChart"></canvas>
                         </div>
-                        <canvas id="metricsChart"></canvas>
+
+                        <div class="chart-card">
+                            <h2 id="metricsChartTitle">Average Fleet Metrics</h2>
+                            <div id="metricsChartLegend" class="custom-chart-legend">
+                                <span><i class="legend-cpu"></i>Avg CPU %</span>
+                                <span><i class="legend-memory"></i>Avg Memory %</span>
+                                <span><i class="legend-heartbeat"></i>Avg Heartbeat Delay</span>
+                            </div>
+                            <canvas id="metricsChart"></canvas>
+                        </div>
                     </div>
-                </div>
 
-                <div id="devicesTableCard" class="table-card">
+                    <div id="devicesTableCard" class="table-card">
 
-                    <div class="devices-table-wrapper">
+                        <div class="devices-table-wrapper">
 
-                        <table>
-                            <thead>
-                            <tr id="deviceTableHeader">
-                                <th>Device ID</th>
-                                <th>Status</th>
-                                <th>CPU</th>
-                                <th>Memory</th>
-                                <th>Heartbeat</th>
-                                <th>Priority</th>
-                                <th>Diagnose</th>
-                                <th>History</th>
-                            </tr>
-                            </thead>
-
-                            <tbody id="deviceTableBody">
-                                <tr id="devicesLoadingRow">
-                                    <td colspan="8">
-                                        Loading realtime device telemetry...
-                                    </td>
+                            <table>
+                                <thead>
+                                <tr id="deviceTableHeader">
+                                    <th>Device ID</th>
+                                    <th>Status</th>
+                                    <th>CPU</th>
+                                    <th>Memory</th>
+                                    <th>Heartbeat</th>
+                                    <th>Priority</th>
+                                    <th class="device-history-column">History</th>
                                 </tr>
-                            </tbody>
-                        </table>
+                                </thead>
+
+                                <tbody id="deviceTableBody">
+                                    <tr id="devicesLoadingRow">
+                                        <td class="devices-loading-cell">
+                                            Loading devices...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+
+                        </div>
+
+                        <div id="deviceTablePagination" class="table-pagination hidden"></div>
 
                     </div>
-
                 </div>
 
             </section>
 
-            <section id="alertsTab" class="tab-page">
+            <section id="alertsTab" class="tab-page workspace-page">
                 <div class="page-header">
                     <h1>Alerts</h1>
                     <p>Active warning and critical conditions based on the selected data source</p>
                 </div>
 
-                <div id="alertSummary" class="alert-summary">
-                    No active alerts.
-                </div>
+                <div class="tab-scroll-body alerts-scroll-body">
+                    <div id="alertSummary" class="alert-summary">
+                        No active alerts.
+                    </div>
 
-                <div id="alertList" class="alert-list"></div>
+                    <div id="alertList" class="alert-list"></div>
+                </div>
             </section>
 
-            <section id="promptsTab" class="tab-page">
+            <section id="promptsTab" class="tab-page workspace-page">
                 <div class="page-header">
                     <h1>Prompts</h1>
                     <p>Preset commands for common IoT operations workflows</p>
@@ -371,36 +403,39 @@
                     </select>
                 </div>
 
-                <div id="promptGrid" class="prompt-grid"></div>
+                <div class="tab-scroll-body prompts-scroll-body">
+                    <div id="promptGrid" class="prompt-grid"></div>
+                </div>
             </section>
 
-            <section id="profileTab" class="tab-page">
+            <section id="profileTab" class="tab-page workspace-page">
                 <div class="page-header">
                     <h1>Profile</h1>
                     <p>Manage your account settings and workspace preferences</p>
                 </div>
 
-                <div class="profile-dashboard full-width">
+                <div class="tab-scroll-body profile-scroll-body">
+                    <div class="profile-dashboard full-width">
 
-                    <div class="profile-page-card account-card">
-                        <div class="profile-page-header">
-                            <div class="profile-avatar large">
-                                <svg viewBox="0 0 24 24">
-                                    <path d="M20 21a8 8 0 0 0-16 0"></path>
-                                    <circle cx="12" cy="7" r="4"></circle>
-                                </svg>
-                            </div>
+                        <div class="profile-page-card account-card">
+                            <div class="profile-page-header">
+                                <div class="profile-avatar large">
+                                    <svg viewBox="0 0 24 24">
+                                        <path d="M20 21a8 8 0 0 0-16 0"></path>
+                                        <circle cx="12" cy="7" r="4"></circle>
+                                    </svg>
+                                </div>
 
-                            <div>
-                                <h2 id="profileMainUsername">
-                                    {{ session.get("username", "User") }}
-                                </h2>
-                                <p>Local account · IoT Ops Agent workspace</p>
+                                <div>
+                                    <h2 id="profileMainUsername">
+                                        {{ session.get("username", "User") }}
+                                    </h2>
+                                    <p>Local account · IoT Ops Agent workspace</p>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="profile-settings-grid">
+                        <div class="profile-settings-grid">
 
                         <button class="settings-card clickable-card" onclick="openProfileDrawer('settings')">
                             <div class="settings-card-header">
@@ -484,6 +519,27 @@
                             </span>
                         </button>
 
+                        <button class="settings-card clickable-card" onclick="openProfileDrawer('telegram')">
+                            <div class="settings-card-header">
+                                <div class="settings-icon">
+                                    <svg viewBox="0 0 24 24">
+                                        <path d="M21 4 3 11l7 2 2 7 9-16Z"></path>
+                                        <path d="m10 13 4 4"></path>
+                                    </svg>
+                                </div>
+
+                                <div>
+                                    <h3>Telegram</h3>
+                                    <p>Link this account to the Telegram bot with a one-time code.</p>
+                                </div>
+                            </div>
+
+                            <span class="card-action">
+                                Open →
+                            </span>
+                        </button>
+
+                        </div>
                     </div>
                 </div>
             </section>
@@ -521,6 +577,25 @@
         <div class="device-history-chart-wrapper">
             <canvas id="deviceHistoryChart"></canvas>
             <div id="deviceHistoryEmpty" class="device-history-empty hidden"></div>
+        </div>
+    </div>
+</div>
+
+<div id="companyDbDebugModal" class="modal-overlay hidden">
+    <div class="company-db-debug-modal">
+        <div class="device-history-header">
+            <div>
+                <h2>Company DB Debug</h2>
+                <p>Read-only backend commands, audit trace, and sampled results used by Devices.</p>
+            </div>
+
+            <button onclick="closeCompanyDbDebug()">
+                Close
+            </button>
+        </div>
+
+        <div id="companyDbDebugContent" class="company-db-debug-content">
+            No company database debug data yet.
         </div>
     </div>
 </div>
@@ -724,8 +799,23 @@
     </div>
 </div>
 
+<!-- Command parameter input modal -->
+<div id="commandParamModal" class="modal-overlay hidden" onclick="handleCommandParamBackdrop(event)">
+    <div class="command-param-dialog">
+        <div class="command-param-header">
+            <span id="commandParamTitle"></span>
+            <button class="command-param-close" onclick="closeCommandParamModal()">×</button>
+        </div>
+        <div id="commandParamFields" class="command-param-fields"></div>
+        <div class="command-param-footer">
+            <button class="command-param-cancel" onclick="closeCommandParamModal()">Cancel</button>
+            <button class="command-param-run" onclick="submitCommandParams()">Run</button>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="/static/script.js?v=21"></script>
+<script src="/static/script.js?v=55"></script>
 </body>
 </html>

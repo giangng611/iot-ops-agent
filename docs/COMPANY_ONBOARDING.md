@@ -11,7 +11,7 @@ Recommended production boundary:
 Flask web service
   -> authenticated UI, chat, Telegram, OpenAI calls, MCP client
 
-MCP server
+Company-provided MCP server
   -> bearer authentication, rate limits, audit log
   -> read-only operational data tools
 
@@ -23,8 +23,8 @@ App database
 ```
 
 The Flask service should never receive direct credentials for company MongoDB,
-Loki, Grafana, or Prometheus. Put those credentials only in the MCP server
-environment.
+Loki, Grafana, or Prometheus. Put those credentials only in your company's MCP
+server environment.
 
 ## 2. Prepare Company Credentials
 
@@ -75,12 +75,25 @@ TELEMETRY_WRITE_BACKEND=mongodb
 MONGODB_URI=mongodb://telemetry_user:password@mongo-host:27017/iot_ops_agent
 ```
 
-## 4. Configure the MCP Server
+## 4. Connect Your MCP Server
 
-Copy the MCP template:
+The public repository does not include an MCP implementation. Use
+[`../mcp_server/README.md`](../mcp_server/README.md) and
+[`../mcp_server/.env.example`](../mcp_server/.env.example) as the integration
+contract for the MCP service provided by your company or platform team.
+
+Your MCP server should own:
+
+- operational database credentials
+- Grafana/Loki/Prometheus credentials
+- bearer-key verification
+- read-only tool allowlists
+- per-caller rate limits and audit logs
+
+Use the MCP template as a checklist:
 
 ```bash
-cp mcp_server/.env.example mcp_server/.env
+cp mcp_server/.env.example /path/to/your-mcp-service/.env
 ```
 
 Required values:
@@ -129,10 +142,11 @@ different data model or operational workflow.
 
 ## 6. Verify Locally
 
-Start MCP:
+Start your MCP server using your company's deployment instructions. It should
+listen on the URL configured as `MCP_SERVER_URL`, for example:
 
-```bash
-PORT=8000 MCP_SERVER_HOST=127.0.0.1 .venv/bin/python mcp_server/server.py
+```env
+MCP_SERVER_URL=http://127.0.0.1:8000/mcp
 ```
 
 Start Flask:

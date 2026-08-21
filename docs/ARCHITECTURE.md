@@ -45,14 +45,15 @@ enabled:
 
 ### Company MongoDB Through MCP
 
-Company operational data is reached through the separate `mcp_server/`
-process. The Flask app is an MCP client and should not hold the real
+Company operational data is reached through a company-provided MCP server. The
+public `mcp_server/` folder is an integration contract, not a bundled server
+implementation. The Flask app is an MCP client and should not hold the real
 `COMPANY_MONGODB_URI`. It only needs `COMPANY_DATA_ACCESS_MODE=mcp`,
 `MCP_SERVER_URL`, and `MCP_BEARER_KEY`.
 
-Inside the MCP server, `mcp_server/services/company_mongo_proxy.py` permits
-bounded reads only, validates database and collection names, blocks unsafe
-operators, applies `maxTimeMS`, and rate-limits operations by caller.
+Inside the MCP server, the company implementation should permit bounded reads
+only, validate database and collection names, block unsafe operators, apply
+`maxTimeMS`, and rate-limit operations by caller.
 
 `services/company_data_service.py` builds a unified read model from:
 
@@ -215,14 +216,13 @@ gates for any future write action.
 
 ## MCP Server (peer service)
 
-`mcp_server/` is a separate, independently deployed process — not part of the
-Flask app above — that exposes read-only MongoDB, Grafana Loki, and
-Grafana/Prometheus tools over the MCP protocol (Streamable HTTP). It is the
-sole holder of the real Mongo/Loki/Grafana credentials; callers authenticate
-only with a bearer key scoped to the MCP server itself, verified with
-`hmac.compare_digest` before any tool runs (`mcp_server/auth.py`). The Mongo
-tools use the MCP server's copy of the company Mongo guardrail with
-namespace allowlists, blocked operators, rate limiting, and audit logs. See
+`mcp_server/` in the public repo is a contract folder for a separate,
+company-provided MCP service. That external service exposes read-only MongoDB,
+Grafana Loki, and Grafana/Prometheus tools over MCP-compatible transport. It is
+the sole holder of the real Mongo/Loki/Grafana credentials; callers
+authenticate only with a bearer key scoped to the MCP server itself. The MCP
+implementation should provide namespace allowlists, blocked operators, rate
+limiting, and audit logs. See
 [MCP Server Integration](MCP_SERVER_INTEGRATION.md),
 [MCP Server Usage](MCP_SERVER_USAGE.md), and
 [MCP Server Deployment](MCP_SERVER_DEPLOYMENT.md).

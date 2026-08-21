@@ -127,18 +127,9 @@ service token.
 
 ## Local Setup
 
-1. Start MCP server.
-
-   ```bash
-   source .venv/bin/activate
-   python mcp_server/server.py
-   ```
-
-   Or run it on an explicit port:
-
-   ```bash
-   PORT=8000 MCP_SERVER_HOST=127.0.0.1 .venv/bin/python mcp_server/server.py
-   ```
+1. Start your company-provided MCP server using that server's own repository,
+   package, or deployment instructions. The public repo does not include the
+   private MCP implementation.
 
 2. Start Flask app.
 

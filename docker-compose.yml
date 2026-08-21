@@ -1,17 +1,4 @@
 services:
-  mcp:
-    build:
-      context: ./mcp_server
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./mcp_server/.env:/app/mcp_server/.env:ro
-    environment:
-      PORT: 8000
-      MCP_SERVER_HOST: 0.0.0.0
-    ports:
-      - "${DOCKER_MCP_PORT_ON_HOST:-8000}:8000"
-
   web:
     build:
       context: .
@@ -25,11 +12,8 @@ services:
       MYSQL_READ_TIMEOUT_SECONDS: 10
       MYSQL_WRITE_TIMEOUT_SECONDS: 10
       COMPANY_DATA_ACCESS_MODE: mcp
-      MCP_SERVER_URL: http://mcp:8000/mcp
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:8000/mcp}
       APPLY_MYSQL_SCHEMA_ON_START: ${DOCKER_APPLY_MYSQL_SCHEMA_ON_START:-false}
     command: ["sh", "scripts/docker_web_entrypoint.sh"]
     ports:
       - "${DOCKER_WEB_PORT_ON_HOST:-5001}:5001"
-    depends_on:
-      mcp:
-        condition: service_started

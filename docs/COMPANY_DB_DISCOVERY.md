@@ -18,7 +18,9 @@ Flask app
   -> company MongoDB / Loki / Grafana / Prometheus
 ```
 
-Company MongoDB credentials belong in `mcp_server/.env`:
+Company MongoDB credentials belong in the environment of the
+company-provided MCP service. The public template includes
+[`../mcp_server/.env.example`](../mcp_server/.env.example) only as a contract:
 
 ```env
 COMPANY_MONGODB_URI=replace_me
@@ -35,8 +37,7 @@ MCP_BEARER_KEY=replace_me
 
 ## Mongo Read Guardrails
 
-MCP Mongo tools use the read proxy in `mcp_server/services/company_mongo_proxy.py`.
-The proxy exposes bounded read operations only:
+MCP Mongo tools should expose bounded read operations only:
 
 - `find`
 - database/collection discovery when allowed

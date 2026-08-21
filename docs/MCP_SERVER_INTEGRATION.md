@@ -1,201 +1,109 @@
-# MCP Server — Integration Reference
+# MCP Server Integration Reference
 
-Tài liệu này dành cho **Flask app, agent, hoặc hệ thống bên ngoài** muốn tích
-hợp với `mcp_server/` qua giao thức MCP (Model Context Protocol). Nếu bạn muốn
-tự chạy/test server trên máy mình, xem [MCP_SERVER_USAGE.md](MCP_SERVER_USAGE.md).
-Nếu bạn deploy server lên hạ tầng, xem [MCP_SERVER_DEPLOYMENT.md](MCP_SERVER_DEPLOYMENT.md).
-Để build Docker image, xem [mcp_server/Dockerfile](../mcp_server/Dockerfile).
+This public repository treats MCP as an external integration boundary. It does
+not include the private/company MCP implementation.
 
-## 1. Tổng quan kiến trúc
+## Architecture
 
+```text
+Flask app / IOA runtimes
+  -- Authorization: Bearer <RAW_KEY> -->
+Company-provided MCP server
+  -> read-only MongoDB or operational database tools
+  -> Loki log tools
+  -> Grafana/Prometheus metric tools
 ```
-Flask app / agent ngoài --Bearer key MCP--> MCP Server (HTTPS public/local)
-                                              ├─ mongo_tools    -> CompanyMongoReadProxy -> MongoDB công ty
-                                              ├─ loki_tools     -> grafana-client          -> Grafana Loki (log)
-                                              └─ grafana_tools  -> grafana-client          -> Grafana/Prometheus (metric)
-```
 
-- Credential thật (`COMPANY_MONGODB_URI`, `GRAFANA_URL`/`GRAFANA_USERNAME`/`GRAFANA_PASSWORD`
-  hoặc `GRAFANA_API_KEY`) **chỉ tồn tại trong env của MCP server**, không bao
-  giờ đi qua giao thức MCP. Flask app/agent ngoài chỉ cần biết
-  `MCP_SERVER_URL` + 1 bearer key riêng.
-- **Guardrail tự build (allowlist namespace, chặn operator nguy hiểm, rate
-  limit riêng) chỉ áp dụng cho nhóm tool Mongo.** Nhóm Loki/Grafana/Prometheus
-  gọi trực tiếp qua thư viện [`grafana-client`](https://github.com/grafana-toolbox/grafana-client),
-  không có allowlist/cap riêng — quyền truy cập do chính tài khoản/token
-  Grafana cấu hình trên server quyết định.
-- Transport: **Streamable HTTP** (không phải stdio) — bắt buộc vì server chạy
-  như 1 service public, không phải subprocess local.
+Only the MCP server should hold operational credentials:
 
-## 2. Kết nối
+- `COMPANY_MONGODB_URI`
+- `GRAFANA_URL`
+- `GRAFANA_USERNAME`
+- `GRAFANA_PASSWORD`
+- `GRAFANA_API_KEY`
 
-```
-URL:        https://<your-mcp-server-host>/mcp
-Transport:  Streamable HTTP
+The Flask app only needs:
+
+- `MCP_SERVER_URL`
+- `MCP_BEARER_KEY`
+
+## Connection
+
+```text
+URL:        https://your-mcp-host/mcp
+Transport:  streamable HTTP or compatible MCP transport
 Header:     Authorization: Bearer <RAW_KEY>
 ```
 
-Mọi request thiếu hoặc sai `Authorization` header bị chặn ở
-[`mcp_server/auth.py`](../mcp_server/auth.py) với HTTP 401, **trước khi chạm**
-Mongo/Loki/Grafana — không tool nào được dispatch nếu auth fail.
+Unauthenticated requests should be rejected before any operational system is
+read.
 
-### Ví dụ client (Python, `mcp` SDK)
+## Expected Tool Families
 
-```python
-import asyncio
-from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+The app expects read-only evidence from these families:
 
-async def main():
-    url = "https://<your-mcp-server-host>/mcp"
-    headers = {"Authorization": "Bearer <RAW_KEY>"}
+| Family | Purpose |
+|---|---|
+| MongoDB/platform database reads | OneM2M resources, device inventory, telemetry/resource evidence |
+| Grafana datasource discovery | Resolve datasource UIDs for metrics/logs |
+| Prometheus/Grafana queries | RabbitMQ, EMQX, Kubernetes, infrastructure metrics |
+| Loki log queries | service logs, trace/device keyword searches |
 
-    async with streamablehttp_client(url, headers=headers) as (read, write, _):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            tools = await session.list_tools()
-            print([t.name for t in tools.tools])
+Common tool names used by the private integration:
 
-            result = await session.call_tool(
-                "mongo_find",
-                {"database": "authorization", "collection": "IDENTITY", "query": {"_id": "some-device-id"}, "limit": 5},
-            )
-            # Prefer structuredContent: it's only populated when the
-            # server-side tool declares a concrete generic return type
-            # (eg. list[dict[str, Any]]) -- see "Đọc kết quả tool" below.
-            print(result.structuredContent)
-
-asyncio.run(main())
+```text
+mongo_find
+mongo_list_databases
+mongo_list_collections
+grafana_list_datasources
+grafana_query
+grafana_query_range
+loki_query_range
 ```
 
-Một client CLI tham khảo, không cần SDK riêng để tự viết từ đầu, có sẵn tại
-[`mcp_server/scripts/manual_test_client.py`](../mcp_server/scripts/manual_test_client.py).
+If your MCP server uses different names or schemas, adapt:
 
-## 3. Auth, rate limit, lỗi chuẩn
+- `services/mcp_client.py`
+- `services/company_mongo_proxy.py`
+- `services/mcp_observability_service.py`
+- IOA v3 tool mapping in `agents/ioa_v3_agent.py`
 
-| Tình huống | HTTP | Body |
-|---|---|---|
-| Thiếu/sai `Authorization` header | 401 | `{"error": "..."}`|
-| Vượt rate limit (theo `caller_id`, cấu hình `MCP_RATE_LIMIT_REQUESTS`/`MCP_RATE_LIMIT_WINDOW_SECONDS`, mặc định 60 req / 60s) | 429 | `{"error": "...", "retry_after": <seconds>}` |
-| Tool lỗi (namespace Mongo ngoài allowlist, Mongo/Grafana không reachable, operator bị chặn, v.v.) | 200 (MCP-level) | `CallToolResult.isError = true`, nội dung lỗi nằm trong `result.content` |
+## Response Contract
 
-`caller_id` được map 1-1 với bearer key qua `MCP_API_KEYS_JSON` (server chỉ
-lưu SHA-256 hash, không lưu raw key) — Flask app và mỗi caller/agent ngoài nên
-có 1 key riêng để rate-limit và audit log tách biệt theo từng bên.
+Tool responses should be JSON-serializable and safe to display in reasoning
+traces.
 
-## 4. Đọc kết quả tool (quan trọng)
+Recommended response behavior:
 
-`CallToolResult` có 2 cách lấy dữ liệu:
+- return structured dictionaries/lists for successful reads
+- return explicit unavailable/error payloads for upstream failures
+- redact credentials and internal connection strings
+- distinguish `not found`, `empty result`, and `tool unavailable`
+- include enough source metadata for auditability
 
-- `result.content` — danh sách content block (luôn có, dạng text/JSON string).
-- `result.structuredContent` — dict đã được validate theo schema, **chỉ được
-  điền khi tool có kiểu trả về generic cụ thể** (`list[dict[str, Any]]`,
-  `dict[str, Any]`, `list[str]`...). Với kiểu trả về bare (`list`, `dict`
-  không tham số), MCP SDK (FastMCP) **không** tạo schema nên
-  `structuredContent` sẽ là `None`.
+## Server-Side Environment Contract
 
-**Khuyến nghị: luôn ưu tiên đọc `result.structuredContent` nếu nó khác
-`None`.** Một số SDK còn bọc giá trị non-object (như `list`) dưới key
-`"result"` (`{"result": [...]}`) — kiểm tra `structuredContent.keys() ==
-{"result"}` và unwrap nếu cần. Toàn bộ tool Mongo trong server này
-(`mongo_find`, `mongo_list_collections`, `mongo_collection_stats`,
-`mongo_list_databases`) đã khai báo kiểu trả về cụ thể nên luôn có
-`structuredContent` đáng tin cậy. Nếu bạn thấy tool nào trả `dict`/`list`
-"trần" (không tham số generic) trong code, `structuredContent` cho tool đó
-có thể là `None` — khi đó phải tự parse `result.content[0].text` (JSON
-string) thay thế. Tham khảo cách xử lý cả 2 trường hợp tại
-[`mcp_server/scripts/_debug_common.py`](../mcp_server/scripts/_debug_common.py)
-hàm `call_tool()`.
+Use [mcp_server/.env.example](../mcp_server/.env.example) as a checklist for
+your MCP service.
 
-## 5. Tool catalog
+Important variables:
 
-### 5.1. Mongo (luôn bật, có guardrail)
+| Var | Purpose |
+|---|---|
+| `COMPANY_MONGODB_URI` | read-only operational database connection |
+| `COMPANY_MONGO_ALLOWED_NAMESPACES` | allowed `db.collection` reads |
+| `MCP_API_KEYS_JSON` | `caller_id -> sha256(raw_key)` auth map |
+| `MCP_RATE_LIMIT_REQUESTS` / `MCP_RATE_LIMIT_WINDOW_SECONDS` | caller rate limits |
+| `MCP_ENABLE_GRAFANA_TOOLS` | enable observability tools |
+| `GRAFANA_URL` / `GRAFANA_*` | Grafana/Loki/Prometheus access |
+| `DEFAULT_LOKI_NAMESPACE` | default log namespace |
+| `DEFAULT_K8S_NAMESPACE` | default Kubernetes namespace |
 
-| Tool | Tham số | Trả về |
-|---|---|---|
-| `mongo_find` | `database: str`, `collection: str`, `query: dict?`, `projection: dict?`, `sort_field: str?`, `sort_direction: int?`, `limit: int = 100` | `list[dict[str, Any]]` |
-| `mongo_list_collections` | `database: str` | `list[str]` |
-| `mongo_collection_stats` | `database: str`, `collection: str` | `dict[str, Any]` |
-| `mongo_list_databases` | *(không có)* | `list[str]` |
+## Security Expectations
 
-Guardrail (xem [`services/company_mongo_proxy.py`](../services/company_mongo_proxy.py)):
-
-- **Allowlist namespace** (`database.collection`) — mặc định
-  (`DEFAULT_ALLOWED_NAMESPACES`), override bằng env `COMPANY_MONGO_ALLOWED_NAMESPACES`
-  (CSV). Truy vấn ngoài allowlist bị chặn trước khi chạm Mongo thật.
-- **Chặn operator nguy hiểm** (`BLOCKED_QUERY_OPERATORS`, gồm `$regex`,
-  `$where`, ...) trong `query`/`projection` — luôn dùng exact-match, không
-  dùng partial/regex match.
-- **Cap `limit`** ở `MAX_QUERY_LIMIT` (1000) dù caller truyền lớn hơn.
-- **Rate limit riêng** theo `COMPANY_MONGO_PROXY_RATE_LIMIT_REQUESTS`/`_WINDOW_SECONDS`
-  (mặc định 120 req / 60s) — độc lập với rate limit theo `caller_id` ở tầng
-  MCP auth.
-- **Audit log** mỗi lần đọc (database, collection, query, effective limit)
-  ra stdout server dưới dạng JSON có cấu trúc.
-
-`mongo_find` trả lỗi (tool error, không phải exception ngầm) khi: namespace
-ngoài allowlist, operator bị chặn, hoặc Mongo không reachable. **Một lỗi kết
-nối Mongo KHÔNG đồng nghĩa "resource không tồn tại"** — luôn phân biệt rõ 2
-trường hợp này ở phía client (xem pattern tri-state `found`/`empty`/`error`
-trong `_debug_common.py::mongo_find`).
-
-### 5.2. Loki — log (tuỳ chọn, bật bằng `MCP_ENABLE_GRAFANA_TOOLS=true`)
-
-| Tool | Tham số | Trả về |
-|---|---|---|
-| `loki_query_range` | `datasource_uid: str`, `start: int`, `end: int`, `service_name: str?`, `namespace: str = DEFAULT_LOKI_NAMESPACE`, `contains: str?`, `limit: int = 100` | `dict` (raw Grafana/Loki response) |
-
-- `datasource_uid` lấy qua `grafana_list_datasources` (không còn id cố định).
-- `service_name`/`namespace` chỉ là tiện ích tự build LogQL selector
-  (`{k8s_namespace_name="...", service_name="..."}`), **không phải
-  guardrail** — không có allowlist label.
-- `contains` thêm LogQL line filter (`|= "..."`). Bỏ `service_name` + dùng
-  `contains` để tìm 1 chuỗi (vd `trace_id`) xuyên suốt **toàn bộ namespace**,
-  không giới hạn theo service — hữu ích để follow 1 request qua nhiều service
-  mà không cần biết trước nó được route tới đâu (xem
-  `_debug_common.py::auto_trace_from_matches`).
-- `start`/`end` là Unix timestamp giây.
-
-### 5.3. Grafana/Prometheus — metric (tuỳ chọn, cùng flag `MCP_ENABLE_GRAFANA_TOOLS`)
-
-| Tool | Tham số | Trả về |
-|---|---|---|
-| `grafana_list_datasources` | *(không có)* | `list` — `[{id, uid, name, type}, ...]` |
-| `grafana_query` | `datasource_uid: str`, `promql_query: str` | `dict` — instant query |
-| `grafana_query_range` | `datasource_uid: str`, `promql_query: str`, `start: int`, `end: int`, `step: int = 60` | `dict` — range query |
-
-Không có allowlist metric/label riêng — quyền truy cập hoàn toàn do tài
-khoản/token Grafana cấu hình trên server (`GRAFANA_USERNAME`/`GRAFANA_PASSWORD`
-hoặc `GRAFANA_API_KEY`) quyết định.
-
-Cả 4 tool Loki/Grafana ở trên đều đã khai báo kiểu trả về generic cụ thể
-(`list[dict[str, Any]]`/`dict[str, Any]`), giống nhóm Mongo ở mục 5.1, nên
-`structuredContent` luôn được điền đáng tin cậy — không cần fallback parse
-`result.content` cho các tool này.
-
-## 6. Example Real-World Integration Scenario
-
-Repo này có sẵn các script tự động hoá theo runbook vận hành công ty. Tài liệu
-runbook gốc là tài liệu nội bộ do team cung cấp, không được commit public vào
-repo. Toàn bộ script bên dưới chỉ gọi qua MCP tool ở trên — dùng làm ví dụ
-end-to-end:
-
-- [`mcp_server/scripts/debug_device_command_flow.py`](../mcp_server/scripts/debug_device_command_flow.py) — debug luồng gửi lệnh xuống thiết bị.
-- [`mcp_server/scripts/debug_telemetry_flow.py`](../mcp_server/scripts/debug_telemetry_flow.py) — debug luồng telemetry từ thiết bị gửi lên.
-- [`mcp_server/scripts/check_device_status.py`](../mcp_server/scripts/check_device_status.py) — kiểm tra tổng quát 1 thiết bị đã lên hệ thống chưa.
-
-## 7. Env vars server cần (để team deploy biết cấu hình, KHÔNG đưa cho agent ngoài)
-
-| Var | Bắt buộc | Mô tả |
-|---|---|---|
-| `COMPANY_MONGODB_URI` | có | Connection string Mongo công ty (read-only account). Nếu seed host là 1 replica-set member duy nhất expose qua IP public/NAT còn các member khác chỉ advertise IP nội bộ, thêm `&directConnection=true`. |
-| `COMPANY_MONGO_ALLOWED_NAMESPACES` | không | CSV `db.collection`, override allowlist mặc định. |
-| `MCP_API_KEYS_JSON` | có | JSON `{"caller_id": "sha256_hash_of_key"}`. |
-| `MCP_RATE_LIMIT_REQUESTS` / `MCP_RATE_LIMIT_WINDOW_SECONDS` | không | Rate limit theo caller ở tầng MCP auth (mặc định 60/60s). |
-| `MCP_ENABLE_GRAFANA_TOOLS` | không | `"true"` để bật nhóm tool Loki/Grafana. |
-| `GRAFANA_URL` | nếu bật Grafana | Base URL Grafana instance. |
-| `GRAFANA_USERNAME` + `GRAFANA_PASSWORD` hoặc `GRAFANA_API_KEY` | nếu bật Grafana | Credential Grafana. |
-| `PORT` | không | Cổng HTTP server lắng nghe (mặc định 8000). |
-
-Chi tiết đầy đủ + cách tạo bearer key: [MCP_SERVER_USAGE.md](MCP_SERVER_USAGE.md).
-Hướng dẫn deploy production: [MCP_SERVER_DEPLOYMENT.md](MCP_SERVER_DEPLOYMENT.md).
+- Use read-only operational credentials.
+- Enforce authentication before tool dispatch.
+- Use one bearer key per caller.
+- Enforce allowlists for database reads.
+- Log tool calls without logging raw secrets.
+- Use HTTPS in production.

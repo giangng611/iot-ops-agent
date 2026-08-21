@@ -21,7 +21,8 @@ Operator prompt
 
 The Flask app is the agent/runtime surface. It must not hold direct company
 MongoDB, Loki, Grafana, or Prometheus credentials. Those credentials live only
-in `mcp_server/.env`.
+in the company-provided MCP service environment. The public `mcp_server/`
+folder contains only the integration contract.
 
 ## Scenario Coverage
 

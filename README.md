@@ -2,20 +2,24 @@
 
 IoT Ops Agent is an AI-powered operations workspace for enterprise IoT
 platforms. It combines a Flask + Socket.IO web app, authenticated chat
-workflows, simulator fallback, and an MCP server that gates access to
-operational evidence such as MongoDB, Loki, Grafana, and Prometheus.
+workflows, simulator fallback, and an MCP integration boundary for operational
+evidence such as MongoDB, Loki, Grafana, and Prometheus.
 
 This repository is the public product-template edition. It is designed so a
 company can clone the code, keep its own credentials in environment files or
 deployment secrets, and adapt the allowed data namespaces/runbooks to its IoT
 platform.
 
+The public edition does not include the private/company MCP implementation.
+Each company should connect its own MCP-compatible server. See
+[mcp_server/README.md](mcp_server/README.md).
+
 ## Architecture
 
 ```text
 Web UI / Telegram
   -> Flask app / IOA runtimes
-  -> MCP server
+  -> company-provided MCP server
   -> Company MongoDB / Loki / Grafana / Prometheus
 
 App-owned data
@@ -76,10 +80,11 @@ MCP_SERVER_URL=http://127.0.0.1:8000/mcp
 MCP_BEARER_KEY=replace_me
 ```
 
-Create MCP config:
+Prepare your company-provided MCP server separately. This repo includes only
+the expected contract:
 
 ```bash
-cp mcp_server/.env.example mcp_server/.env
+open mcp_server/README.md
 ```
 
 Configure at minimum:
@@ -89,13 +94,7 @@ COMPANY_MONGODB_URI=mongodb://readonly_user:password@company-mongo-host:27017/?a
 MCP_API_KEYS_JSON={"caller-id":"sha256_hash_of_raw_key"}
 ```
 
-Start MCP server in one terminal:
-
-```bash
-PORT=8000 MCP_SERVER_HOST=127.0.0.1 .venv/bin/python mcp_server/server.py
-```
-
-Start Flask in another terminal:
+After your MCP server is reachable, start Flask:
 
 ```bash
 .venv/bin/python app.py
@@ -113,10 +112,10 @@ contract.
 
 ## Docker Quick Start
 
-For a containerized Flask/MCP runtime that uses `.env` and
-`mcp_server/.env`:
+For a containerized Flask runtime that connects to your external MCP server:
 
 ```bash
+MCP_SERVER_URL=http://host.docker.internal:8000/mcp \
 docker-compose --env-file /dev/null up --build
 ```
 
@@ -126,9 +125,9 @@ Open:
 http://127.0.0.1:5001
 ```
 
-The Compose file intentionally does not start production MySQL, company
-MongoDB, Grafana, Loki, or Prometheus. It packages the app services and
-connects them to the external systems configured by each deployment.
+The Compose file intentionally does not start MCP, production MySQL, company
+MongoDB, Grafana, Loki, or Prometheus. It packages the web app and connects it
+to the external systems configured by each deployment.
 
 If you prefer an isolated local MySQL container:
 
@@ -169,6 +168,8 @@ Prompt aliases are available in the chat input:
 
 - Do not commit `.env`, `mcp_server/.env`, database dumps, reports, backups, or
   generated evidence artifacts.
+- Do not commit a private/company MCP implementation unless you own the rights
+  to publish it.
 - Use read-only database users for operational data.
 - Store deployment secrets in GitHub Actions secrets, hosting-provider secrets,
   Docker/Kubernetes secrets, or the target server environment.

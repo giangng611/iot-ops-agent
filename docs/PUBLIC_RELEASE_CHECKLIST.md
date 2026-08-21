@@ -23,6 +23,8 @@ Use this checklist before pushing a public branch to GitHub.
 
 - [ ] `.env.example` contains placeholders only.
 - [ ] `mcp_server/.env.example` contains placeholders only.
+- [ ] `mcp_server/` contains only the public integration contract, not a
+      private/company MCP implementation.
 - [ ] README explains the Flask/MCP secret boundary.
 - [ ] onboarding docs explain company-specific configuration.
 - [ ] default namespaces are generic and configurable.

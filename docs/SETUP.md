@@ -4,7 +4,7 @@ This guide describes the company-oriented local setup. The normal stack is:
 
 - Flask app for UI, auth, chat, prompts, Telegram, and agent execution
 - MySQL for app data after migration from Supabase/Postgres
-- MCP server for company MongoDB, Loki, Grafana, and Prometheus evidence
+- company-provided MCP server for MongoDB, Loki, Grafana, and Prometheus evidence
 - MongoDB for optional simulator telemetry storage
 - SQLite only as fallback/debug storage, not as the expected runtime database
 
@@ -153,7 +153,13 @@ create production chat/user data in SQLite.
 
 ## 4. MCP Server Environment
 
-Create `mcp_server/.env`. This file owns company operational credentials.
+The public repository does not ship an MCP implementation. Your company or
+platform team must provide an MCP-compatible service. Use
+[`../mcp_server/README.md`](../mcp_server/README.md) and
+[`../mcp_server/.env.example`](../mcp_server/.env.example) as the contract for
+that service.
+
+The MCP service environment owns company operational credentials:
 
 ```env
 COMPANY_MONGODB_URI=replace_me
@@ -174,10 +180,13 @@ LOKI_URL=
 Use either Grafana username/password or an API key, depending on the company
 deployment. Do not commit this file.
 
-Start MCP:
+Start your MCP server separately with your company's deployment instructions.
+Then configure Flask to point to it:
 
-```bash
-PORT=8000 MCP_SERVER_HOST=127.0.0.1 .venv/bin/python mcp_server/server.py
+```env
+COMPANY_DATA_ACCESS_MODE=mcp
+MCP_SERVER_URL=http://127.0.0.1:8000/mcp
+MCP_BEARER_KEY=replace_me
 ```
 
 Expected unauthenticated browser checks against `/` may return `401`. That is

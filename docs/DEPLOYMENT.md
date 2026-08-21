@@ -14,7 +14,7 @@ Flask web service
   - OpenAI/LLM calls
   - MCP client only
 
-MCP server
+Company-provided MCP server
   - bearer auth
   - rate limits and audit log
   - company MongoDB read proxy
@@ -100,7 +100,9 @@ the Flask service.
 
 ## MCP Environment
 
-Configure these on the MCP service:
+The public repository does not include the MCP implementation. Deploy the MCP
+service supplied or implemented by your company, then configure these variables
+on that MCP service:
 
 ```env
 COMPANY_MONGODB_URI=replace_me
@@ -121,11 +123,9 @@ LOKI_URL=
 Use one raw bearer key per caller and store only its SHA-256 hash in
 `MCP_API_KEYS_JSON`.
 
-Start command:
-
-```bash
-PORT=8000 MCP_SERVER_HOST=0.0.0.0 .venv/bin/python mcp_server/server.py
-```
+The MCP service must expose an authenticated MCP endpoint such as
+`https://your-mcp-host/mcp`. Configure Flask with that URL via
+`MCP_SERVER_URL`.
 
 ## App Data Migration
 

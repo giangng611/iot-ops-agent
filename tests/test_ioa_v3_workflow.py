@@ -181,7 +181,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
                 "grafana_emqx_connection_trend",
             ),
             (
-                "Check Kubernetes resource health in namespace one-iot: pod CPU and memory",
+                "Check Kubernetes resource health in namespace iot-platform: pod CPU and memory",
                 "grafana_k8s_resources",
             ),
         ]
@@ -216,9 +216,9 @@ class IOAV3WorkflowTests(unittest.TestCase):
                 {},
             ),
             (
-                "Check Kubernetes resource health in namespace one-iot: pod CPU, memory, restart count, pod status, node resources.",
+                "Check Kubernetes resource health in namespace iot-platform: pod CPU, memory, restart count, pod status, node resources.",
                 "grafana_k8s_resources",
-                {"namespace": "one-iot"},
+                {"namespace": "iot-platform"},
             ),
         ]
 
@@ -370,7 +370,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
             (
                 "grafana_k8s_resources",
                 {
-                    "request": {"namespace": "one-iot"},
+                    "request": {"namespace": "iot-platform"},
                     "queries": {
                         "pod_cpu": {"data": {"result": []}},
                         "pod_memory": {"data": {"result": []}},

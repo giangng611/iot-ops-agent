@@ -1,4 +1,5 @@
 import argparse
+import os
 from datetime import datetime, timedelta, timezone
 
 from flask import Flask, jsonify, request
@@ -183,7 +184,7 @@ def k8s():
 def k8s_resources():
     return jsonify({
         "level": "warning",
-        "namespace": request.args.get("namespace", "one-iot"),
+        "namespace": request.args.get("namespace", os.getenv("DEFAULT_K8S_NAMESPACE", "iot-platform")),
         "pods": [
             {
                 "pod": "iot-mqtt-client-adapter-0",

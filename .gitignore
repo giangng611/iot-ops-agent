@@ -1,9 +1,36 @@
 .env
+.env.*
+!.env.example
+mcp_server/.env
+mcp_server/.env.*
+!mcp_server/.env.example
 .idea/
 telemetry.db
+*.db
+*.sqlite
+*.sqlite3
 benchmark_results.csv
+eval/*runtime_results*.csv
 venv/
 .venv/
 __pycache__/
 *.pyc
 .DS_Store
+node_modules/
+
+# Local/private release artifacts. Keep product source and sanitized examples in Git.
+backups/
+outputs/
+reports/
+*.bundle
+*.dump
+*_dump.sql
+internship_report_slides.html
+scripts/collect_mcp_runbook_report.py
+
+# Generated reports and office artifacts should be reviewed before publishing.
+*.xlsx
+*.xls
+*.pptx
+*.docx
+*.pdf

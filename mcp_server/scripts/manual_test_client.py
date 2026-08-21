@@ -4,7 +4,7 @@ Usage (works the same in bash, PowerShell, cmd.exe -- avoids shell quoting
 issues with embedded JSON by accepting key=value pairs instead):
   python mcp_server/scripts/manual_test_client.py list
   python mcp_server/scripts/manual_test_client.py call mongo_find database=authorization collection=IDENTITY limit=5
-  python mcp_server/scripts/manual_test_client.py call loki_query_range query={namespace="one-iot"} start=0 end=100 limit=5
+  python mcp_server/scripts/manual_test_client.py call loki_query_range query={namespace="iot-platform"} start=0 end=100 limit=5
 
 For tools that need nested JSON (e.g. a Mongo query filter), write the args
 to a JSON file and pass it with @:

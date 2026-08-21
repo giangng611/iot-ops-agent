@@ -143,7 +143,7 @@ trong `_debug_common.py::mongo_find`).
 
 | Tool | Tham số | Trả về |
 |---|---|---|
-| `loki_query_range` | `datasource_uid: str`, `start: int`, `end: int`, `service_name: str?`, `namespace: str = "one-iot"`, `contains: str?`, `limit: int = 100` | `dict` (raw Grafana/Loki response) |
+| `loki_query_range` | `datasource_uid: str`, `start: int`, `end: int`, `service_name: str?`, `namespace: str = DEFAULT_LOKI_NAMESPACE`, `contains: str?`, `limit: int = 100` | `dict` (raw Grafana/Loki response) |
 
 - `datasource_uid` lấy qua `grafana_list_datasources` (không còn id cố định).
 - `service_name`/`namespace` chỉ là tiện ích tự build LogQL selector
@@ -173,7 +173,7 @@ Cả 4 tool Loki/Grafana ở trên đều đã khai báo kiểu trả về gener
 `structuredContent` luôn được điền đáng tin cậy — không cần fallback parse
 `result.content` cho các tool này.
 
-## 6. Ví dụ kịch bản tích hợp thực tế
+## 6. Example Real-World Integration Scenario
 
 Repo này có sẵn các script tự động hoá theo runbook vận hành công ty. Tài liệu
 runbook gốc là tài liệu nội bộ do team cung cấp, không được commit public vào

@@ -3365,7 +3365,7 @@ Evidence summary:
         lines += [
             "",
             "## 2. Input",
-            f"- **Namespace:** `{request.get('namespace') or 'one-iot'}`",
+            f"- **Namespace:** `{request.get('namespace') or os.getenv('DEFAULT_K8S_NAMESPACE', 'iot-platform')}`",
             f"- **Service:** {request.get('service') or 'all'}",
             f"- **Pod:** {request.get('pod') or 'all'}",
             "- **Issue type:** kubernetes_resource",
@@ -6850,7 +6850,7 @@ JSON schema:
             or "namespace" in text
         ):
             namespace = self.extract_param(text, "namespace")
-            params["namespace"] = namespace or "one-iot"
+            params["namespace"] = namespace or os.getenv("DEFAULT_K8S_NAMESPACE", "iot-platform")
             service = self.extract_param(text, "service")
             if service:
                 params["service"] = service
@@ -6969,7 +6969,7 @@ JSON schema:
             or "namespace" in text
         ):
             namespace = self.extract_param(text, "namespace")
-            params["namespace"] = namespace or "one-iot"
+            params["namespace"] = namespace or os.getenv("DEFAULT_K8S_NAMESPACE", "iot-platform")
             service = self.extract_param(text, "service")
             if service:
                 params["service"] = service

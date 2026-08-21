@@ -11,7 +11,7 @@ live mcp_server/, end to end:
   Step 3 (AUTO): for every adapter line found in step 2, pull the line's
           `trace_id` label (OpenTelemetry trace id, present on every log line
           in this cluster) and re-run the *same* line filter with NO
-          service_name restriction -- i.e. search the whole "one-iot"
+          service_name restriction -- i.e. search the configured IoT platform namespace
           namespace for that trace_id. Whichever service_name shows up in the
           result (other than the adapter itself) is where the request was
           forwarded to. This replaces the old --core-services flag, which

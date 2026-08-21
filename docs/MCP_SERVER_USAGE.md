@@ -104,7 +104,8 @@ python mcp_server/scripts/manual_test_client.py call loki_query_range datasource
 ```
 
 `datasource_uid` (`prometheus`, `loki`...) lấy được từ `grafana_list_datasources`.
-`loki_query_range` tự build LogQL selector từ `namespace` (mặc định `one-iot`)
+`loki_query_range` tự build LogQL selector từ `namespace` (mặc định lấy từ
+`DEFAULT_LOKI_NAMESPACE`, public template dùng `iot-platform`)
 
 - `service_name` cho tiện dùng (không phải LogQL thô) — nhưng đây chỉ là tiện
   ích, **không phải guardrail bảo mật**: tool này không còn allowlist label hay

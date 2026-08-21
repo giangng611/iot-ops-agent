@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 from services.mcp_client import call_mcp_tool
 
 
-DEFAULT_LOKI_NAMESPACE = "one-iot"
+DEFAULT_LOKI_NAMESPACE = os.getenv("DEFAULT_LOKI_NAMESPACE", "iot-platform")
 DEFAULT_RABBITMQ_NAMESPACE = "test"
-DEFAULT_K8S_NAMESPACE = "one-iot"
+DEFAULT_K8S_NAMESPACE = os.getenv("DEFAULT_K8S_NAMESPACE", "iot-platform")
 _DATASOURCE_UID_CACHE = {}
 
 
@@ -481,10 +481,10 @@ def query_iot_platform_metric_via_mcp(tool_name, params=None):
                 'sum(node_memory_MemTotal_bytes)) * 100'
             ),
             "pod_restarts": (
-                'sum(kube_pod_container_status_restarts_total{namespace="one-iot"})'
+                f'sum(kube_pod_container_status_restarts_total{{namespace="{DEFAULT_K8S_NAMESPACE}"}})'
             ),
             "pod_status": (
-                'sum by (phase) (kube_pod_status_phase{namespace="one-iot"})'
+                f'sum by (phase) (kube_pod_status_phase{{namespace="{DEFAULT_K8S_NAMESPACE}"}})'
             ),
         }
         results = _query_prometheus_instant_map(queries)

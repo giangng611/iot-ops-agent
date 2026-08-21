@@ -396,7 +396,7 @@ DEFAULT_PROMPTS = [
         "id": "onem2m-8",
         "title": "Kubernetes Resource Debug",
         "command": (
-            "Check Kubernetes resource health in namespace one-iot: pod CPU, "
+            "Check Kubernetes resource health in the configured IoT platform namespace: pod CPU, "
             "memory, restart count, pod status, node resources, namespace resources, "
             "and latest service error logs. Identify abnormal service/pod, high "
             "CPU/memory, restart count, OOMKilled, CrashLoopBackOff, and next action."

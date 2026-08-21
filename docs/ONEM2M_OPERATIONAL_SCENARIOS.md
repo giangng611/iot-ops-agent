@@ -140,7 +140,8 @@ resources.
 
 ### 12. Kubernetes Resource Check
 
-Checks namespace `one-iot` by default.
+Checks `DEFAULT_K8S_NAMESPACE` by default. The public template uses
+`iot-platform`; set the variable to your Kubernetes namespace.
 
 Evidence:
 

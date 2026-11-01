@@ -466,12 +466,6 @@ def list_prompts(user_id, selected_source=None):
         if default_prompt_allowed(prompt, selected_source)
     ]
 
-    if selected_source == "simulator":
-        return [
-            enrich_prompt(prompt)
-            for prompt in sorted(default_prompts, key=prompt_sort_key)
-        ]
-
     user_prompts = [
         prompt
         for prompt in get_prompts(user_id)

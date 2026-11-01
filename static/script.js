@@ -1410,6 +1410,7 @@ async function loadSlashCommands() {
     slashCommands = promptsData;
 
     renderPromptCards();
+    handlePromptSuggestions();
 }
 
 function renderPromptCards() {

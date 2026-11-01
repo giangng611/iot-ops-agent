@@ -3822,7 +3822,7 @@ class IOAV3WorkflowTests(unittest.TestCase):
         self.assertIn("| http | warning |", answer)
         self.assertNotIn("\nSummary\n", answer)
 
-    def test_ioa_v3_answer_prompt_preserves_user_language(self):
+    def test_ioa_v3_answer_and_followups_use_english(self):
         agent = IOAV3LangGraphN8nAgent.__new__(IOAV3LangGraphN8nAgent)
         state = {
             "user_input": "kiểm tra thiết bị SmartAsset_9b47fedc",
@@ -3832,8 +3832,10 @@ class IOAV3WorkflowTests(unittest.TestCase):
 
         prompt = agent.build_answer_prompt(state)
 
-        self.assertIn("Reply in the same primary language", prompt)
-        self.assertIn("Vietnamese", prompt)
+        self.assertIn("Always write the entire response in English", prompt)
+        self.assertIn("Always reply in English", prompt)
+        self.assertEqual(agent.primary_language(state["user_input"]), "en")
+        self.assertIn("Write all follow-up questions in English", agent.build_followup_planner_prompt("", state))
         self.assertIn("technical identifiers", prompt)
         self.assertIn("SmartAsset_9b47fedc", prompt)
 

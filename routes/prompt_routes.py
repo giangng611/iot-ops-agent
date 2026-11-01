@@ -1,6 +1,7 @@
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request
 
 from routes.helpers import current_user_id, require_login_json
+from routes.telemetry_routes import get_selected_data_source
 from services.prompt_service import (
     create_user_prompt,
     delete_user_prompt,
@@ -22,7 +23,7 @@ def api_get_prompts():
     return jsonify({
         "prompts": list_prompts(
             current_user_id(),
-            session.get("selected_data_source"),
+            get_selected_data_source(),
         )
     })
 

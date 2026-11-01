@@ -79,8 +79,8 @@ DIAGNOSIS_OUTPUT_FORMAT = """
 Write the final answer as clear conversational plain text.
 
 Language:
-- Reply in the same primary language as the user's request.
-- If the user writes Vietnamese, use concise Vietnamese operations language.
+- Always write the entire response in English, regardless of the language of
+  the request, conversation history, or tool output.
 - Preserve technical identifiers, tool names, database fields, metric names,
   statuses, log values, and device IDs exactly as observed.
 

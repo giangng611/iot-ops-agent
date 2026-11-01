@@ -1538,6 +1538,22 @@ class SecurityAndRealtimeTests(unittest.TestCase):
         self.assertFalse("error" in payload["storage"]["app_data"])
         self.assertEqual(payload["storage"]["telemetry"]["source"], "sqlite")
 
+    def test_prompt_catalog_uses_current_default_source_on_startup(self):
+        user = self.create_user_once("prompt-source-user", "prompt-pass")
+        self.login_as(user)
+        with self.client.session_transaction() as session:
+            session["selected_data_source"] = "company"
+            session["selected_data_source_explicit"] = False
+
+        with patch("routes.telemetry_routes.get_user_data_source_policy", return_value={
+            "default_data_source": "simulator",
+            "allowed_data_sources": ["simulator", "company"],
+        }), patch("services.prompt_service.get_prompts", return_value=[]):
+            prompts = self.client.get("/api/prompts").get_json()["prompts"]
+
+        self.assertIn("/sim-fleet", [prompt.get("shortcut") for prompt in prompts])
+        self.assertNotIn("/company-fleet", [prompt.get("shortcut") for prompt in prompts])
+
     def test_prompt_crud_routes_use_authenticated_user(self):
         user = self.create_user_once("prompt-route-user", "prompt-pass")
         self.login_as(user)
